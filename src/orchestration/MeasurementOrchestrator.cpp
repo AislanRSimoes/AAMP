@@ -117,7 +117,7 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
 
     // PROCESSING (M-05) com degradacao graciosa (FR-040).
     if (!m_sm.transition(State::Processing)) { m_sm.forceError(); rr.userMessage = "Falha de transicao."; return rr; }
-    report("Processando resultados", suite.size(), static_cast<int>(suite.size()));
+    report("Processando resultados", static_cast<int>(suite.size()), static_cast<int>(suite.size()));
     rr.bundle = m_analysis.computeAllMetrics(cap);
 
     int errors = 0;
@@ -132,7 +132,7 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
     }
 
     m_sm.transition(State::Results);
-    report("Concluido", suite.size(), static_cast<int>(suite.size()));
+    report("Concluido", static_cast<int>(suite.size()), static_cast<int>(suite.size()));
     rr.outcome = RunOutcome::Completed;
     return rr;
 }
