@@ -1,0 +1,67 @@
+        -:    0:Source:src/analysis/Fft.cpp
+        -:    0:Graph:Fft.gcno
+        -:    0:Data:Fft.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/analysis/Fft.cpp
+        -:    2:#include "Fft.h"
+        -:    3:#include "../common/Constants.h"
+        -:    4:#include <cmath>
+        -:    5:
+        -:    6:namespace aamp {
+        -:    7:
+    #####:    8:bool Fft::isValidSize(int n) {
+    #####:    9:    if (n < k::FFT_MIN || n > k::FFT_MAX) return false;
+    #####:   10:    return (n & (n - 1)) == 0; // potencia de 2
+        -:   11:}
+        -:   12:
+        -:   13:// Cooley-Tukey iterativo radix-2 com bit-reversal (double-precision).
+     2290:   14:void Fft::transform(std::vector<Complex>& a, bool inverse) {
+     2290:   15:    const std::size_t n = a.size();
+    2290*:   16:    if (n <= 1) return;
+        -:   17:
+        -:   18:    // Bit-reversal permutation.
+569460736:   19:    for (std::size_t i = 1, j = 0; i < n; ++i) {
+569458446:   20:        std::size_t bit = n >> 1;
+1138883432:   21:        for (; j & bit; bit >>= 1) j ^= bit;
+569458446:   22:        j ^= bit;
+569458446:   23:        if (i < j) std::swap(a[i], a[j]);
+        -:   24:    }
+        -:   25:
+     2290:   26:    const double PI = 3.14159265358979323846;
+    35750:   27:    for (std::size_t len = 2; len <= n; len <<= 1) {
+    33460:   28:        const double ang = 2.0 * PI / static_cast<double>(len) * (inverse ? 1.0 : -1.0);
+    33460:   29:        const Complex wlen(std::cos(ang), std::sin(ang));
+569491906:   30:        for (std::size_t i = 0; i < n; i += len) {
+569458446:   31:            Complex w(1.0, 0.0);
+6172797710:   32:            for (std::size_t k = 0; k < len / 2; ++k) {
+5603339264:   33:                Complex u = a[i + k];
+5603339264:   34:                Complex v = a[i + k + len / 2] * w;
+5603339264:   35:                a[i + k] = u + v;
+5603339264:   36:                a[i + k + len / 2] = u - v;
+5603339264:   37:                w *= wlen;
+        -:   38:            }
+        -:   39:        }
+        -:   40:    }
+        -:   41:
+     2290:   42:    if (inverse) {
+      376:   43:        const double invN = 1.0 / static_cast<double>(n);
+230393208:   44:        for (auto& x : a) x *= invN;
+        -:   45:    }
+        -:   46:}
+        -:   47:
+     1914:   48:std::vector<Complex> Fft::forwardReal(const std::vector<double>& signal, int n) {
+     1914:   49:    std::vector<Complex> buf(static_cast<std::size_t>(n), Complex(0.0, 0.0));
+     1914:   50:    const std::size_t m = std::min(signal.size(), static_cast<std::size_t>(n));
+248063994:   51:    for (std::size_t i = 0; i < m; ++i) buf[i] = Complex(signal[i], 0.0);
+     1914:   52:    transform(buf, false);
+     1914:   53:    return buf;
+    =====:   54:}
+        -:   55:
+      138:   56:std::vector<double> Fft::inverseToReal(std::vector<Complex> spectrum) {
+      138:   57:    transform(spectrum, true);
+      138:   58:    std::vector<double> out(spectrum.size());
+ 83888266:   59:    for (std::size_t i = 0; i < spectrum.size(); ++i) out[i] = spectrum[i].real();
+      138:   60:    return out;
+        -:   61:}
+        -:   62:
+        -:   63:} // namespace aamp

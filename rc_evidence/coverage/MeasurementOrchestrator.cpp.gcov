@@ -1,0 +1,153 @@
+        -:    0:Source:src/orchestration/MeasurementOrchestrator.cpp
+        -:    0:Graph:MeasurementOrchestrator.gcno
+        -:    0:Data:MeasurementOrchestrator.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/orchestration/MeasurementOrchestrator.cpp
+        -:    2:#include "MeasurementOrchestrator.h"
+        -:    3:#include "../common/Constants.h"
+        -:    4:#include <cmath>
+        -:    5:
+        -:    6:namespace aamp {
+        -:    7:
+        8:    8:MeasurementOrchestrator::MeasurementOrchestrator(double fs, ChannelMode mode)
+        8:    9:    : m_fs(fs), m_mode(mode),
+        8:   10:      m_capture(fs, k::CLIP_THRESHOLD_DBFS_DEFAULT),
+       16:   11:      m_analysis(fs) {}
+        -:   12:
+      116:   13:void MeasurementOrchestrator::report(const std::string& label, int completed, int total) {
+      116:   14:    if (!m_progress) return;
+       38:   15:    Progress p;
+       38:   16:    p.label = label;
+       38:   17:    p.completed = completed;
+       38:   18:    p.total = total;
+      38*:   19:    p.percent = (total > 0) ? static_cast<int>(100.0 * completed / total + 0.5) : 0;
+       38:   20:    m_progress(p);
+       38:   21:}
+        -:   22:
+        8:   23:std::size_t MeasurementOrchestrator::estimateSuiteMemoryBytes() const {
+        -:   24:    // Soma dos buffers dos 16 estimulos + janela de captura (post-roll) + estruturas.
+        8:   25:    StimulusGenerator gen(m_fs);
+        8:   26:    std::size_t total = 0;
+      136:   27:    for (const Stimulus& s : gen.generateSuite()) {
+      128:   28:        const std::size_t cap = s.samples.size() + static_cast<std::size_t>(k::POST_ROLL_SECONDS * m_fs);
+      128:   29:        total += (s.samples.size() + cap) * sizeof(double); // estimulo + captura
+        8:   30:    }
+        8:   31:    total += 4ull * 1024 * 1024; // folga p/ FFTs e ResultBundle
+        8:   32:    return total;
+        -:   33:}
+        -:   34:
+        8:   35:bool MeasurementOrchestrator::prepare(IAudioDevice& dev) {
+       8*:   36:    if (dev.inputChannels() <= 0 || dev.outputChannels() <= 0) {
+    #####:   37:        m_sm.forceError();               // ER-010: sem canais utilizaveis
+    #####:   38:        return false;
+        -:   39:    }
+        8:   40:    m_cancel = false;
+        8:   41:    return m_sm.transition(State::Ready); // BR-003
+        -:   42:}
+        -:   43:
+        8:   44:bool MeasurementOrchestrator::levelPreCheck(IAudioDevice& dev, std::string& abortMsg) {
+        -:   45:    // Tom de calibracao 1 kHz / 200 ms / -12 dBFS (DOC-03 §5, BR-021).
+        8:   46:    const int N = static_cast<int>(k::CALIB_SECONDS * m_fs + 0.5);
+        8:   47:    const double amp = std::pow(10.0, k::CALIB_DBFS / 20.0);
+        8:   48:    std::vector<double> tone(static_cast<std::size_t>(N));
+    76808:   49:    for (int i = 0; i < N; ++i)
+    76800:   50:        tone[static_cast<std::size_t>(i)] = amp * std::sin(2.0 * 3.14159265358979 * k::CALIB_FREQ_HZ * i / m_fs);
+        8:   51:    std::vector<double> ret = dev.playAndCapture(tone, tone.size());
+        -:   52:    // Verificacao de roteamento: precisa receber sinal (ER-022).
+    76808:   53:    double pk = 0.0; for (double v : ret) pk = std::max(pk, std::fabs(v));
+       8*:   54:    if (pk < 1e-6) { abortMsg = "Nenhum sinal recebido no canal de entrada. Verifique as conexoes fisicas."; return false; }
+        8:   55:    return true;
+        8:   56:}
+        -:   57:
+       96:   58:bool MeasurementOrchestrator::captureWithRetry(const Stimulus& stim, IAudioDevice& dev,
+        -:   59:                                               std::vector<double>& outSamples,
+        -:   60:                                               std::string& abortMsg) {
+      96*:   61:    for (int attempt = 0; attempt < k::MAX_CAPTURE_RETRIES; ++attempt) {
+       96:   62:        CaptureResult c = m_capture.capture(stim, dev);
+       96:   63:        if (c.status.valid) { outSamples = std::move(c.samples); return true; }
+        -:   64:        // ER-020 (clipping) / ER-024 (parcial): repete ate o limite, depois aborta.
+    #####:   65:        if (attempt == k::MAX_CAPTURE_RETRIES - 1) {
+    #####:   66:            if (c.status.clipped)
+    #####:   67:                abortMsg = "Sinal acima do limite durante a medicao. Reduza o ganho de saida.";
+        -:   68:            else
+    #####:   69:                abortMsg = "A captura foi interrompida repetidamente. Verifique o dispositivo.";
+    #####:   70:            return false;
+        -:   71:        }
+      96*:   72:    }
+    #####:   73:    return false;
+        -:   74:}
+        -:   75:
+        8:   76:RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
+        8:   77:    RunResult rr;
+        -:   78:
+        -:   79:    // Estimativa de memoria pre-suite (DOC-09 §4.1).
+        8:   80:    if (estimateSuiteMemoryBytes() > MEMORY_LIMIT_BYTES) {
+    #####:   81:        rr.outcome = RunOutcome::InsufficientMemory;
+    #####:   82:        rr.userMessage = "Memoria insuficiente para iniciar a medicao.";
+    #####:   83:        return rr;
+        -:   84:    }
+        -:   85:
+       8*:   86:    if (m_sm.state() != State::Ready) { rr.userMessage = "Dispositivo nao esta pronto."; return rr; }
+        8:   87:    m_sm.transition(State::Measuring);
+        -:   88:
+        8:   89:    std::string abortMsg;
+        8:   90:    if (!levelPreCheck(dev, abortMsg)) {
+    #####:   91:        m_sm.forceError();
+    #####:   92:        rr.outcome = RunOutcome::Aborted; rr.userMessage = abortMsg; return rr;
+        -:   93:    }
+        -:   94:
+        8:   95:    StimulusGenerator gen(m_fs);
+        8:   96:    std::vector<Stimulus> suite = gen.generateSuite();
+        8:   97:    CapturedSet cap; cap.fs = m_fs; cap.mode = m_mode;
+        -:   98:
+       16:   99:    report("Preparando medicao", 0, static_cast<int>(suite.size()));
+        8:  100:    int done = 0;
+      104:  101:    for (const Stimulus& s : suite) {
+       98:  102:        if (m_cancel) {                       // FR-039: cancelamento seguro
+        2:  103:            m_sm.transition(State::Idle);
+        2:  104:            rr.outcome = RunOutcome::Cancelled;
+        2:  105:            rr.userMessage = "Medicao cancelada.";
+        2:  106:            return rr;                         // sem processamento parcial
+        -:  107:        }
+       96:  108:        std::vector<double> samples;
+       96:  109:        if (!captureWithRetry(s, dev, samples, abortMsg)) {
+    #####:  110:            m_sm.forceError();
+    #####:  111:            rr.outcome = RunOutcome::Aborted; rr.userMessage = abortMsg; return rr;
+        -:  112:        }
+       96:  113:        cap.captured[s.id] = std::move(samples);
+       96:  114:        ++done;
+      192:  115:        report("Medindo", done, static_cast<int>(suite.size()));
+       96:  116:    }
+        -:  117:
+        -:  118:    // PROCESSING (M-05) com degradacao graciosa (FR-040).
+       6*:  119:    if (!m_sm.transition(State::Processing)) { m_sm.forceError(); rr.userMessage = "Falha de transicao."; return rr; }
+       12:  120:    report("Processando resultados", suite.size(), static_cast<int>(suite.size()));
+        6:  121:    rr.bundle = m_analysis.computeAllMetrics(cap);
+        -:  122:
+        6:  123:    int errors = 0;
+      96*:  124:    for (const auto& m : rr.bundle.metrics) if (m.quality == Quality::Error) errors++;
+        6:  125:    rr.errorMetrics = errors;
+        -:  126:    // Falha de TODAS as metricas -> suite falha (ER-033); caso contrario, prossegue (degradacao).
+        6:  127:    if (errors >= static_cast<int>(rr.bundle.metrics.size())) {
+    #####:  128:        m_sm.forceError();
+    #####:  129:        rr.outcome = RunOutcome::Aborted;
+    #####:  130:        rr.userMessage = "Nao foi possivel processar os resultados. Repita a medicao.";
+    #####:  131:        return rr;
+        -:  132:    }
+        -:  133:
+        6:  134:    m_sm.transition(State::Results);
+       12:  135:    report("Concluido", suite.size(), static_cast<int>(suite.size()));
+        6:  136:    rr.outcome = RunOutcome::Completed;
+        6:  137:    return rr;
+        8:  138:}
+        -:  139:
+        4:  140:bool MeasurementOrchestrator::startNewMeasurement(bool confirmDiscard, bool resultsExported) {
+       4*:  141:    if (m_sm.state() != State::Results) return false;
+        -:  142:    // FR-038/BR-032: se ha resultados nao exportados, exige confirmacao explicita.
+        4:  143:    if (!resultsExported && !confirmDiscard) return false;
+        -:  144:    // Descarte confirmado -> volta para READY para nova medicao.
+        2:  145:    m_sm.transition(State::Idle);
+        2:  146:    return m_sm.transition(State::Ready);
+        -:  147:}
+        -:  148:
+        -:  149:} // namespace aamp

@@ -1,0 +1,46 @@
+[TC] DSP FFT round-trip (forward+inverse == original)
+[TC] TC-031 FFT seno puro: pico no bin correto, mag +-0.1 dB
+[TC] TC-032 THD seno puro loopback < 0.001 porcento
+[TC] TC-033 SNR referencia 80 dB +-0.5
+[TC] TC-034 Determinismo de metricas
+[TC] TC-035 Deconvolucao bin zero sem NaN/Inf
+[TC] TC-036 Crosstalk estereo calculado / mono N/A
+[TC] TC-037 Group delay constante p/ fase linear +-2 samples
+[TC] TC-030 15 familias calculadas (ou N/A), nenhuma Error
+[TC] LoopbackDevice ruido e canais
+[TC] TC-020 Sincronizacao <= 1 sample (offset via IR de ST-06)
+[TC] TC-021 Clipping detectado marca captura invalida (ER-020)
+[TC] TC-022 Sinal baixo: aviso nao bloqueante (ER-023)
+[TC] TC-023 Captura parcial nao processada (ER-024)
+[TC] TC-024 Averaging coerente (invalidas substituidas)
+[TC] TC-040 Dashboard com 6 secoes (DOC-05 §3)
+[TC] TC-042 Estado vazio sem medicao (FR-031)
+[TC] Dashboard: crosstalk N/A em mono (FR-031)
+[TC] Dashboard: baixa confiabilidade vira badge (FR-027)
+[TC] TC-050 CSV de curvas valido (DOC-10 §3.1)
+[TC] TC-051 N/A para metrica indisponivel (BR-043)
+[TC] Export: baixa confiabilidade marcada com * e nota
+[TC] TC-052 WAV IR valido: 32-bit float, SR correto (DOC-10 §4)
+[TC] TC-055 Falha de destino preserva dados (ER-040)
+[TC] TC-053 Modelo de relatorio com 6 secoes (DOC-10 §5.1)
+[TC] Export: nomenclatura aamp_{tipo}_{data}_{hora}.{ext}
+[TC] TC-001 Enumeracao so de conectados (BR-001)
+[TC] TC-003 SR/buffer nao suportado rejeitado (ER-003)
+[TC] TC-004 Fallback de nome de canal (FR-007)
+[TC] Latencia round-trip: parcial quando driver nao informa (FR-008)
+[TC] Routing mono/estereo por contagem de canais (AC-M02-01)
+[TC] Routing verify: sem sinal bloqueia (ER-022)
+[TC] Routing faults: canal parcial detectado (ER-025)
+[TC] StateMachine transicoes (DOC-04 §5)
+[TC] StateMachine erro e reset
+[TC] TC-060 Fluxo automatico: 1 comando, suite completa
+[TC] TC-061 Nova medicao confirma descarte (FR-038)
+[TC] TC-062 Cancelamento seguro durante a suite (FR-039)
+[TC] TC-063 Degradacao graciosa (FR-040)
+[TC] TC-044 Progresso amigavel sem detalhes tecnicos
+[TC] TC-010 Suite gera 16 estimulos em ordem A->B->C
+[TC] TC-011 Determinismo byte-identico entre execucoes
+[TC] TC-012 Compostos normalizados a -1 dBFS de pico (<= 0 dBFS)
+[TC] TC-013 Parametros conforme DOC-03
+[TC] DSP janelas: geracao e propriedades (DOC-03 §4.1)
+==== 347 checks passed, 0 failed ====

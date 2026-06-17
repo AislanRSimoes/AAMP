@@ -1,0 +1,61 @@
+        -:    0:Source:src/stimulus/Prng.h
+        -:    0:Graph:StimulusGenerator.gcno
+        -:    0:Data:StimulusGenerator.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/stimulus/Prng.h
+        -:    2:// Geradores determinísticos (FR-017, DOC-03 ST-04/ST-05).
+        -:    3:// Mapeamento raw->double proprio para garantir byte-identidade entre plataformas
+        -:    4:// (std::uniform_real_distribution NAO e especificada de forma portavel).
+        -:    5:#pragma once
+        -:    6:#include <cstdint>
+        -:    7:#include <random>
+        -:    8:#include <vector>
+        -:    9:#include "../common/Constants.h"
+        -:   10:
+        -:   11:namespace aamp {
+        -:   12:
+        -:   13:// White Noise: Mersenne Twister (std::mt19937) seed fixo = 1, mapeado para [-1, 1).
+        -:   14:class WhitePrng {
+        -:   15:public:
+      102:   16:    explicit WhitePrng(unsigned long seed = k::PRNG_SEED) : m_mt(static_cast<std::uint32_t>(seed)) {}
+ 24480624:   17:    double next() {
+        -:   18:        // raw 32-bit -> [-1, 1)
+ 24480624:   19:        const std::uint32_t r = m_mt();
+ 24480624:   20:        return (static_cast<double>(r) / 4294967296.0) * 2.0 - 1.0;
+        -:   21:    }
+        -:   22:private:
+        -:   23:    std::mt19937 m_mt;
+        -:   24:};
+        -:   25:
+        -:   26:// Pink Noise: Voss-McCartney com 16 estagios, seed fixo = 1 (rolloff -3 dB/oitava).
+        -:   27:class PinkPrng {
+        -:   28:public:
+       48:   29:    explicit PinkPrng(unsigned long seed = k::PRNG_SEED)
+       96:   30:        : m_white(seed), m_rows(k::VOSS_STAGES, 0.0), m_counter(0) {
+      816:   31:        for (auto& r : m_rows) r = m_white.next();
+       48:   32:        m_running = 0.0;
+      816:   33:        for (double r : m_rows) m_running += r;
+       48:   34:    }
+ 11520000:   35:    double next() {
+        -:   36:        // A cada amostra, atualiza um subconjunto de linhas conforme bits do contador.
+ 11520000:   37:        m_counter++;
+ 11520000:   38:        std::uint32_t c = m_counter;
+ 23039616:   39:        for (int i = 0; i < k::VOSS_STAGES; ++i) {
+ 23039472:   40:            if (c & 1u) {
+ 11519856:   41:                m_running -= m_rows[static_cast<std::size_t>(i)];
+ 11519856:   42:                m_rows[static_cast<std::size_t>(i)] = m_white.next();
+ 11519856:   43:                m_running += m_rows[static_cast<std::size_t>(i)];
+ 11519856:   44:                break;
+        -:   45:            }
+ 11519616:   46:            c >>= 1;
+        -:   47:        }
+ 11520000:   48:        return m_running / static_cast<double>(k::VOSS_STAGES);
+        -:   49:    }
+        -:   50:private:
+        -:   51:    WhitePrng m_white;
+        -:   52:    std::vector<double> m_rows;
+        -:   53:    std::uint32_t m_counter;
+        -:   54:    double m_running;
+        -:   55:};
+        -:   56:
+        -:   57:} // namespace aamp

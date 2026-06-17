@@ -1,0 +1,39 @@
+TC,Nivel,Ambiente,Status,Justificativa
+TC-010,Unit,CI headless (Linux),PASS,Suite gera 16 estimulos em ordem A->B->C
+TC-011,Unit,CI headless (Linux),PASS,Determinismo byte-identico (inclui ST-04/ST-05 com seed=1)
+TC-012,Unit,CI headless (Linux),PASS,Compostos ST-02/14/15 normalizados a -1 dBFS de pico
+TC-013,Unit,CI headless (Linux),PASS,Parametros conferem com DOC-03 (duracao/amplitude/envelope/seed)
+TC-030,Unit,CI headless (Linux),PASS,15 familias calculadas; nenhuma em estado Error
+TC-031,Unit,CI headless (Linux),PASS,Pico de FFT no bin correto (+-1 bin) e magnitude (+-0.1 dB)
+TC-032,Unit,CI headless (Linux),PASS,THD de seno puro loopback < 0.001%
+TC-033,Unit,CI headless (Linux),PASS,SNR de referencia -80 dBFS -> 80 dB (+-0.5)
+TC-034,Unit,CI headless (Linux),PASS,Determinismo de metricas (mesma entrada -> idêntico)
+TC-035,Unit,CI headless (Linux),PASS,Deconvolucao com bin de energia zero sem NaN/Inf (Tikhonov)
+TC-036,Unit,CI headless (Linux),PASS,Crosstalk calculado em estereo; N/A em mono
+TC-037,Unit,CI headless (Linux),PASS,Group delay constante p/ fase linear (+-2 samples)
+TC-020,Integracao (loopback),CI headless (loopback virtual),PASS,Offset de sincronizacao via IR de ST-06 (<= 1 sample)
+TC-021,Integracao (loopback),CI headless,PASS,Clipping detectado -> invalida; coherentAverage aborta apos limite (ER-020)
+TC-022,Integracao,CI headless,PASS,Sinal baixo -> flag nao bloqueante; captura segue valida (ER-023)
+TC-023,Integracao (falha injetada),CI headless,PASS,Captura parcial descartada; nunca processada (ER-024)
+TC-024,Unit/Integracao,CI headless,PASS,Averaging coerente no tempo; invalidas substituidas (DOC-03 §4.3)
+TC-001,Unit (mock) + E2E,CI headless (logica) + maquina-alvo (OS),PARTIAL-PASS,Enumeracao so de conectados verificada (mock); hot-plug real na maquina-alvo
+TC-002,E2E,Maquina-alvo (hardware),PENDING,Bloco E (M-01) - hot-plug (hardware real)
+TC-003,Unit (capacidades mock),CI headless,PASS,SR/buffer nao suportado rejeitado (ER-003)
+TC-004,Unit,CI headless,PASS,Fallback de nome de canal "Canal {i}" (FR-007)
+TC-005,E2E,Maquina-alvo (hardware),PENDING,Bloco E (M-01/M-02) - desconexao (hardware real)
+TC-040,Sistema (view-model),CI headless (modelo) + maquina-alvo (render),PARTIAL-PASS,Modelo de 6 secoes verificado (titulos/estrutura); render GUI na maquina-alvo
+TC-041,Sistema,Maquina-alvo (GUI),PENDING,Bloco F (M-06) - interacoes de grafico
+TC-042,Sistema (view-model),CI headless,PASS,Estado vazio do dashboard antes de medicao (FR-031)
+TC-043,Sistema,Maquina-alvo (GUI),PENDING,Bloco F (M-06) - estado carregando
+TC-044,Unit (modelo de progresso),CI headless,PARTIAL-PASS,Progresso sem detalhes tecnicos (parte unit); render na maquina-alvo
+TC-045,Sistema,Maquina-alvo (GUI),PENDING,Bloco F (M-06) - tooltip multi-curva
+TC-050,Unit,CI headless,PASS,CSV de curvas valido: cabecalho metadados + colunas + dados; UTF-8; ponto decimal
+TC-051,Unit,CI headless,PASS,N/A literal para metrica indisponivel (crosstalk mono); valor em estereo (BR-043)
+TC-052,Unit,CI headless,PASS,WAV de IR valido: RIFF/WAVE IEEE float 32-bit; SR da medicao; INFO
+TC-053,Integracao (render),CI headless (modelo) + maquina-alvo (render),PARTIAL-PASS,Modelo de relatorio com 6 secoes verificado; render PDF na maquina-alvo (IPdfWriter)
+TC-054,Sistema (render),Maquina-alvo (GUI),PENDING,Bloco G (M-07) - PNG >=1920x1080 + marcadores
+TC-055,Unit,CI headless,PASS,Falha de destino preserva dados em memoria (ER-040); mensagem amigavel
+TC-060,Integracao (loopback),CI headless,PASS,Fluxo automatico de 1 comando; suite completa; 15 familias; estado RESULTS
+TC-061,Integracao,CI headless,PASS,Nova medicao a partir de RESULTS exige confirmacao de descarte (FR-038)
+TC-062,Integracao,CI headless,PASS,Cancelamento seguro; estado IDLE; sem resultados parciais (FR-039)
+TC-063,Unit/Integracao,CI headless,PASS,Degradacao graciosa; metrica isolada em Error; demais normais (FR-040)

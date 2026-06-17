@@ -1,0 +1,80 @@
+        -:    0:Source:src/common/ResultBundle.h
+        -:    0:Graph:DashboardModel.gcno
+        -:    0:Data:DashboardModel.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/common/ResultBundle.h
+        -:    2:// Contrato de dados central (DOC-08 §3.1): M-05 produz, M-06 renderiza, M-07 serializa.
+        -:    3:// Nenhum recalculo fora de M-05. Fecha as fronteiras L-040/L-041/L-042 do DOC-CR.
+        -:    4:#pragma once
+        -:    5:
+        -:    6:#include <string>
+        -:    7:#include <vector>
+        -:    8:#include <map>
+        -:    9:#include <cstdint>
+        -:   10:
+        -:   11:namespace aamp {
+        -:   12:
+        -:   13:// Flag de qualidade por familia de metrica (FR-027, BR-031, DOC-07 ER-023/ER-030).
+        -:   14:// Metricas de baixa confiabilidade NUNCA sao omitidas: recebem flag.
+        -:   15:enum class Quality {
+        -:   16:    Normal,         // medicao confiavel
+        -:   17:    LowConfidence,  // SNR insuficiente (DOC-07 §5): exibida com badge / sufixo '*'
+        -:   18:    NotApplicable,  // condicional indisponivel (ex.: crosstalk em mono) -> 'N/A' (BR-043)
+        -:   19:    Error           // falha irrecuperavel de calculo (ER-032), degradacao graciosa (FR-040)
+        -:   20:};
+        -:   21:
+        -:   22:const char* qualityToString(Quality q);
+        -:   23:
+        -:   24:// Modo de roteamento derivado automaticamente pela contagem de canais (FR-011, BR-010).
+        -:   25:enum class ChannelMode { Mono, Stereo };
+        -:   26:
+        -:   27:// Uma curva (eixo X/Y + unidades). Usada por MS-01, MS-02, MS-03, MS-08, MS-11.
+        -:   28:struct Curve {
+        -:   29:    std::string name;
+        -:   30:    std::string xUnit;          // ex.: "Hz"
+        -:   31:    std::string yUnit;          // ex.: "dB"
+        -:   32:    std::vector<double> x;
+        -:   33:    std::vector<double> y;
+        -:   34:    std::vector<double> y2;     // canal/serie auxiliar opcional (ex.: fase junto da magnitude)
+        -:   35:    bool hasY2 = false;
+        -:   36:};
+        -:   37:
+        -:   38:// Valor escalar nomeado com unidade e qualidade.
+        -:   39:struct Scalar {
+        -:   40:    std::string key;            // chave para CSV escalar (DOC-10 §3.2), ex.: "THD_pct"
+        -:   41:    double value = 0.0;
+        -:   42:    std::string unit;           // ex.: "%", "dB", "ms"
+        -:   43:    Quality quality = Quality::Normal;
+        -:   44:    bool valuePresent = true;   // false => 'N/A' literal na exportacao (BR-043)
+        -:   45:};
+        -:   46:
+        -:   47:// Resultado de uma familia MS-01..MS-15.
+        -:   48:struct MetricResult {
+        -:   49:    std::string id;                 // "MS-01" .. "MS-15"
+        -:   50:    std::string name;
+        -:   51:    Quality quality = Quality::Normal;
+        -:   52:    std::vector<Scalar> scalars;    // valores escalares chave=valor
+        -:   53:    std::vector<Curve>  curves;     // curvas associadas
+        -:   54:};
+        -:   55:
+        -:   56:// Metadados de medicao (DOC-10 §3.1 cabecalho, WAV INFO).
+        -:   57:struct MeasurementMeta {
+        -:   58:    std::string deviceName = "Loopback Virtual";
+        -:   59:    double sampleRate = 48000.0;
+        -:   60:    ChannelMode mode = ChannelMode::Mono;
+        -:   61:    std::string timestamp;          // "YYYY-MM-DD HH:MM:SS"
+        -:   62:};
+        -:   63:
+        -:   64:// Bundle tipado entregue de M-05 -> M-06/M-07.
+        -:   65:struct ResultBundle {
+        -:   66:    MeasurementMeta meta;
+        -:   67:    std::vector<MetricResult> metrics;   // MS-01..MS-15 (ordenadas)
+        -:   68:
+      284:   69:    const MetricResult* find(const std::string& id) const {
+     2164:   70:        for (const auto& m : metrics)
+     2100:   71:            if (m.id == id) return &m;
+       64:   72:        return nullptr;
+        -:   73:    }
+        -:   74:};
+        -:   75:
+        -:   76:} // namespace aamp

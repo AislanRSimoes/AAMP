@@ -1,0 +1,31 @@
+        -:    0:Source:src/analysis/Deconvolution.cpp
+        -:    0:Graph:Deconvolution.gcno
+        -:    0:Data:Deconvolution.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/analysis/Deconvolution.cpp
+        -:    2:#include "Deconvolution.h"
+        -:    3:#include "Fft.h"
+        -:    4:#include "../common/Constants.h"
+        -:    5:#include <cmath>
+        -:    6:#include <algorithm>
+        -:    7:
+        -:    8:namespace aamp {
+        -:    9:
+      138:   10:std::vector<Cx> deconvolveTikhonov(const std::vector<Cx>& Y,
+        -:   11:                                   const std::vector<Cx>& X,
+        -:   12:                                   const std::vector<double>& noise) {
+      138:   13:    const std::size_t N = X.size();
+      138:   14:    std::vector<Cx> H(N, Cx(0.0, 0.0));
+ 83894410:   15:    for (std::size_t i = 0; i < N; ++i) {
+ 83894272:   16:        const double S = std::norm(X[i]); // |X|^2 = energia de sinal no bin
+83894272*:   17:        const double Nf = (i < noise.size()) ? std::max(0.0, noise[i]) : 0.0;
+        -:   18:        // lambda adaptativo: cresce quando ruido domina o sinal; estavel quando S->0.
+83894272*:   19:        const double ratio = (S > 0.0) ? (Nf / S) : 1e12;
+ 83894272:   20:        const double lambda = k::LAMBDA_BASE * (1.0 + ratio);
+ 83894272:   21:        const double denom = S + lambda; // sempre > 0 -> sem divisao por zero
+ 83894272:   22:        H[i] = (Y[i] * std::conj(X[i])) / denom;
+        -:   23:    }
+      138:   24:    return H;
+    =====:   25:}
+        -:   26:
+        -:   27:} // namespace aamp

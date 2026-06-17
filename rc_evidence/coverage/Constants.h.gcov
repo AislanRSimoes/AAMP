@@ -1,0 +1,76 @@
+        -:    0:Source:src/common/Constants.h
+        -:    0:Graph:CaptureEngine.gcno
+        -:    0:Data:CaptureEngine.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/common/Constants.h
+        -:    2:// Constantes nomeadas centralizadas (DOC-09 §2.1: sem numeros magicos).
+        -:    3:// Todo valor abaixo deriva EXCLUSIVAMENTE da suite aprovada (DOC-03, DOC-07, DOC-09).
+        -:    4:#pragma once
+        -:    5:
+        -:    6:#include <cstddef>
+        -:    7:
+        -:    8:namespace aamp {
+        -:    9:namespace k {
+        -:   10:
+        -:   11:// ---- Amostragem de referencia (DOC-09 §6) ----
+        -:   12:constexpr double REF_SAMPLE_RATE = 48000.0;          // 48 kHz
+        -:   13:constexpr double FULL_SCALE      = 1.0;              // 0 dBFS = 1.0 (DOC-03 MS-08)
+        -:   14:
+        -:   15:// ---- FFT (DOC-03 §4.1) ----
+        -:   16:constexpr int FFT_MIN  = 256;
+        -:   17:constexpr int FFT_MAX  = 65536;                      // resolucao das metricas espectrais
+        -:   18:constexpr int FFT_ANALYSIS = 65536;                  // MS-01,02,05,06,07,08 usam 65536 pontos
+        -:   19:
+        -:   20:// ---- Banda reportada (DOC-03) ----
+        -:   21:constexpr double BAND_LOW_HZ  = 20.0;
+        -:   22:constexpr double BAND_HIGH_HZ = 20000.0;
+        -:   23:
+        -:   24:// ---- Deconvolucao / regularizacao adaptativa de Tikhonov (DOC-03 §4.2, AD-06) ----
+        -:   25:constexpr double LAMBDA_BASE = 1e-6;                 // lambda(f) = LAMBDA_BASE * (1 + N(f)/S(f))
+        -:   26:
+        -:   27:// ---- Envelope comportamental (DOC-03 §4.4) ----
+        -:   28:constexpr double ENVELOPE_MA_SECONDS = 0.001;        // media movel = round(0.001 * fs)
+        -:   29:
+        -:   30:// ---- PRNG determinístico (DOC-03 ST-04/ST-05, FR-017) ----
+        -:   31:constexpr unsigned long PRNG_SEED = 1UL;             // seed fixo = 1
+        -:   32:constexpr int VOSS_STAGES = 16;                      // Voss-McCartney 16 estagios (Pink Noise)
+        -:   33:
+        -:   34:// ---- Pre/post-roll (DOC-03 §5) ----
+        -:   35:constexpr double PRE_ROLL_SECONDS  = 0.500;          // 500 ms
+        -:   36:constexpr double POST_ROLL_SECONDS = 1.000;          // 1000 ms
+        -:   37:
+        -:   38:// ---- Tom de calibracao pre-suite (DOC-03 §5 / BR-021) ----
+        -:   39:constexpr double CALIB_FREQ_HZ   = 1000.0;
+        -:   40:constexpr double CALIB_SECONDS   = 0.200;            // 200 ms
+        -:   41:constexpr double CALIB_DBFS      = -12.0;
+        -:   42:
+        -:   43:// ---- Clipping (BR-022, DOC-07 ER-020) ----
+        -:   44:constexpr double CLIP_THRESHOLD_DBFS_DEFAULT = 0.0;  // padrao 0 dBFS (faixa -1..0)
+        -:   45:
+        -:   46:// ---- Piso minimo de caracterizacao (DOC-07 §5) ----
+        -:   47:constexpr double MIN_SNR_OVER_FLOOR_DB = 20.0;       // SNR de retorno < 20 dB acima do floor => ER-023
+        -:   48:
+        -:   49:// ---- Limites de tentativa (DOC-07 §4) ----
+        -:   50:constexpr int MAX_CAPTURE_RETRIES = 3;               // clipping / captura parcial
+        -:   51:constexpr int MAX_METRIC_RETRIES  = 1;               // retry de metrica
+        -:   52:constexpr int MAX_SUITE_RETRIES   = 1;               // retry da suite
+        -:   53:
+        -:   54:// ---- THD: faixa de harmonicas (DOC-03 MS-05) ----
+        -:   55:constexpr int THD_HARMONIC_FIRST = 2;
+        -:   56:constexpr int THD_HARMONIC_LAST  = 10;
+        -:   57:
+        -:   58:// ---- Noise floor: media de frames (DOC-03 MS-08) ----
+        -:   59:constexpr int NOISE_AVG_FRAMES = 16;                 // exatamente 16 frames Hann 50% overlap
+        -:   60:
+        -:   61:// ---- Numero de estimulos e familias ----
+        -:   62:constexpr int NUM_STIMULI  = 16;                     // ST-01..ST-16
+        -:   63:constexpr int NUM_METRICS  = 15;                     // MS-01..MS-15
+        -:   64:
+        -:   65:// ---- ST-06 Impulse (DOC-03) ----
+        -:   66:constexpr int IMPULSE_CAPTURE_SAMPLES = 65536;       // janela de captura
+       64:   67:inline int impulsePositionSamples(double fs) {       // round(0.5 * fs)
+       64:   68:    return static_cast<int>(0.5 * fs + 0.5);
+        -:   69:}
+        -:   70:
+        -:   71:} // namespace k
+        -:   72:} // namespace aamp

@@ -1,0 +1,221 @@
+        -:    0:Source:src/export/ExportEngine.cpp
+        -:    0:Graph:ExportEngine.gcno
+        -:    0:Data:ExportEngine.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/export/ExportEngine.cpp
+        -:    2:#include "ExportEngine.h"
+        -:    3:#include <fstream>
+        -:    4:#include <cstdio>
+        -:    5:#include <cstring>
+        -:    6:#include <cstdint>
+        -:    7:#include <cmath>
+        -:    8:#include <map>
+        -:    9:
+        -:   10:namespace aamp {
+        -:   11:
+       12:   12:ExportEngine::ExportEngine(const std::string& appVersion) : m_version(appVersion) {}
+        -:   13:
+        -:   14:// Formata com 3 casas e ponto decimal, independente de locale (DOC-10 §3.1).
+   218344:   15:static std::string fmt3(double v) {
+        -:   16:    char buf[64];
+   218344:   17:    std::snprintf(buf, sizeof(buf), "%.3f", v);
+        -:   18:    // garante ponto (caso o locale C tenha sido alterado)
+ 14192360:   19:    for (char& c : buf) if (c == ',') c = '.';
+   436688:   20:    return std::string(buf);
+        -:   21:}
+        -:   22:
+      118:   23:std::string ExportEngine::formatScalar(const Scalar& s) {
+      122:   24:    if (!s.valuePresent || s.quality == Quality::NotApplicable) return "N/A";
+      116:   25:    std::string v = fmt3(s.value);
+      116:   26:    if (s.quality == Quality::LowConfidence) v += "*";   // DOC-10: sufixo de baixa confiab.
+      116:   27:    return v;
+      116:   28:}
+        -:   29:
+        6:   30:std::string ExportEngine::metadataHeader(const MeasurementMeta& m) const {
+       6*:   31:    std::string mode = (m.mode == ChannelMode::Stereo) ? "Stereo" : "Mono";
+        6:   32:    char sr[32]; std::snprintf(sr, sizeof(sr), "%.0f", m.sampleRate);
+       6*:   33:    std::string ts = m.timestamp.empty() ? "1970-01-01 00:00:00" : m.timestamp;
+       12:   34:    return "# AAMP Export | " + m_version + " | " + ts +
+       18:   35:           " | Device: " + m.deviceName + " | SR: " + sr + " Hz | Mode: " + mode;
+        6:   36:}
+        -:   37:
+        4:   38:std::string ExportEngine::makeFilename(const std::string& tipo, const std::string& ext,
+        -:   39:                                       const std::string& timestamp) {
+        -:   40:    // "YYYY-MM-DD HH:MM:SS" -> "YYYYMMDD_HHMMSS"
+        4:   41:    std::string digits;
+       80:   42:    for (char c : timestamp) if (c >= '0' && c <= '9') digits += c;
+       4*:   43:    std::string date = digits.size() >= 8 ? digits.substr(0, 8) : "00000000";
+       4*:   44:    std::string time = digits.size() >= 14 ? digits.substr(8, 6) : "000000";
+        8:   45:    return "aamp_" + tipo + "_" + date + "_" + time + "." + ext;
+        4:   46:}
+        -:   47:
+        2:   48:ExportStatus ExportEngine::exportCurvesCSV(const ResultBundle& b, const std::string& path) const {
+        2:   49:    ExportStatus st; st.path = path;
+        2:   50:    std::ofstream f(path, std::ios::binary);
+       2*:   51:    if (!f) { st.message = "Nao foi possivel salvar " + path + ": destino nao gravavel."; return st; }
+        -:   52:
+        2:   53:    f << metadataHeader(b.meta) << "\n";
+        2:   54:    f << "Frequency_Hz,Magnitude_dB,Phase_deg,GroupDelay_ms\n";
+        -:   55:
+        4:   56:    const MetricResult* mag = b.find("MS-01");
+        4:   57:    const MetricResult* pha = b.find("MS-02");
+        2:   58:    const MetricResult* gd  = b.find("MS-03");
+       2*:   59:    const Curve* cMag = (mag && !mag->curves.empty()) ? &mag->curves[0] : nullptr;
+       2*:   60:    const Curve* cPha = (pha && !pha->curves.empty()) ? &pha->curves[0] : nullptr;
+       2*:   61:    const Curve* cGd  = (gd  && !gd->curves.empty())  ? &gd->curves[0]  : nullptr;
+        -:   62:
+        -:   63:    // lookup de group delay por frequencia (arredondada a 0.1 Hz).
+        2:   64:    std::map<long, double> gdMap;
+    54556:   65:    if (cGd) for (std::size_t i = 0; i < cGd->x.size(); ++i)
+    54554:   66:        gdMap[static_cast<long>(cGd->x[i] * 10.0 + 0.5)] = cGd->y[i];
+        -:   67:
+        2:   68:    if (cMag) {
+    54560:   69:        for (std::size_t i = 0; i < cMag->x.size(); ++i) {
+    54558:   70:            const double freq = cMag->x[i];
+    54558:   71:            f << fmt3(freq) << ",";
+    54558:   72:            f << fmt3(cMag->y[i]) << ",";
+        -:   73:            // fase (mesma grade que MS-01)
+   54558*:   74:            if (cPha && i < cPha->y.size()) f << fmt3(cPha->y[i]); else f << "N/A";
+    54558:   75:            f << ",";
+        -:   76:            // group delay (pode faltar nas extremidades -> N/A)
+    54558:   77:            auto it = gdMap.find(static_cast<long>(freq * 10.0 + 0.5));
+    54558:   78:            if (it != gdMap.end()) f << fmt3(it->second); else f << "N/A";
+    54558:   79:            f << "\n";
+        -:   80:        }
+        -:   81:    }
+        2:   82:    f.flush();
+       2*:   83:    if (!f) { st.message = "Falha de escrita em " + path; return st; }
+        2:   84:    st.ok = true;
+        2:   85:    return st;
+        2:   86:}
+        -:   87:
+        6:   88:ExportStatus ExportEngine::exportScalarsCSV(const ResultBundle& b, const std::string& path) const {
+        6:   89:    ExportStatus st; st.path = path;
+        6:   90:    std::ofstream f(path, std::ios::binary);
+        6:   91:    if (!f) { st.message = "Nao foi possivel salvar " + path + ": destino nao gravavel."; return st; }
+        -:   92:
+        4:   93:    f << metadataHeader(b.meta) << "\n";
+        4:   94:    bool anyLowConf = false;
+       36:   95:    for (const MetricResult& m : b.metrics) {
+       80:   96:        for (const Scalar& s : m.scalars) {
+      48*:   97:            if (s.key.empty()) continue;
+       48:   98:            f << s.key << "=" << formatScalar(s) << "\n";
+       48:   99:            if (s.quality == Quality::LowConfidence) anyLowConf = true;
+        -:  100:        }
+        -:  101:    }
+        4:  102:    if (anyLowConf) f << "# * = baixa confiabilidade (SNR insuficiente)\n";
+        4:  103:    f.flush();
+       4*:  104:    if (!f) { st.message = "Falha de escrita em " + path; return st; }
+        4:  105:    st.ok = true;
+        4:  106:    return st;
+        6:  107:}
+        -:  108:
+        -:  109:// --- WAV (RIFF/WAVE, IEEE float 32-bit, DOC-10 §4) ---
+       18:  110:static void put32(std::ostream& o, std::uint32_t v) {
+       18:  111:    char b[4] = { char(v & 0xFF), char((v >> 8) & 0xFF), char((v >> 16) & 0xFF), char((v >> 24) & 0xFF) };
+       18:  112:    o.write(b, 4);
+       18:  113:}
+        8:  114:static void put16(std::ostream& o, std::uint16_t v) {
+        8:  115:    char b[2] = { char(v & 0xFF), char((v >> 8) & 0xFF) };
+        8:  116:    o.write(b, 2);
+        8:  117:}
+        -:  118:
+        2:  119:ExportStatus ExportEngine::exportWAV(const std::vector<double>& ir, double fs, int channels,
+        -:  120:                                     const std::string& path) const {
+        2:  121:    ExportStatus st; st.path = path;
+       2*:  122:    if (channels < 1) channels = 1;
+        2:  123:    std::ofstream f(path, std::ios::binary);
+       2*:  124:    if (!f) { st.message = "Nao foi possivel salvar " + path + ": destino nao gravavel."; return st; }
+        -:  125:
+        2:  126:    const std::uint16_t fmtCode = 3; // IEEE float
+        2:  127:    const std::uint16_t bits = 32;
+        2:  128:    const std::uint32_t sr = static_cast<std::uint32_t>(fs + 0.5);
+        2:  129:    const std::uint16_t ch = static_cast<std::uint16_t>(channels);
+        2:  130:    const std::uint32_t blockAlign = ch * (bits / 8);
+        2:  131:    const std::uint32_t byteRate = sr * blockAlign;
+        2:  132:    const std::uint32_t numFrames = static_cast<std::uint32_t>(ir.size());
+        2:  133:    const std::uint32_t dataBytes = numFrames * blockAlign;
+        -:  134:
+        -:  135:    // INFO (LIST) chunk
+        6:  136:    auto pad = [](std::string s){ if (s.size() % 2) s.push_back('\0'); return s; };
+        6:  137:    std::string isft = pad(std::string("AAMP ") + m_version + '\0');
+        4:  138:    std::string icrd = pad("2026-06-16\0");
+        2:  139:    std::string icmt = pad("AAMP measurement IR\0");
+        -:  140:    std::uint32_t listBytes = 4 // "INFO"
+        2:  141:        + 8 + static_cast<std::uint32_t>(isft.size())
+        2:  142:        + 8 + static_cast<std::uint32_t>(icrd.size())
+        2:  143:        + 8 + static_cast<std::uint32_t>(icmt.size());
+        -:  144:
+        2:  145:    const std::uint32_t riffBytes = 4 + (8 + 16) + (8 + dataBytes) + (8 + listBytes);
+        -:  146:
+        2:  147:    f.write("RIFF", 4); put32(f, riffBytes); f.write("WAVE", 4);
+        -:  148:    // fmt
+        2:  149:    f.write("fmt ", 4); put32(f, 16);
+        2:  150:    put16(f, fmtCode); put16(f, ch); put32(f, sr); put32(f, byteRate);
+        2:  151:    put16(f, static_cast<std::uint16_t>(blockAlign)); put16(f, bits);
+        -:  152:    // data
+        2:  153:    f.write("data", 4); put32(f, dataBytes);
+      514:  154:    for (std::uint32_t i = 0; i < numFrames; ++i) {
+      512:  155:        float v = static_cast<float>(ir[i]);
+     1024:  156:        for (int c = 0; c < channels; ++c) f.write(reinterpret_cast<const char*>(&v), 4);
+        -:  157:    }
+        -:  158:    // LIST INFO
+        2:  159:    f.write("LIST", 4); put32(f, listBytes); f.write("INFO", 4);
+        6:  160:    auto writeInfo = [&](const char* id, const std::string& s){
+        6:  161:        f.write(id, 4); put32(f, static_cast<std::uint32_t>(s.size())); f.write(s.data(), static_cast<std::streamsize>(s.size()));
+        8:  162:    };
+        2:  163:    writeInfo("ISFT", isft); writeInfo("ICRD", icrd); writeInfo("ICMT", icmt);
+        -:  164:
+        2:  165:    f.flush();
+       2*:  166:    if (!f) { st.message = "Falha de escrita em " + path; return st; }
+        2:  167:    st.ok = true;
+        2:  168:    return st;
+        2:  169:}
+        -:  170:
+        4:  171:ReportModel ExportEngine::buildReportModel(const ResultBundle& b) const {
+        4:  172:    ReportModel rm; rm.meta = b.meta;
+       68:  173:    auto sc = [&](const char* id, const char* key) -> std::string {
+      136:  174:        const MetricResult* m = b.find(id);
+      68*:  175:        if (!m) return "N/A";
+      108:  176:        for (const Scalar& s : m->scalars) if (s.key == key) return formatScalar(s) + " " + s.unit;
+    #####:  177:        return "N/A";
+        4:  178:    };
+        -:  179:    // Espelha as 6 secoes do dashboard (DOC-10 §5.1). Sem julgamento qualitativo (§5.2).
+        -:  180:    ReportSection summary{ "Summary", {
+        4:  181:        "THD: " + sc("MS-05","THD_pct") , "SNR: " + sc("MS-10","SNR_dB"),
+       28:  182:        "Dynamic Range: " + sc("MS-09","DynamicRange_dB"), "Latency: " + sc("MS-12","Latency_ms") } };
+        -:  183:    ReportSection tech{ "Technical Metrics", {
+        -:  184:        "Frequency Response (curva)", "Phase (curva)", "Group Delay (curva)",
+        4:  185:        "Impulse Response (curva)", "THD: " + sc("MS-05","THD_pct"),
+       40:  186:        "THD+N: " + sc("MS-06","THDN_pct"), "IMD: " + sc("MS-07","IMD_pct") } };
+        -:  187:    ReportSection dyn{ "Dynamic Behaviour", {
+    #####:  188:        "Settling: " + sc("MS-13","SettlingTime_ms"),
+        4:  189:        "Repetition Consistency: " + sc("MS-13","RepetitionConsistency_pct"),
+       24:  190:        "Drift: " + sc("MS-13","Drift_dB") } };
+        -:  191:    ReportSection mus{ "Musical Behaviour", {
+    #####:  192:        "Attack Tracking: " + sc("MS-14","AttackTracking_pct"),
+        4:  193:        "Overshoot: " + sc("MS-14","Overshoot_dB"),
+        4:  194:        "Aggregate Linearity: " + sc("MS-15","AggregateLinearity_dB"),
+       28:  195:        "Nota: caracterizacao DSP; sem inferencia musical." } };
+        -:  196:    ReportSection noise{ "Noise Analysis", {
+    #####:  197:        "Noise Floor: " + sc("MS-08","NoiseFloor_dBFS"),
+        4:  198:        "Dynamic Range: " + sc("MS-09","DynamicRange_dB"),
+       24:  199:        "SNR: " + sc("MS-10","SNR_dB") } };
+        4:  200:    std::string stereoLine = (b.meta.mode == ChannelMode::Stereo)
+       4*:  201:        ? ("Crosstalk: " + sc("MS-11","Crosstalk_dB")) : "N/A - medicao mono";
+       12:  202:    ReportSection stereo{ "Stereo Analysis", { stereoLine } };
+        -:  203:
+       28:  204:    rm.sections = { summary, tech, dyn, mus, noise, stereo };
+        8:  205:    return rm;
+       48:  206:}
+        -:  207:
+        2:  208:ExportStatus ExportEngine::exportPDF(const ResultBundle& b, IPdfWriter& writer,
+        -:  209:                                     const std::string& path) const {
+        2:  210:    ExportStatus st; st.path = path;
+        2:  211:    ReportModel rm = buildReportModel(b);
+       2*:  212:    if (!writer.write(rm, path)) { st.message = "Falha ao gerar PDF em " + path; return st; }
+        2:  213:    st.ok = true;
+        2:  214:    return st;
+        2:  215:}
+        -:  216:
+        -:  217:} // namespace aamp

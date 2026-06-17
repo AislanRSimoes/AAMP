@@ -1,0 +1,12 @@
+Modulo,Responsabilidade (DOC-08),FR (DOC-02),TCs,Estado_neste_ambiente,Onde_fecha
+M-03,Stimulus Generator,FR-014..017,TC-010/011/012/013,VERIFICADO (4/4),CI headless
+M-05,Analysis Engine,FR-024..027,TC-030..037,VERIFICADO (8/8),CI headless
+M-04,Capture Engine,FR-018..023,TC-020..024,VERIFICADO (5/5),CI headless (loopback)
+M-08,Orchestrator,FR-037..040,TC-060..063,VERIFICADO (4/4),CI headless (mocks)
+M-07,Export (CSV/WAV),FR-032/033/036,TC-050/051/052/055,VERIFICADO (4/4),CI headless
+M-07,Export (PDF/PNG render),FR-034/035,TC-053/054,MODELO verificado; render pendente,Maquina-alvo (JUCE)
+M-01,Hardware Manager,FR-001..008,TC-001/003/004,LOGICA verificada (3); OS real pendente,CI + maquina-alvo
+M-01,Hardware (hot-plug/desconexao),FR-002/005,TC-002/005,PENDENTE (E2E),Maquina-alvo (hardware)
+M-02,Routing Manager,FR-010..013,resolve/verify/faults,LOGICA verificada,CI headless
+M-06,Dashboard (view-model),FR-028/031,TC-040/042,VERIFICADO (modelo de 6 secoes/estados),CI headless
+M-06,Dashboard (render/interacao),FR-029/030,TC-041/043/044/045,MODELO/PROGRESSO verificado; render pendente,Maquina-alvo (GUI)

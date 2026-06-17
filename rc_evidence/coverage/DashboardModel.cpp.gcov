@@ -1,0 +1,88 @@
+        -:    0:Source:src/dashboard/DashboardModel.cpp
+        -:    0:Graph:DashboardModel.gcno
+        -:    0:Data:DashboardModel.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/dashboard/DashboardModel.cpp
+        -:    2:#include "DashboardModel.h"
+        -:    3:#include <cstdio>
+        -:    4:
+        -:    5:namespace aamp {
+        -:    6:
+    #####:    7:const char* itemStateName(ItemState s) {
+    #####:    8:    switch (s) {
+    #####:    9:        case ItemState::Normal: return "Normal";
+    #####:   10:        case ItemState::LowConfidence: return "LowConfidence";
+    #####:   11:        case ItemState::NotApplicable: return "NotApplicable";
+    #####:   12:        case ItemState::Empty: return "Empty";
+        -:   13:    }
+    #####:   14:    return "Unknown";
+        -:   15:}
+        -:   16:
+      102:   17:static std::string fmt3(double v) {
+      102:   18:    char b[64]; std::snprintf(b, sizeof(b), "%.3f", v);
+    6630*:   19:    for (char& c : b) if (c == ',') c = '.';
+      204:   20:    return std::string(b);
+        -:   21:}
+        -:   22:
+        -:   23:// Cria um item a partir de um escalar localizado por (metricId, key). Estado deriva da Quality.
+      170:   24:static DashboardItem item(const ResultBundle& b, const std::string& label,
+        -:   25:                          const char* metricId, const char* key) {
+      170:   26:    DashboardItem it; it.label = label;
+      170:   27:    const MetricResult* m = b.find(metricId);
+      170:   28:    if (!m) { it.state = ItemState::Empty; return it; }
+      106:   29:    const Scalar* found = nullptr;
+      166:   30:    for (const Scalar& s : m->scalars) if (s.key == key) { found = &s; break; }
+     106*:   31:    if (!found) { it.state = ItemState::Empty; return it; }
+      106:   32:    it.unit = found->unit;
+      106:   33:    if (!found->valuePresent || found->quality == Quality::NotApplicable) {
+        4:   34:        it.value = "N/A"; it.state = ItemState::NotApplicable; return it;
+        -:   35:    }
+      102:   36:    it.value = fmt3(found->value);
+      102:   37:    it.state = (found->quality == Quality::LowConfidence) ? ItemState::LowConfidence : ItemState::Normal;
+      102:   38:    return it;
+    =====:   39:}
+        -:   40:
+       10:   41:DashboardModel buildDashboardModel(const ResultBundle& b) {
+       10:   42:    DashboardModel dm;
+       10:   43:    dm.isEmpty = b.metrics.empty();
+        -:   44:
+        -:   45:    DashboardSection summary{ "Summary", {
+        -:   46:        item(b, "THD", "MS-05", "THD_pct"),
+        -:   47:        item(b, "SNR", "MS-10", "SNR_dB"),
+        -:   48:        item(b, "Dynamic Range", "MS-09", "DynamicRange_dB"),
+       70:   49:        item(b, "Latency", "MS-12", "Latency_ms") } };
+        -:   50:
+        -:   51:    DashboardSection tech{ "Technical Metrics", {
+        -:   52:        item(b, "THD", "MS-05", "THD_pct"),
+        -:   53:        item(b, "THD+N", "MS-06", "THDN_pct"),
+       60:   54:        item(b, "IMD", "MS-07", "IMD_pct") } };
+        -:   55:
+        -:   56:    DashboardSection dyn{ "Dynamic Behaviour", {
+        -:   57:        item(b, "Settling Time", "MS-13", "SettlingTime_ms"),
+        -:   58:        item(b, "Repetition Consistency", "MS-13", "RepetitionConsistency_pct"),
+       60:   59:        item(b, "Drift", "MS-13", "Drift_dB") } };
+        -:   60:
+        -:   61:    DashboardSection mus{ "Musical Behaviour", {
+        -:   62:        item(b, "Attack Tracking", "MS-14", "AttackTracking_pct"),
+        -:   63:        item(b, "Overshoot", "MS-14", "Overshoot_dB"),
+       60:   64:        item(b, "Aggregate Linearity", "MS-15", "AggregateLinearity_dB") } };
+        -:   65:
+        -:   66:    DashboardSection noise{ "Noise Analysis", {
+        -:   67:        item(b, "Noise Floor", "MS-08", "NoiseFloor_dBFS"),
+        -:   68:        item(b, "Dynamic Range", "MS-09", "DynamicRange_dB"),
+       60:   69:        item(b, "SNR", "MS-10", "SNR_dB") } };
+        -:   70:
+        -:   71:    DashboardSection stereo{ "Stereo Analysis", {
+       30:   72:        item(b, "Crosstalk", "MS-11", "Crosstalk_dB") } };
+        -:   73:
+       70:   74:    dm.sections = { summary, tech, dyn, mus, noise, stereo };
+        -:   75:
+        -:   76:    // Bundle vazio: garante itens em estado Empty (estado vazio do dashboard, FR-031).
+       10:   77:    if (dm.isEmpty)
+       14:   78:        for (auto& sec : dm.sections)
+       46:   79:            for (auto& it : sec.items) { it.state = ItemState::Empty; it.value.clear(); }
+        -:   80:
+       20:   81:    return dm;
+      250:   82:}
+        -:   83:
+        -:   84:} // namespace aamp

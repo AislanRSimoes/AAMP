@@ -1,0 +1,39 @@
+TC,Modulo,Nivel,Ambiente,Status,Fonte/Justificativa
+TC-001,M-01,Unit+E2E,CI headless (logica) + Windows HW,PASS-PARCIAL,headless: logica (baseline); TODO enumeracao OS real (Windows)
+TC-002,M-01,E2E,Windows HW,TODO,hot-plug em hardware real (Passo 4)
+TC-003,M-01,Unit,CI headless,PASS,baseline (ER-003)
+TC-004,M-01,Unit,CI headless,PASS,baseline (fallback nome de canal)
+TC-005,M-01/M-02,E2E,Windows HW,TODO,desconexao na suite -> ER-002 (Passo 4)
+TC-010,M-03,Unit,CI headless,PASS,baseline (16 estimulos ordem A->B->C)
+TC-011,M-03,Unit,CI headless,PASS,baseline (determinismo byte-identico)
+TC-012,M-03,Unit,CI headless,PASS,baseline (compostos -1 dBFS)
+TC-013,M-03,Unit,CI headless,PASS,baseline (parametros DOC-03)
+TC-020,M-04,Integracao,CI headless (loopback),PASS,baseline (sinc <=1 sample)
+TC-021,M-04,Integracao,CI headless (loopback),PASS,baseline (clipping ER-020)
+TC-022,M-04,Integracao,CI headless,PASS,baseline (sinal baixo ER-023)
+TC-023,M-04,Integracao,CI headless,PASS,baseline (parcial nao processada ER-024)
+TC-024,M-04,Unit/Integracao,CI headless,PASS,baseline (averaging coerente)
+TC-030,M-05,Unit,CI headless,PASS,baseline (15 familias ou N/A)
+TC-031,M-05,Unit,CI headless,PASS,baseline (FFT pico no bin)
+TC-032,M-05,Unit,CI headless,PASS,baseline (THD <0.001%)
+TC-033,M-05,Unit,CI headless,PASS,baseline (SNR 80 dB +-0.5)
+TC-034,M-05,Unit,CI headless,PASS,baseline (determinismo de metricas)
+TC-035,M-05,Unit,CI headless,PASS,baseline (deconvolucao bin zero)
+TC-036,M-05,Unit,CI headless,PASS,baseline (crosstalk estereo / mono N/A)
+TC-037,M-05,Unit,CI headless,PASS,baseline (group delay fase linear)
+TC-040,M-06,Sistema,Windows GUI,TODO,6 secoes renderizadas (Passo 3) [modelo verificado headless]
+TC-041,M-06,Sistema,Windows GUI,TODO,interacoes de grafico (Passo 3)
+TC-042,M-06,Sistema,Windows GUI,TODO,estado vazio (Passo 3) [modelo verificado headless]
+TC-043,M-06,Sistema,Windows GUI,TODO,estado carregando (Passo 3)
+TC-044,M-06,Sistema+Unit,Windows GUI,TODO,progresso sem detalhes tecnicos [modelo verificado headless]
+TC-045,M-06,Sistema,Windows GUI,TODO,tooltip multi-curva (Passo 3)
+TC-050,M-07,Unit,CI headless,PASS,baseline (CSV de curvas valido)
+TC-051,M-07,Unit,CI headless,PASS,baseline (N/A metrica indisponivel)
+TC-052,M-07,Unit,CI headless,PASS,baseline (WAV IR 32-bit float)
+TC-053,M-07,Integracao,Windows render,TODO,PDF 6 secoes render (Passo 3) [modelo verificado headless]
+TC-054,M-07,Sistema,Windows render,TODO,PNG >=1920x1080 + marcadores (Passo 3)
+TC-055,M-07,Unit,CI headless,PASS,baseline (falha de destino preserva dados ER-040)
+TC-060,M-08,Integracao,CI headless (loopback) + Windows HW,PASS-PARCIAL,headless: loopback (baseline); TODO hardware real (Passo 4)
+TC-061,M-08,Sistema/Integracao,Windows GUI,TODO,confirma descarte [logica verificada headless]
+TC-062,M-08,Sistema,Windows GUI,TODO,fechar durante MEASURING [logica verificada headless]
+TC-063,M-08,Unit/Integracao,CI headless,PASS,baseline (degradacao graciosa)

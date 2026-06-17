@@ -1,0 +1,71 @@
+        -:    0:Source:src/hardware/HardwareManager.cpp
+        -:    0:Graph:HardwareManager.gcno
+        -:    0:Data:HardwareManager.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/hardware/HardwareManager.cpp
+        -:    2:#include "HardwareManager.h"
+        -:    3:#include <algorithm>
+        -:    4:
+        -:    5:namespace aamp {
+        -:    6:
+        4:    7:HardwareManager::HardwareManager(std::shared_ptr<IDeviceEnumerator> enumerator)
+        4:    8:    : m_enum(std::move(enumerator)) {}
+        -:    9:
+        2:   10:std::vector<DeviceInfo> HardwareManager::enumerateDevices() const {
+       2*:   11:    std::vector<DeviceInfo> all = m_enum ? m_enum->enumerate() : std::vector<DeviceInfo>{};
+        2:   12:    std::vector<DeviceInfo> connected;
+        8:   13:    for (DeviceInfo& d : all)
+        6:   14:        if (d.connected) connected.push_back(d);   // BR-001: so conectados; sem catalogo estatico
+        4:   15:    return connected;
+        2:   16:}
+        -:   17:
+    #####:   18:const DeviceCapabilities* HardwareManager::getCapabilities(const std::string& deviceId) const {
+    #####:   19:    static DeviceCapabilities scratch;
+    #####:   20:    for (const DeviceInfo& d : enumerateDevices())
+    #####:   21:        if (d.id == deviceId) { scratch = d.caps; return &scratch; }
+    #####:   22:    return nullptr;
+        -:   23:}
+        -:   24:
+        6:   25:ConfigValidation HardwareManager::validateConfig(const DeviceInfo& dev, double sampleRate, int bufferSize) const {
+        6:   26:    ConfigValidation v;
+        6:   27:    const auto& sr = dev.caps.sampleRates;
+        6:   28:    const auto& bs = dev.caps.bufferSizes;
+        6:   29:    const bool srOk = std::find(sr.begin(), sr.end(), sampleRate) != sr.end();
+        6:   30:    const bool bsOk = std::find(bs.begin(), bs.end(), bufferSize) != bs.end();
+        6:   31:    if (!srOk || !bsOk) {
+        4:   32:        v.ok = false; v.error = HwError::UnsupportedConfig;   // ER-003
+        4:   33:        v.message = "Configuracao nao suportada por " + dev.name + ". Selecione valores disponiveis.";
+        4:   34:        return v;
+        -:   35:    }
+        2:   36:    if (!hasUsableChannels(dev)) {
+    #####:   37:        v.ok = false; v.error = HwError::NoUsableChannels;    // ER-010
+    #####:   38:        v.message = "O dispositivo nao possui canais de entrada e saida utilizaveis.";
+    #####:   39:        return v;
+        -:   40:    }
+        2:   41:    v.ok = true;
+        2:   42:    return v;
+    =====:   43:}
+        -:   44:
+        8:   45:std::string HardwareManager::channelLabel(const DeviceInfo& dev, int index, bool input) {
+        8:   46:    const auto& names = input ? dev.caps.inputChannelNames : dev.caps.outputChannelNames;
+        8:   47:    if (index >= 0 && index < static_cast<int>(names.size()) && !names[static_cast<std::size_t>(index)].empty())
+        4:   48:        return names[static_cast<std::size_t>(index)];
+        4:   49:    return "Canal " + std::to_string(index);   // FR-007: fallback determinístico
+        -:   50:}
+        -:   51:
+        4:   52:LatencyEstimate HardwareManager::estimateRoundTripLatency(const DeviceInfo& dev, int bufferSize, double sampleRate) {
+        4:   53:    LatencyEstimate e;
+       4*:   54:    if (sampleRate <= 0.0) { e.partial = true; return e; }
+        -:   55:    // Round-trip aproximado: 2x buffer (in+out) + latencia reportada pelo driver, se conhecida.
+        4:   56:    double samples = 2.0 * bufferSize;
+        4:   57:    if (dev.caps.driverLatencyKnown) samples += dev.caps.driverReportedLatencySamples;
+        2:   58:    else e.partial = true;                       // FR-008: estimativa parcial -> aviso
+        4:   59:    e.milliseconds = samples / sampleRate * 1000.0;
+        4:   60:    return e;
+        -:   61:}
+        -:   62:
+        2:   63:bool HardwareManager::hasUsableChannels(const DeviceInfo& dev) {
+       2*:   64:    return dev.caps.inputChannels > 0 && dev.caps.outputChannels > 0;
+        -:   65:}
+        -:   66:
+        -:   67:} // namespace aamp

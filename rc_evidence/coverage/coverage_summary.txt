@@ -1,0 +1,25 @@
+AAMP - Relatorio de Cobertura (gcov) | Nucleo headless determinístico (Fases 1-4)
+Meta DOC-11 §4: >= 80% de linhas em Analysis, Stimulus, Export (trio-meta).
+Ambiente: g++ 13.3 (Ubuntu), -O0 --coverage, CI headless (Linux).
+
+MODULO  Arquivo                                          Cobertura      Trio-meta
+------  -----------------------------------------------  -------------  ----------
+M-03    src/stimulus/StimulusGenerator.cpp                96.68% (241)  Stimulus OK
+M-05    src/analysis/AnalysisEngine.cpp                   97.88% (425)  Analysis OK
+DSP     src/analysis/Fft.cpp                              89.47% ( 38)  Analysis OK
+DSP     src/analysis/Windows.cpp                         100.00% ( 33)  Analysis OK
+DSP     src/analysis/Hilbert.cpp                         100.00% ( 41)  Analysis OK
+DSP     src/analysis/Deconvolution.cpp                    91.67% ( 12)  Analysis OK
+M-07    src/export/ExportEngine.cpp                       97.40% (154)  Export   OK
+M-04    src/capture/CaptureEngine.cpp                    100.00% ( 57)
+M-04    src/capture/IAudioDevice.cpp                      95.24% ( 21)
+M-08    src/orchestration/MeasurementOrchestrator.cpp     81.37% (102)
+M-08    src/orchestration/StateMachine.cpp                54.17% ( 24)
+M-01    src/hardware/HardwareManager.cpp                  80.43% ( 46)
+M-02    src/routing/RoutingManager.cpp                    92.86% ( 42)
+M-01    src/hardware/HardwareManager.cpp                  80.43% ( 46)
+M-02    src/routing/RoutingManager.cpp                    92.86% ( 42)
+M-06    src/dashboard/DashboardModel.cpp                  80.00% ( 40)
+------  -----------------------------------------------  -------------  ----------
+Trio-meta (Analysis + Stimulus + Export): TODOS >= 80%  OK
+(M-01/M-02/M-04/M-08 fora do trio-meta de DOC-11 §4; cobertura reportada por completude.)

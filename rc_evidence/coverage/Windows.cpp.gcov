@@ -1,0 +1,56 @@
+        -:    0:Source:src/analysis/Windows.cpp
+        -:    0:Graph:Windows.gcno
+        -:    0:Data:Windows.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/analysis/Windows.cpp
+        -:    2:#include "Windows.h"
+        -:    3:#include <cmath>
+        -:    4:
+        -:    5:namespace aamp {
+        -:    6:
+        -:    7:static const double PI = 3.14159265358979323846;
+        -:    8:
+     1274:    9:std::vector<double> makeWindow(Window w, int n) {
+     1274:   10:    std::vector<double> win(static_cast<std::size_t>(n), 1.0);
+     1274:   11:    if (n <= 1) return win;
+     1272:   12:    const double N1 = static_cast<double>(n - 1);
+ 15742200:   13:    for (int i = 0; i < n; ++i) {
+ 15740928:   14:        const double r = static_cast<double>(i) / N1; // 0..1
+ 15740928:   15:        double v = 1.0;
+ 15740928:   16:        switch (w) {
+     2048:   17:            case Window::Rectangular:
+     2048:   18:                v = 1.0; break;
+  4589568:   19:            case Window::Hann:
+  4589568:   20:                v = 0.5 - 0.5 * std::cos(2.0 * PI * r); break;
+     2048:   21:            case Window::Hamming:
+     2048:   22:                v = 0.54 - 0.46 * std::cos(2.0 * PI * r); break;
+     2048:   23:            case Window::Blackman:
+     2048:   24:                v = 0.42 - 0.5 * std::cos(2.0 * PI * r) + 0.08 * std::cos(4.0 * PI * r); break;
+     2048:   25:            case Window::FlatTop: {
+        -:   26:                // Coeficientes SRS Flat Top (5 termos).
+     2048:   27:                const double a0 = 0.21557895, a1 = 0.41663158, a2 = 0.277263158,
+     2048:   28:                             a3 = 0.083578947, a4 = 0.006947368;
+     2048:   29:                v = a0 - a1 * std::cos(2.0 * PI * r) + a2 * std::cos(4.0 * PI * r)
+     2048:   30:                      - a3 * std::cos(6.0 * PI * r) + a4 * std::cos(8.0 * PI * r);
+     2048:   31:                break;
+        -:   32:            }
+ 11143168:   33:            case Window::BlackmanHarris4: {
+        -:   34:                // Blackman-Harris 4-termos (DOC-03 MS-05/06/07).
+ 11143168:   35:                const double a0 = 0.35875, a1 = 0.48829, a2 = 0.14128, a3 = 0.01168;
+ 11143168:   36:                v = a0 - a1 * std::cos(2.0 * PI * r) + a2 * std::cos(4.0 * PI * r)
+ 11143168:   37:                      - a3 * std::cos(6.0 * PI * r);
+ 11143168:   38:                break;
+        -:   39:            }
+        -:   40:        }
+ 15740928:   41:        win[static_cast<std::size_t>(i)] = v;
+        -:   42:    }
+     1272:   43:    return win;
+        -:   44:}
+        -:   45:
+     1272:   46:double windowCoherentGain(const std::vector<double>& win) {
+     1272:   47:    double s = 0.0;
+ 15742200:   48:    for (double v : win) s += v;
+     1272:   49:    return s;
+        -:   50:}
+        -:   51:
+        -:   52:} // namespace aamp

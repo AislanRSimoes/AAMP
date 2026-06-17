@@ -1,0 +1,42 @@
+        -:    0:Source:src/orchestration/StateMachine.cpp
+        -:    0:Graph:StateMachine.gcno
+        -:    0:Data:StateMachine.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/orchestration/StateMachine.cpp
+        -:    2:#include "StateMachine.h"
+        -:    3:
+        -:    4:namespace aamp {
+        -:    5:
+    #####:    6:const char* stateName(State s) {
+    #####:    7:    switch (s) {
+    #####:    8:        case State::Idle: return "IDLE";
+    #####:    9:        case State::Ready: return "READY";
+    #####:   10:        case State::Measuring: return "MEASURING";
+    #####:   11:        case State::Processing: return "PROCESSING";
+    #####:   12:        case State::Results: return "RESULTS";
+    #####:   13:        case State::Exporting: return "EXPORTING";
+    #####:   14:        case State::Error: return "ERROR";
+        -:   15:    }
+    #####:   16:    return "UNKNOWN";
+        -:   17:}
+        -:   18:
+       66:   19:bool StateMachine::canTransition(State to) const {
+       66:   20:    switch (m_state) {
+      16*:   21:        case State::Idle:       return to == State::Ready || to == State::Error;
+       16:   22:        case State::Ready:      return to == State::Measuring || to == State::Idle || to == State::Error;
+      12*:   23:        case State::Measuring:  return to == State::Processing || to == State::Idle || to == State::Error;
+       12:   24:        case State::Processing: return to == State::Results || to == State::Error;
+       4*:   25:        case State::Results:    return to == State::Measuring || to == State::Exporting || to == State::Idle || to == State::Error;
+       2*:   26:        case State::Exporting:  return to == State::Results || to == State::Error;
+        4:   27:        case State::Error:      return to == State::Idle;
+        -:   28:    }
+    #####:   29:    return false;
+        -:   30:}
+        -:   31:
+       66:   32:bool StateMachine::transition(State to) {
+       66:   33:    if (!canTransition(to)) return false;
+       60:   34:    m_state = to;
+       60:   35:    return true;
+        -:   36:}
+        -:   37:
+        -:   38:} // namespace aamp

@@ -1,0 +1,69 @@
+        -:    0:Source:src/analysis/Hilbert.cpp
+        -:    0:Graph:Hilbert.gcno
+        -:    0:Data:Hilbert.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/analysis/Hilbert.cpp
+        -:    2:#include "Hilbert.h"
+        -:    3:#include "Fft.h"
+        -:    4:#include "../common/Constants.h"
+        -:    5:#include <cmath>
+        -:    6:#include <algorithm>
+        -:    7:
+        -:    8:namespace aamp {
+        -:    9:
+      238:   10:static int nextPow2(std::size_t n) {
+      238:   11:    int p = 1;
+     4004:   12:    while (static_cast<std::size_t>(p) < n) p <<= 1;
+     238*:   13:    if (p < k::FFT_MIN) p = k::FFT_MIN;
+      238:   14:    return p;
+        -:   15:}
+        -:   16:
+      238:   17:std::vector<double> analyticMagnitude(const std::vector<double>& signal) {
+      238:   18:    const std::size_t L = signal.size();
+     238*:   19:    if (L == 0) return {};
+      238:   20:    const int N = nextPow2(L);
+      238:   21:    std::vector<Complex> X = Fft::forwardReal(signal, N);
+        -:   22:
+        -:   23:    // Filtro analitico: h[0]=1, h[N/2]=1, h[1..N/2-1]=2, resto=0.
+146504942:   24:    for (int i = 0; i < N; ++i) {
+        -:   25:        double h;
+146504704:   26:        if (i == 0 || i == N / 2)       h = 1.0;
+146504228:   27:        else if (i < N / 2)             h = 2.0;
+ 73252114:   28:        else                            h = 0.0;
+146504704:   29:        X[static_cast<std::size_t>(i)] *= h;
+        -:   30:    }
+      238:   31:    Fft::transform(X, true); // IFFT
+        -:   32:
+      238:   33:    std::vector<double> env(L);
+ 91559278:   34:    for (std::size_t i = 0; i < L; ++i)
+ 91559040:   35:        env[i] = std::abs(X[i]);
+      238:   36:    return env;
+      238:   37:}
+        -:   38:
+      238:   39:std::vector<double> extractEnvelope(const std::vector<double>& signal, double fs) {
+      238:   40:    std::vector<double> mag = analyticMagnitude(signal);
+      238:   41:    const std::size_t L = mag.size();
+     238*:   42:    if (L == 0) return {};
+        -:   43:
+        -:   44:    // Media movel de round(0.001 * fs) samples (DOC-03 §4.4).
+      238:   45:    int w = static_cast<int>(k::ENVELOPE_MA_SECONDS * fs + 0.5);
+     238*:   46:    if (w < 1) w = 1;
+      238:   47:    std::vector<double> out(L, 0.0);
+      238:   48:    double acc = 0.0;
+        -:   49:    // Soma prefixada para janela causal-centrada simples (box filter).
+      238:   50:    std::vector<double> prefix(L + 1, 0.0);
+ 91559278:   51:    for (std::size_t i = 0; i < L; ++i) prefix[i + 1] = prefix[i] + mag[i];
+      238:   52:    const int half = w / 2;
+ 91559278:   53:    for (std::size_t i = 0; i < L; ++i) {
+ 91559040:   54:        long lo = static_cast<long>(i) - half;
+ 91559040:   55:        long hi = static_cast<long>(i) - half + w; // [lo, hi)
+ 91559040:   56:        if (lo < 0) lo = 0;
+ 91559040:   57:        if (hi > static_cast<long>(L)) hi = static_cast<long>(L);
+ 91559040:   58:        const double sum = prefix[static_cast<std::size_t>(hi)] - prefix[static_cast<std::size_t>(lo)];
+ 91559040:   59:        out[i] = sum / static_cast<double>(hi - lo);
+        -:   60:    }
+        -:   61:    (void)acc;
+      238:   62:    return out;
+      238:   63:}
+        -:   64:
+        -:   65:} // namespace aamp

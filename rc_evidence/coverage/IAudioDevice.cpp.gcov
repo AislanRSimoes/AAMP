@@ -1,0 +1,42 @@
+        -:    0:Source:src/capture/IAudioDevice.cpp
+        -:    0:Graph:IAudioDevice.gcno
+        -:    0:Data:IAudioDevice.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/capture/IAudioDevice.cpp
+        -:    2:#include "IAudioDevice.h"
+        -:    3:#include <random>
+        -:    4:#include <cmath>
+        -:    5:#include <cstdint>
+        -:    6:
+        -:    7:namespace aamp {
+        -:    8:
+      138:    9:std::vector<double> LoopbackDevice::playAndCapture(const std::vector<double>& stimulus,
+        -:   10:                                                   std::size_t captureLen) {
+      138:   11:    std::vector<double> cap(captureLen, 0.0);
+        -:   12:    // H(f)=1 com latencia m_latency: captured[i+latency] = gain * stimulus[i].
+ 29808778:   13:    for (std::size_t i = 0; i < stimulus.size(); ++i) {
+ 29808640:   14:        const std::size_t j = i + static_cast<std::size_t>(m_latency);
+ 29808640:   15:        if (j < captureLen) cap[j] = m_gain * stimulus[i];
+        -:   16:    }
+        -:   17:    // piso de ruido determinístico (seed fixo) somado a captura.
+      138:   18:    if (m_noiseDbfs > -200.0) {
+        2:   19:        std::mt19937 mt(2024u);
+        2:   20:        const double target = std::pow(10.0, m_noiseDbfs / 20.0);
+        -:   21:        // normaliza um lote para RMS alvo
+        2:   22:        std::vector<double> nz(captureLen);
+        2:   23:        double s = 0.0;
+   288002:   24:        for (std::size_t i = 0; i < captureLen; ++i) {
+   288000:   25:            nz[i] = (static_cast<double>(mt()) / 4294967296.0) * 2.0 - 1.0;
+   288000:   26:            s += nz[i] * nz[i];
+        -:   27:        }
+       2*:   28:        const double rms = (captureLen > 0) ? std::sqrt(s / static_cast<double>(captureLen)) : 0.0;
+       2*:   29:        const double g = (rms > 0.0) ? target / rms : 0.0;
+   288002:   30:        for (std::size_t i = 0; i < captureLen; ++i) cap[i] += nz[i] * g;
+        2:   31:    }
+        -:   32:    // captura parcial (falha de driver): devolve buffer truncado.
+      138:   33:    if (m_truncate > 0 && m_truncate < cap.size())
+        2:   34:        cap.resize(m_truncate);
+      138:   35:    return cap;
+    =====:   36:}
+        -:   37:
+        -:   38:} // namespace aamp

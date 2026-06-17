@@ -1,0 +1,42 @@
+# AAMP CI — fecha os portoes por ambiente (DOC-12 §3).
+# Linux headless: nucleo determinístico + cobertura (Analysis/Stimulus/Export >=80%).
+# Windows (MSVC) e macOS (AppleClang): build Release zero-warning (P-07) + CTest + E2E/SLAs.
+name: aamp-ci
+on: [push, pull_request]
+jobs:
+  linux-headless-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + test (headless) + coverage
+        run: |
+          cmake --preset linux-headless-cov
+          cmake --build build/linux
+          ctest --preset headless
+          # cobertura (gcov/lcov) das areas-meta; falha se < 80%.
+          ./build/linux/aamp_tests
+      - name: Coverage gate (Analysis/Stimulus/Export >= 80%)
+        run: ./build_and_test.sh   # imprime cobertura por arquivo
+
+  windows-release:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (MSVC, JUCE)
+        run: cmake --preset windows-release -DAAMP_WITH_JUCE=ON
+      - name: Build Release (P-07: /W4 /WX -> zero warnings em src/)
+        run: cmake --build build/win --config Release
+      - name: CTest (unit + integracao loopback)
+        run: ctest --test-dir build/win -C Release --output-on-failure
+      # P-03 / E2E / SLAs (hardware real) executam em runner auto-hospedado com interface de audio.
+
+  macos-release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (AppleClang, JUCE)
+        run: cmake --preset macos-release -DAAMP_WITH_JUCE=ON
+      - name: Build Release (P-07: -Werror -> zero warnings em src/)
+        run: cmake --build build/macos --config Release
+      - name: CTest
+        run: ctest --test-dir build/macos -C Release --output-on-failure

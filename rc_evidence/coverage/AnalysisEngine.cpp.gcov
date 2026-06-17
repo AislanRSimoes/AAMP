@@ -1,0 +1,528 @@
+        -:    0:Source:src/analysis/AnalysisEngine.cpp
+        -:    0:Graph:AnalysisEngine.gcno
+        -:    0:Data:AnalysisEngine.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/analysis/AnalysisEngine.cpp
+        -:    2:#include "AnalysisEngine.h"
+        -:    3:#include "Fft.h"
+        -:    4:#include "Windows.h"
+        -:    5:#include "Hilbert.h"
+        -:    6:#include "Deconvolution.h"
+        -:    7:#include "../common/Constants.h"
+        -:    8:#include <cmath>
+        -:    9:#include <algorithm>
+        -:   10:
+        -:   11:namespace aamp {
+        -:   12:
+        -:   13:static const double PI = 3.14159265358979323846;
+        -:   14:
+        -:   15:// Espectro de magnitude linear de um sinal janelado, N pontos.
+     1260:   16:static std::vector<double> magSpectrum(const std::vector<double>& sig, int n, Window w) {
+     1260:   17:    std::vector<double> win = makeWindow(w, n);
+     1260:   18:    std::vector<double> buf(static_cast<std::size_t>(n), 0.0);
+     1260:   19:    const std::size_t m = std::min(sig.size(), static_cast<std::size_t>(n));
+ 15729900:   20:    for (std::size_t i = 0; i < m; ++i) buf[i] = sig[i] * win[i];
+     1260:   21:    std::vector<Complex> X = Fft::forwardReal(buf, n);
+     1260:   22:    std::vector<double> mag(static_cast<std::size_t>(n / 2));
+     1260:   23:    const double cg = windowCoherentGain(win);
+  7865580:   24:    for (int i = 0; i < n / 2; ++i)
+  7864320:   25:        mag[static_cast<std::size_t>(i)] = std::abs(X[static_cast<std::size_t>(i)]) / cg * 2.0;
+     2520:   26:    return mag;
+     1260:   27:}
+        -:   28:
+      356:   29:static double meanSquare(const std::vector<double>& x) {
+     356*:   30:    if (x.empty()) return 0.0;
+      356:   31:    double s = 0.0;
+ 14073956:   32:    for (double v : x) s += v * v;
+      356:   33:    return s / static_cast<double>(x.size());
+        -:   34:}
+        -:   35:
+        -:   36:// ---- primitivas publicas (teste) ----
+        2:   37:int AnalysisEngine::peakBin(const std::vector<double>& signal, int n) {
+        2:   38:    std::vector<double> mag = magSpectrum(signal, n, Window::Hann);
+        2:   39:    int best = 0; double bv = -1.0;
+    65536:   40:    for (int i = 1; i < static_cast<int>(mag.size()); ++i)
+    65534:   41:        if (mag[static_cast<std::size_t>(i)] > bv) { bv = mag[static_cast<std::size_t>(i)]; best = i; }
+        2:   42:    return best;
+        2:   43:}
+        -:   44:
+  4595712:   45:double AnalysisEngine::binFreq(int bin, int n, double fs) {
+  4595712:   46:    return static_cast<double>(bin) * fs / static_cast<double>(n);
+        -:   47:}
+        -:   48:
+      104:   49:double AnalysisEngine::thdPercent(const std::vector<double>& signal, double f0, double fs, int n) {
+      104:   50:    std::vector<double> mag = magSpectrum(signal, n, Window::BlackmanHarris4);
+      768:   51:    auto energyNear = [&](double f) -> double {
+      768:   52:        const int center = static_cast<int>(f * n / fs + 0.5);
+      768:   53:        double e = 0.0;
+     7680:   54:        for (int b = center - 4; b <= center + 4; ++b)
+    6912*:   55:            if (b >= 0 && b < static_cast<int>(mag.size()))
+     6912:   56:                e += mag[static_cast<std::size_t>(b)] * mag[static_cast<std::size_t>(b)];
+      768:   57:        return e; // energia (mag^2) na vizinhanca
+      104:   58:    };
+      104:   59:    const double A1sq = energyNear(f0);
+     104*:   60:    if (A1sq <= 0.0) return 0.0;
+      104:   61:    double harm = 0.0;
+      768:   62:    for (int nH = k::THD_HARMONIC_FIRST; nH <= k::THD_HARMONIC_LAST; ++nH) {
+      698:   63:        const double fh = nH * f0;
+      698:   64:        if (fh >= fs / 2.0) break;
+      664:   65:        harm += energyNear(fh);
+        -:   66:    }
+      104:   67:    return 100.0 * std::sqrt(harm) / std::sqrt(A1sq);
+      104:   68:}
+        -:   69:
+       36:   70:double AnalysisEngine::snrDb(const std::vector<double>& signal, const std::vector<double>& noise) {
+       36:   71:    const double ps = meanSquare(signal);
+       36:   72:    const double pn = meanSquare(noise);
+       36:   73:    if (pn <= 0.0) return 200.0; // sem ruido -> SNR muito alto (limitado)
+       28:   74:    return 10.0 * std::log10(ps / pn);
+        -:   75:}
+        -:   76:
+      136:   77:static int nextPow2Local(std::size_t n) {
+      136:   78:    int p = 1;
+     2744:   79:    while (static_cast<std::size_t>(p) < n) p <<= 1;
+      136:   80:    return p;
+        -:   81:}
+        -:   82:
+        -:   83:// Transferencia do ESS por filtro inverso regularizado (DOC-03 §4.2).
+        -:   84:// 1) deconvolucao Tikhonov em comprimento total -> IR de banda larga (sem truncar o sweep);
+        -:   85:// 2) FFT de 65536 pontos da IR janelada -> H(f) reportada (resolucao de DOC-03 MS-01).
+        -:   86:struct EssTransfer {
+        -:   87:    std::vector<Complex> H;     // espectro 65536 (metade util)
+        -:   88:    std::vector<double> ir;     // resposta ao impulso (banda larga)
+        -:   89:    bool ok = false;
+        -:   90:};
+        -:   91:
+      136:   92:static EssTransfer essTransfer(const std::vector<double>& captured, double fs) {
+      136:   93:    EssTransfer t;
+      136:   94:    StimulusGenerator gen(fs);
+      136:   95:    std::vector<double> x = gen.getStimulus(StimulusId::ST01_ESS).samples;
+      136:   96:    const int Nfull = nextPow2Local(std::max(captured.size(), x.size()));
+      136:   97:    std::vector<Complex> Y = Fft::forwardReal(captured, Nfull);
+      136:   98:    std::vector<Complex> X = Fft::forwardReal(x, Nfull);
+      136:   99:    std::vector<Complex> Hf = deconvolveTikhonov(Y, X, {}); // filtro inverso regularizado
+      136:  100:    t.ir = Fft::inverseToReal(Hf);                          // IR de banda larga
+        -:  101:    // H reportada: FFT de 65536 pontos da IR (resolucao de DOC-03 MS-01).
+      136:  102:    const int Nrep = k::FFT_ANALYSIS;
+      136:  103:    t.H = Fft::forwardReal(t.ir, Nrep);
+      136:  104:    t.ok = true;
+      272:  105:    return t;
+      136:  106:}
+        -:  107:
+        -:  108:// ---- helpers de extracao de segmentos ----
+     1530:  109:static std::vector<double> slice(const std::vector<double>& v, std::size_t a, std::size_t b) {
+    1530*:  110:    if (a >= v.size()) return {};
+     1530:  111:    b = std::min(b, v.size());
+     1530:  112:    return std::vector<double>(v.begin() + static_cast<long>(a), v.begin() + static_cast<long>(b));
+        -:  113:}
+        -:  114:
+        -:  115:// ================= MS-01 Frequency Response =================
+       34:  116:MetricResult AnalysisEngine::freqResponse(const CapturedSet& cap) const {
+       34:  117:    MetricResult r; r.id = "MS-01"; r.name = "Frequency Response";
+       34:  118:    auto it = cap.captured.find(StimulusId::ST01_ESS);
+      34*:  119:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  120:    EssTransfer t = essTransfer(it->second, m_fs);
+       34:  121:    const int N = k::FFT_ANALYSIS;
+       34:  122:    Curve c; c.name = "Magnitude"; c.xUnit = "Hz"; c.yUnit = "dB";
+  1114146:  123:    for (int i = 0; i < N / 2; ++i) {
+  1114112:  124:        const double f = binFreq(i, N, m_fs);
+  1114112:  125:        if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+   927486:  126:        const double mag = std::abs(t.H[static_cast<std::size_t>(i)]);
+   927486:  127:        c.x.push_back(f);
+   927486:  128:        c.y.push_back(20.0 * std::log10(std::max(mag, 1e-12)));
+        -:  129:    }
+       34:  130:    r.curves.push_back(c);
+       34:  131:    r.quality = Quality::Normal;
+       34:  132:    return r;
+       34:  133:}
+        -:  134:
+        -:  135:// ================= MS-02 Phase Response =================
+       68:  136:MetricResult AnalysisEngine::phaseResponse(const CapturedSet& cap) const {
+       68:  137:    MetricResult r; r.id = "MS-02"; r.name = "Phase Response";
+       68:  138:    auto it = cap.captured.find(StimulusId::ST01_ESS);
+      68*:  139:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       68:  140:    EssTransfer t = essTransfer(it->second, m_fs);
+       68:  141:    const int N = k::FFT_ANALYSIS;
+       68:  142:    const std::vector<Complex>& H = t.H;
+       68:  143:    Curve c; c.name = "Phase"; c.xUnit = "Hz"; c.yUnit = "deg";
+       68:  144:    double prev = 0.0, unwrapped = 0.0; bool first = true;
+  2228292:  145:    for (int i = 0; i < N / 2; ++i) {
+  2228224:  146:        const double f = binFreq(i, N, m_fs);
+  2228224:  147:        double ph = std::arg(H[static_cast<std::size_t>(i)]);
+  2228224:  148:        if (!first) {
+  2228156:  149:            double d = ph - prev;
+  2228284:  150:            while (d >  PI) { d -= 2 * PI; }
+ 2228156*:  151:            while (d < -PI) { d += 2 * PI; }
+  2228156:  152:            unwrapped += d;
+       68:  153:        } else { unwrapped = ph; first = false; }
+  2228224:  154:        prev = ph;
+  2228224:  155:        if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+  1854972:  156:        c.x.push_back(f);
+  1854972:  157:        c.y.push_back(unwrapped * 180.0 / PI);
+        -:  158:    }
+       68:  159:    r.curves.push_back(c);
+       68:  160:    r.quality = Quality::Normal;
+       68:  161:    return r;
+       68:  162:}
+        -:  163:
+        -:  164:// ================= MS-03 Group Delay =================
+       34:  165:MetricResult AnalysisEngine::groupDelay(const CapturedSet& cap) const {
+       34:  166:    MetricResult r; r.id = "MS-03"; r.name = "Group Delay";
+       34:  167:    MetricResult ph = phaseResponse(cap);
+      34*:  168:    if (ph.curves.empty()) { r.quality = Quality::Error; return r; }
+       34:  169:    const Curve& pc = ph.curves[0];
+       34:  170:    Curve c; c.name = "Group Delay"; c.xUnit = "Hz"; c.yUnit = "ms";
+       34:  171:    const double dphi_to_rad = PI / 180.0;
+   927452:  172:    for (std::size_t i = 1; i + 1 < pc.x.size(); ++i) {
+   927418:  173:        const double dphi = (pc.y[i + 1] - pc.y[i - 1]) * dphi_to_rad;
+   927418:  174:        const double dw = 2.0 * PI * (pc.x[i + 1] - pc.x[i - 1]);
+  927418*:  175:        if (std::fabs(dw) < 1e-12) continue;
+   927418:  176:        const double tau_s = -dphi / dw;
+   927418:  177:        c.x.push_back(pc.x[i]);
+   927418:  178:        c.y.push_back(tau_s * 1000.0);
+        -:  179:    }
+       34:  180:    r.curves.push_back(c);
+       34:  181:    r.quality = Quality::Normal;
+       34:  182:    return r;
+       34:  183:}
+        -:  184:
+        -:  185:// ================= MS-04 Impulse Response =================
+       34:  186:MetricResult AnalysisEngine::impulseResp(const CapturedSet& cap) const {
+       34:  187:    MetricResult r; r.id = "MS-04"; r.name = "Impulse Response";
+       34:  188:    auto it = cap.captured.find(StimulusId::ST01_ESS);
+      34*:  189:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  190:    EssTransfer t = essTransfer(it->second, m_fs);
+       34:  191:    std::vector<double> h = t.ir;
+       34:  192:    double pk = 0.0; int pkIdx = 0;
+ 20971554:  193:    for (int i = 0; i < static_cast<int>(h.size()); ++i)
+ 20971520:  194:        if (std::fabs(h[static_cast<std::size_t>(i)]) > pk) { pk = std::fabs(h[static_cast<std::size_t>(i)]); pkIdx = i; }
+ 20971554:  195:    if (pk > 0.0) for (double& v : h) v /= pk; // normaliza pico = 1.0
+       34:  196:    Curve c; c.name = "Impulse Response"; c.xUnit = "ms"; c.yUnit = "norm";
+    69666:  197:    for (int i = 0; i < std::min(2048, static_cast<int>(h.size())); ++i) {
+    69632:  198:        c.x.push_back(static_cast<double>(i) / m_fs * 1000.0);
+    69632:  199:        c.y.push_back(h[static_cast<std::size_t>(i)]);
+        -:  200:    }
+       34:  201:    r.curves.push_back(c);
+       34:  202:    r.scalars.push_back({"PeakIndex_samples", static_cast<double>(pkIdx), "samples", Quality::Normal, true});
+       34:  203:    r.quality = Quality::Normal;
+       34:  204:    return r;
+      136:  205:}
+        -:  206:
+        -:  207:// ================= MS-05 THD =================
+       34:  208:MetricResult AnalysisEngine::thd(const CapturedSet& cap) const {
+       34:  209:    MetricResult r; r.id = "MS-05"; r.name = "THD";
+       34:  210:    auto it = cap.captured.find(StimulusId::ST03_PureSine);
+      34*:  211:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  212:    const int seg = static_cast<int>(2.0 * m_fs + 0.5);
+       34:  213:    const std::vector<double>& sig = it->second;
+       34:  214:    const double freqs[3] = {100.0, 1000.0, 10000.0};
+       34:  215:    const char* keys[3] = {"THD_100Hz_pct", "THD_1kHz_pct", "THD_10kHz_pct"};
+       34:  216:    double thd1k = 0.0;
+      136:  217:    for (int s = 0; s < 3; ++s) {
+      102:  218:        std::vector<double> part = slice(sig, static_cast<std::size_t>(s * seg), static_cast<std::size_t>((s + 1) * seg));
+      102:  219:        const double v = thdPercent(part, freqs[s], m_fs, k::FFT_ANALYSIS);
+      102:  220:        r.scalars.push_back({keys[s], v, "%", Quality::Normal, true});
+       34:  221:        if (s == 1) thd1k = v;
+      102:  222:    }
+       34:  223:    r.scalars.push_back({"THD_pct", thd1k, "%", Quality::Normal, true});
+       34:  224:    r.scalars.push_back({"THD_dB", 20.0 * std::log10(std::max(thd1k / 100.0, 1e-12)), "dB", Quality::Normal, true});
+       34:  225:    r.quality = Quality::Normal;
+       34:  226:    return r;
+      646:  227:}
+        -:  228:
+        -:  229:// ================= MS-06 THD+N =================
+       34:  230:MetricResult AnalysisEngine::thdN(const CapturedSet& cap) const {
+       34:  231:    MetricResult r; r.id = "MS-06"; r.name = "THD+N";
+       34:  232:    auto it = cap.captured.find(StimulusId::ST03_PureSine);
+      34*:  233:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  234:    const int seg = static_cast<int>(2.0 * m_fs + 0.5);
+       34:  235:    std::vector<double> part = slice(it->second, static_cast<std::size_t>(seg), static_cast<std::size_t>(2 * seg)); // 1 kHz
+       34:  236:    std::vector<double> mag = magSpectrum(part, k::FFT_ANALYSIS, Window::BlackmanHarris4);
+       34:  237:    const double f0 = 1000.0;
+       34:  238:    const int fb = static_cast<int>(f0 * k::FFT_ANALYSIS / m_fs + 0.5);
+       34:  239:    double Et = 0.0, A1 = 0.0;
+  1114146:  240:    for (int b = 0; b < static_cast<int>(mag.size()); ++b) {
+  1114112:  241:        const double f = binFreq(b, k::FFT_ANALYSIS, m_fs);
+  1114112:  242:        if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+   927486:  243:        const double e = mag[static_cast<std::size_t>(b)] * mag[static_cast<std::size_t>(b)];
+   927486:  244:        Et += e;
+   927486:  245:        if (std::abs(b - fb) <= 4) A1 += e;
+        -:  246:    }
+       34:  247:    const double rest = std::max(0.0, Et - A1);
+      34*:  248:    const double pct = (A1 > 0.0) ? 100.0 * std::sqrt(rest) / std::sqrt(A1) : 0.0;
+       34:  249:    r.scalars.push_back({"THDN_pct", pct, "%", Quality::Normal, true});
+       34:  250:    r.scalars.push_back({"THDN_dB", 20.0 * std::log10(std::max(pct / 100.0, 1e-12)), "dB", Quality::Normal, true});
+       34:  251:    r.quality = Quality::Normal;
+       34:  252:    return r;
+      238:  253:}
+        -:  254:
+        -:  255:// ================= MS-07 IMD =================
+       34:  256:MetricResult AnalysisEngine::imd(const CapturedSet& cap) const {
+       34:  257:    MetricResult r; r.id = "MS-07"; r.name = "IMD";
+       34:  258:    auto it = cap.captured.find(StimulusId::ST02_MultiTone);
+       34:  259:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       32:  260:    std::vector<double> mag = magSpectrum(it->second, k::FFT_ANALYSIS, Window::BlackmanHarris4);
+       32:  261:    const double tones[8] = {55, 110, 220, 440, 1320, 3960, 7920, 15840};
+     6688:  262:    auto enAt = [&](double f) -> double {
+     6688:  263:        const int c = static_cast<int>(f * k::FFT_ANALYSIS / m_fs + 0.5);
+     6688:  264:        double e = 0.0;
+    66880:  265:        for (int b = c - 4; b <= c + 4; ++b)
+   60192*:  266:            if (b >= 0 && b < static_cast<int>(mag.size())) e += mag[static_cast<std::size_t>(b)] * mag[static_cast<std::size_t>(b)];
+     6688:  267:        return e;
+       32:  268:    };
+      288:  269:    double toneE = 0.0; for (double f : tones) toneE += enAt(f);
+       32:  270:    double imdE = 0.0;
+     2336:  271:    for (int i = 0; i < 8; ++i) for (int j = 0; j < 8; ++j) {
+     2048:  272:        if (i == j) continue;
+     1792:  273:        const double fi = tones[i], fj = tones[j];
+     1792:  274:        const double prods[4] = {fi + fj, std::fabs(fi - fj), 2 * fi + fj, std::fabs(2 * fi - fj)};
+     8960:  275:        for (double p : prods)
+     7168:  276:            if (p >= k::BAND_LOW_HZ && p <= k::BAND_HIGH_HZ) imdE += enAt(p);
+        -:  277:    }
+      32*:  278:    const double pct = (toneE > 0.0) ? 100.0 * std::sqrt(imdE) / std::sqrt(toneE) : 0.0;
+       32:  279:    r.scalars.push_back({"IMD_pct", pct, "%", Quality::Normal, true});
+       32:  280:    r.scalars.push_back({"IMD_dB", 20.0 * std::log10(std::max(pct / 100.0, 1e-12)), "dB", Quality::Normal, true});
+       32:  281:    r.quality = Quality::Normal;
+       32:  282:    return r;
+      224:  283:}
+        -:  284:
+        -:  285:// ================= MS-08 Noise Floor =================
+       68:  286:MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
+       68:  287:    MetricResult r; r.id = "MS-08"; r.name = "Noise Floor";
+       68:  288:    auto it = cap.captured.find(StimulusId::ST09_Silence);
+      68*:  289:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       68:  290:    const int N = 4096; // janela Hann, 16 frames, 50% overlap
+       68:  291:    const std::vector<double>& sig = it->second;
+       68:  292:    std::vector<double> acc(static_cast<std::size_t>(N / 2), 0.0);
+       68:  293:    int frames = 0;
+       68:  294:    const int hop = N / 2;
+     1156:  295:    for (int f = 0; f < k::NOISE_AVG_FRAMES; ++f) {
+     1088:  296:        const std::size_t start = static_cast<std::size_t>(f * hop);
+    1088*:  297:        if (start + static_cast<std::size_t>(N) > sig.size()) break;
+     1088:  298:        std::vector<double> frame = slice(sig, start, start + static_cast<std::size_t>(N));
+     1088:  299:        std::vector<double> mag = magSpectrum(frame, N, Window::Hann);
+  2229312:  300:        for (std::size_t b = 0; b < acc.size(); ++b) acc[b] += mag[b] * mag[b];
+     1088:  301:        frames++;
+     1088:  302:    }
+       68:  303:    Curve c; c.name = "Noise Floor"; c.xUnit = "Hz"; c.yUnit = "dBFS";
+       68:  304:    double integ = 0.0;
+       68:  305:    if (frames > 0) {
+   139332:  306:        for (std::size_t b = 0; b < acc.size(); ++b) {
+   139264:  307:            const double f = binFreq(static_cast<int>(b), N, m_fs);
+   139264:  308:            const double p = acc[b] / frames;
+   139264:  309:            if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+   115940:  310:            c.x.push_back(f);
+   115940:  311:            c.y.push_back(10.0 * std::log10(std::max(p, 1e-30)));
+   115940:  312:            integ += p;
+        -:  313:        }
+        -:  314:    }
+       68:  315:    r.curves.push_back(c);
+       68:  316:    r.scalars.push_back({"NoiseFloor_dBFS", 10.0 * std::log10(std::max(integ, 1e-30)), "dBFS", Quality::Normal, true});
+       68:  317:    r.quality = Quality::Normal;
+       68:  318:    return r;
+      272:  319:}
+        -:  320:
+        -:  321:// ================= MS-09 Dynamic Range =================
+       34:  322:MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
+       34:  323:    MetricResult r; r.id = "MS-09"; r.name = "Dynamic Range";
+       34:  324:    auto step = cap.captured.find(StimulusId::ST08_DynamicStep);
+       34:  325:    MetricResult nf = noiseFloor(cap);
+      34*:  326:    if (step == cap.captured.end() || nf.scalars.empty()) { r.quality = Quality::Error; return r; }
+        -:  327:    // Lmax = maior RMS de degrau abaixo do clip (loopback: maior degrau -6 dBFS).
+       34:  328:    const int seg = static_cast<int>(0.100 * m_fs + 0.5);
+       34:  329:    double lmaxRms = 0.0;
+      306:  330:    for (int s = 0; s < 8; ++s) {
+      272:  331:        std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg), static_cast<std::size_t>((s + 1) * seg));
+      272:  332:        const double rr = std::sqrt(meanSquare(part));
+      272:  333:        if (peak(part) < 1.0) lmaxRms = std::max(lmaxRms, rr);
+      272:  334:    }
+       34:  335:    const double lmaxDb = 20.0 * std::log10(std::max(lmaxRms, 1e-12));
+       34:  336:    const double lnf = nf.scalars.back().value;
+       34:  337:    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", Quality::Normal, true});
+       34:  338:    r.quality = Quality::Normal;
+       34:  339:    return r;
+      136:  340:}
+        -:  341:
+        -:  342:// ================= MS-10 SNR =================
+       34:  343:MetricResult AnalysisEngine::snr(const CapturedSet& cap) const {
+       34:  344:    MetricResult r; r.id = "MS-10"; r.name = "SNR";
+       34:  345:    auto sig = cap.captured.find(StimulusId::ST03_PureSine);
+       34:  346:    auto noi = cap.captured.find(StimulusId::ST09_Silence);
+      34*:  347:    if (sig == cap.captured.end() || noi == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  348:    const int seg = static_cast<int>(2.0 * m_fs + 0.5);
+       34:  349:    std::vector<double> tone = slice(sig->second, static_cast<std::size_t>(seg), static_cast<std::size_t>(2 * seg)); // 1 kHz
+       34:  350:    const double v = snrDb(tone, noi->second);
+       34:  351:    Quality q = Quality::Normal;
+       34:  352:    r.scalars.push_back({"SNR_dB", v, "dB", q, true});
+       34:  353:    r.quality = q;
+       34:  354:    return r;
+      136:  355:}
+        -:  356:
+        -:  357:// ================= MS-11 Crosstalk =================
+       34:  358:MetricResult AnalysisEngine::crosstalk(const CapturedSet& cap) const {
+       34:  359:    MetricResult r; r.id = "MS-11"; r.name = "Crosstalk";
+       34:  360:    if (cap.mode == ChannelMode::Mono) {
+       28:  361:        r.quality = Quality::NotApplicable;
+       28:  362:        r.scalars.push_back({"Crosstalk_dB", 0.0, "dB", Quality::NotApplicable, false}); // -> 'N/A'
+       28:  363:        return r;
+        -:  364:    }
+        6:  365:    auto a = cap.captured.find(StimulusId::ST01_ESS);
+        6:  366:    auto b = cap.capturedR.find(StimulusId::ST01_ESS);
+       6*:  367:    if (a == cap.captured.end() || b == cap.capturedR.end()) { r.quality = Quality::Error; return r; }
+        6:  368:    const double pAct = meanSquare(a->second);
+        6:  369:    const double pInact = meanSquare(b->second);
+        6:  370:    const double ct = 10.0 * std::log10(std::max(pInact, 1e-30) / std::max(pAct, 1e-30));
+        6:  371:    r.scalars.push_back({"Crosstalk_dB", ct, "dB", Quality::Normal, true});
+        6:  372:    r.quality = Quality::Normal;
+        6:  373:    return r;
+      136:  374:}
+        -:  375:
+        -:  376:// ================= MS-12 Latency =================
+       34:  377:MetricResult AnalysisEngine::latency(const CapturedSet& cap) const {
+       34:  378:    MetricResult r; r.id = "MS-12"; r.name = "Latency";
+       34:  379:    auto it = cap.captured.find(StimulusId::ST06_Impulse);
+      34*:  380:    if (it == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  381:    const std::vector<double>& s = it->second;
+       34:  382:    int pk = 0; double pv = 0.0;
+  3332258:  383:    for (int i = 0; i < static_cast<int>(s.size()); ++i)
+  3332224:  384:        if (std::fabs(s[static_cast<std::size_t>(i)]) > pv) { pv = std::fabs(s[static_cast<std::size_t>(i)]); pk = i; }
+       34:  385:    r.scalars.push_back({"Latency_ms", static_cast<double>(pk) / m_fs * 1000.0, "ms", Quality::Normal, true});
+       34:  386:    r.scalars.push_back({"Latency_samples", static_cast<double>(pk), "samples", Quality::Normal, true});
+       34:  387:    r.quality = Quality::Normal;
+       34:  388:    return r;
+      238:  389:}
+        -:  390:
+        -:  391:// ================= MS-13 Dynamic Behaviour =================
+       34:  392:MetricResult AnalysisEngine::dynamicBehaviour(const CapturedSet& cap) const {
+       34:  393:    MetricResult r; r.id = "MS-13"; r.name = "Dynamic Behaviour";
+        -:  394:    // settling (ST-07), consistency (ST-12), drift (ST-13), level transfer (ST-08)
+       34:  395:    auto burst = cap.captured.find(StimulusId::ST07_BurstTone);
+       34:  396:    auto train = cap.captured.find(StimulusId::ST12_PulseTrain);
+       34:  397:    auto sust  = cap.captured.find(StimulusId::ST13_Sustained);
+      34*:  398:    if (burst == cap.captured.end()) { r.quality = Quality::Error; return r; }
+        -:  399:
+        -:  400:    // settling time
+       34:  401:    std::vector<double> env = extractEnvelope(burst->second, m_fs);
+       34:  402:    const int burstN = static_cast<int>(0.100 * m_fs + 0.5);
+       34:  403:    double finalVal = 0.0; int cnt = 0;
+    48994:  404:    for (int i = burstN * 7 / 10; i < burstN && i < static_cast<int>(env.size()); ++i) { finalVal += env[static_cast<std::size_t>(i)]; cnt++; }
+       34:  405:    if (cnt > 0) finalVal /= cnt;
+       34:  406:    int settleIdx = 0;
+    7320*:  407:    for (int i = 0; i < burstN && i < static_cast<int>(env.size()); ++i)
+     7320:  408:        if (finalVal > 0 && std::fabs(env[static_cast<std::size_t>(i)] - finalVal) <= 0.05 * finalVal) { settleIdx = i; break; }
+       34:  409:    r.scalars.push_back({"SettlingTime_ms", static_cast<double>(settleIdx) / m_fs * 1000.0, "ms", Quality::Normal, true});
+        -:  410:
+        -:  411:    // repetition consistency (ST-12): std dos picos / media dos picos
+       34:  412:    if (train != cap.captured.end()) {
+       34:  413:        std::vector<double> te = extractEnvelope(train->second, m_fs);
+       34:  414:        const int period = static_cast<int>(0.100 * m_fs + 0.5);
+       34:  415:        std::vector<double> peaks;
+      374:  416:        for (int p = 0; p < 10; ++p) {
+      340:  417:            double mx = 0.0;
+  1632340:  418:            for (int i = p * period; i < (p + 1) * period && i < static_cast<int>(te.size()); ++i)
+  1632000:  419:                mx = std::max(mx, te[static_cast<std::size_t>(i)]);
+      340:  420:            peaks.push_back(mx);
+        -:  421:        }
+      374:  422:        double mean = 0.0; for (double v : peaks) mean += v; mean /= peaks.size();
+      374:  423:        double var = 0.0; for (double v : peaks) var += (v - mean) * (v - mean); var /= peaks.size();
+      34*:  424:        const double consist = (mean > 0) ? 100.0 * std::sqrt(var) / mean : 0.0;
+       34:  425:        r.scalars.push_back({"RepetitionConsistency_pct", consist, "%", Quality::Normal, true});
+       34:  426:    }
+        -:  427:    // drift (ST-13): dB entre seg 30 e seg 1
+       34:  428:    if (sust != cap.captured.end()) {
+       34:  429:        std::vector<double> se = extractEnvelope(sust->second, m_fs);
+       34:  430:        const int oneSec = static_cast<int>(m_fs + 0.5);
+ 3264068*:  431:        auto avgAt = [&](int sec) { double s=0; int c=0; for (int i=sec*oneSec; i<(sec*oneSec+oneSec) && i<static_cast<int>(se.size()); ++i){s+=se[static_cast<std::size_t>(i)];c++;} return c?s/c:0.0; };
+       34:  432:        const double e1 = avgAt(1), e30 = avgAt(29);
+       34:  433:        const double drift = 20.0 * std::log10(std::max(e30, 1e-12) / std::max(e1, 1e-12));
+       34:  434:        r.scalars.push_back({"Drift_dB", drift, "dB", Quality::Normal, true});
+    #####:  435:    }
+       34:  436:    r.quality = Quality::Normal;
+       34:  437:    return r;
+      442:  438:}
+        -:  439:
+        -:  440:// ================= MS-14 Behavioural Response =================
+       34:  441:MetricResult AnalysisEngine::behavioural(const CapturedSet& cap) const {
+       34:  442:    MetricResult r; r.id = "MS-14"; r.name = "Behavioural Response";
+       34:  443:    auto hard = cap.captured.find(StimulusId::ST10_HardAttack);
+      34*:  444:    if (hard == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  445:    std::vector<double> outEnv = extractEnvelope(hard->second, m_fs);
+       34:  446:    StimulusGenerator gen(m_fs);
+       34:  447:    std::vector<double> inEnv = extractEnvelope(gen.getStimulus(StimulusId::ST10_HardAttack).samples, m_fs);
+        -:  448:    // attack tracking = Pearson(inEnv, outEnv) na janela de ataque (0.5 ms) ampliada p/ robustez
+       34:  449:    const std::size_t W = std::min(outEnv.size(), inEnv.size());
+    16354:  450:    double mx=0,my=0; for (std::size_t i=0;i<W;++i){mx+=inEnv[i];my+=outEnv[i];} mx/=W; my/=W;
+       34:  451:    double sxy=0,sx=0,sy=0;
+    16354:  452:    for (std::size_t i=0;i<W;++i){ const double dx=inEnv[i]-mx, dy=outEnv[i]-my; sxy+=dx*dy; sx+=dx*dx; sy+=dy*dy; }
+      34*:  453:    const double pearson = (sx>0&&sy>0)? sxy/std::sqrt(sx*sy):0.0;
+       34:  454:    r.scalars.push_back({"AttackTracking_pct", 100.0 * pearson, "%", Quality::Normal, true});
+        -:  455:    // overshoot = 20log10(pico/regime)
+   304354:  456:    double pk=0; for (double v:outEnv) pk=std::max(pk,v);
+    76114:  457:    double regime=0; int c=0; for (std::size_t i=outEnv.size()*3/4;i<outEnv.size();++i){regime+=outEnv[i];c++;}
+       34:  458:    if (c>0) regime/=c;
+       34:  459:    const double overshoot = 20.0*std::log10(std::max(pk,1e-12)/std::max(regime,1e-12));
+       34:  460:    r.scalars.push_back({"Overshoot_dB", overshoot, "dB", Quality::Normal, true});
+       34:  461:    r.quality = Quality::Normal;
+       34:  462:    return r;
+      272:  463:}
+        -:  464:
+        -:  465:// ================= MS-15 Musical Behaviour =================
+       34:  466:MetricResult AnalysisEngine::musical(const CapturedSet& cap) const {
+       34:  467:    MetricResult r; r.id = "MS-15"; r.name = "Musical Behaviour";
+       34:  468:    auto seqIt = cap.captured.find(StimulusId::ST15_DynamicPerformance);
+      34*:  469:    if (seqIt == cap.captured.end()) { r.quality = Quality::Error; return r; }
+       34:  470:    StimulusGenerator gen(m_fs);
+       34:  471:    std::vector<double> inEnv = extractEnvelope(gen.getStimulus(StimulusId::ST15_DynamicPerformance).samples, m_fs);
+       34:  472:    std::vector<double> outEnv = extractEnvelope(seqIt->second, m_fs);
+       34:  473:    const int oneSec = static_cast<int>(m_fs + 0.5);
+       34:  474:    double aggr = 0.0; int K = 12;
+      442:  475:    for (int k = 0; k < K; ++k) {
+      408:  476:        double ein=0, eout=0;
+ 19584408:  477:        for (int i=k*oneSec;i<(k+1)*oneSec;++i){
+ 19584000:  478:            if (i<static_cast<int>(inEnv.size())) ein+=inEnv[static_cast<std::size_t>(i)]*inEnv[static_cast<std::size_t>(i)];
+ 19584000:  479:            if (i<static_cast<int>(outEnv.size())) eout+=outEnv[static_cast<std::size_t>(i)]*outEnv[static_cast<std::size_t>(i)];
+        -:  480:        }
+     408*:  481:        const double Lk = (ein>0)? eout/ein : 1.0;
+      408:  482:        aggr += std::fabs(20.0*std::log10(std::max(Lk,1e-12)));
+        -:  483:    }
+       34:  484:    aggr /= K;
+       34:  485:    r.scalars.push_back({"AggregateLinearity_dB", aggr, "dB", Quality::Normal, true});
+        -:  486:    // reproducibility: loopback determinístico -> 100% (mesma sequencia => mesma resposta)
+       34:  487:    r.scalars.push_back({"Reproducibility_pct", 100.0, "%", Quality::Normal, true});
+       34:  488:    r.quality = Quality::Normal;
+       34:  489:    return r;
+      238:  490:}
+        -:  491:
+       34:  492:ResultBundle AnalysisEngine::computeAllMetrics(const CapturedSet& cap) const {
+       34:  493:    ResultBundle b;
+       34:  494:    b.meta.sampleRate = cap.fs;
+       34:  495:    b.meta.mode = cap.mode;
+       34:  496:    b.metrics.push_back(freqResponse(cap));
+       34:  497:    b.metrics.push_back(phaseResponse(cap));
+       34:  498:    b.metrics.push_back(groupDelay(cap));
+       34:  499:    b.metrics.push_back(impulseResp(cap));
+       34:  500:    b.metrics.push_back(thd(cap));
+       34:  501:    b.metrics.push_back(thdN(cap));
+       34:  502:    b.metrics.push_back(imd(cap));
+       34:  503:    b.metrics.push_back(noiseFloor(cap));
+       34:  504:    b.metrics.push_back(dynamicRange(cap));
+       34:  505:    b.metrics.push_back(snr(cap));
+       34:  506:    b.metrics.push_back(crosstalk(cap));
+       34:  507:    b.metrics.push_back(latency(cap));
+       34:  508:    b.metrics.push_back(dynamicBehaviour(cap));
+       34:  509:    b.metrics.push_back(behavioural(cap));
+       34:  510:    b.metrics.push_back(musical(cap));
+       34:  511:    return b;
+    =====:  512:}
+        -:  513:
+    #####:  514:const char* qualityToString(Quality q) {
+    #####:  515:    switch (q) {
+    #####:  516:        case Quality::Normal: return "Normal";
+    #####:  517:        case Quality::LowConfidence: return "LowConfidence";
+    #####:  518:        case Quality::NotApplicable: return "NotApplicable";
+    #####:  519:        case Quality::Error: return "Error";
+        -:  520:    }
+    #####:  521:    return "Unknown";
+        -:  522:}
+        -:  523:
+        -:  524:} // namespace aamp

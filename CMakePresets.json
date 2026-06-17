@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    { "name": "linux-headless-cov", "displayName": "Linux headless + coverage (CI)",
+      "generator": "Unix Makefiles", "binaryDir": "${sourceDir}/build/linux",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "AAMP_COVERAGE": "ON" } },
+    { "name": "windows-release", "displayName": "Windows Release (MSVC, target machine)",
+      "generator": "Visual Studio 17 2022", "binaryDir": "${sourceDir}/build/win",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
+    { "name": "macos-release", "displayName": "macOS Release (AppleClang, target machine)",
+      "generator": "Xcode", "binaryDir": "${sourceDir}/build/macos",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+  ],
+  "testPresets": [
+    { "name": "headless", "configurePreset": "linux-headless-cov", "output": { "outputOnFailure": true } }
+  ]
+}

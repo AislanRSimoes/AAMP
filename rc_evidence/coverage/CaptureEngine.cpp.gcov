@@ -1,0 +1,91 @@
+        -:    0:Source:src/capture/CaptureEngine.cpp
+        -:    0:Graph:CaptureEngine.gcno
+        -:    0:Data:CaptureEngine.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/capture/CaptureEngine.cpp
+        -:    2:#include "CaptureEngine.h"
+        -:    3:#include "../common/Constants.h"
+        -:    4:#include <cmath>
+        -:    5:#include <algorithm>
+        -:    6:
+        -:    7:namespace aamp {
+        -:    8:
+        2:    9:static double rmsOf(const std::vector<double>& x) {
+       2*:   10:    if (x.empty()) return 0.0;
+   672002:   11:    double s = 0.0; for (double v : x) s += v * v;
+        2:   12:    return std::sqrt(s / static_cast<double>(x.size()));
+        -:   13:}
+        -:   14:
+       20:   15:CaptureEngine::CaptureEngine(double fs, double clipThresholdDbfs)
+       20:   16:    : m_fs(fs), m_clipThreshold(std::pow(10.0, clipThresholdDbfs / 20.0)) {}
+        -:   17:
+      128:   18:bool CaptureEngine::detectClipping(const std::vector<double>& x) const {
+ 31154378:   19:    for (double v : x) if (std::fabs(v) > m_clipThreshold) return true;
+      114:   20:    return false;
+        -:   21:}
+        -:   22:
+      128:   23:bool CaptureEngine::detectLowSignal(const std::vector<double>& x, double noiseFloorRms) const {
+      128:   24:    if (noiseFloorRms <= 0.0) return false;            // sem referencia de ruido -> nao avalia
+        2:   25:    const double r = rmsOf(x);
+       2*:   26:    if (r <= 0.0) return true;
+        2:   27:    const double snrDb = 20.0 * std::log10(r / noiseFloorRms);
+        2:   28:    return snrDb < k::MIN_SNR_OVER_FLOOR_DB;           // < 20 dB acima do piso (DOC-07 §5)
+        -:   29:}
+        -:   30:
+       10:   31:int CaptureEngine::measureSyncOffset(const std::vector<double>& captured, double fs) {
+        -:   32:    // Para ST-06, o pico capturado relativo a posicao de emissao round(0.5*fs) e o offset.
+       10:   33:    int pk = 0; double pv = 0.0;
+  1375370:   34:    for (int i = 0; i < static_cast<int>(captured.size()); ++i)
+  1375360:   35:        if (std::fabs(captured[static_cast<std::size_t>(i)]) > pv) { pv = std::fabs(captured[static_cast<std::size_t>(i)]); pk = i; }
+       10:   36:    return pk - k::impulsePositionSamples(fs);
+        -:   37:}
+        -:   38:
+      130:   39:CaptureResult CaptureEngine::capture(const Stimulus& stim, IAudioDevice& dev,
+        -:   40:                                     double noiseFloorRms) const {
+      130:   41:    CaptureResult r;
+        -:   42:    // Janela de captura = estimulo + post-roll (cauda); pre-roll modelado no inicio.
+      130:   43:    const std::size_t post = static_cast<std::size_t>(k::POST_ROLL_SECONDS * m_fs + 0.5);
+      130:   44:    const std::size_t captureLen = stim.samples.size() + post;
+      130:   45:    std::vector<double> raw = dev.playAndCapture(stim.samples, captureLen);
+        -:   46:
+        -:   47:    // ER-024: captura parcial (buffer incompleto) -> NUNCA processa dados parciais.
+      130:   48:    if (raw.size() < captureLen) {
+        2:   49:        r.status.partial = true;
+        2:   50:        r.status.valid = false;
+        2:   51:        return r;  // samples vazio
+        -:   52:    }
+      128:   53:    r.status.clipped   = detectClipping(raw);           // ER-020
+      128:   54:    r.status.lowSignal = detectLowSignal(raw, noiseFloorRms); // ER-023 (nao bloqueante)
+      128:   55:    r.status.valid     = !r.status.clipped && !r.status.partial;
+      128:   56:    r.samples = std::move(raw);
+      128:   57:    if (stim.id == StimulusId::ST06_Impulse)
+       10:   58:        r.syncOffsetSamples = measureSyncOffset(r.samples, m_fs);
+      128:   59:    return r;
+      130:   60:}
+        -:   61:
+        4:   62:AverageResult CaptureEngine::coherentAverage(const Stimulus& stim, IAudioDevice& dev,
+        -:   63:                                             int targetValid, int maxRetries,
+        -:   64:                                             double noiseFloorRms) const {
+        4:   65:    AverageResult out;
+        4:   66:    std::vector<std::vector<double>> valids;
+        4:   67:    int attempts = 0;
+        4:   68:    const int maxAttempts = targetValid + maxRetries;
+       24:   69:    while (static_cast<int>(valids.size()) < targetValid && attempts < maxAttempts) {
+       20:   70:        ++attempts;
+       20:   71:        CaptureResult c = capture(stim, dev, noiseFloorRms);
+       20:   72:        if (c.status.valid) valids.push_back(c.samples);
+       12:   73:        else                out.invalidDiscarded++;     // descartada e substituida
+       20:   74:    }
+        4:   75:    if (static_cast<int>(valids.size()) < targetValid) { out.aborted = true; return out; }
+        -:   76:
+        -:   77:    // Media coerente no dominio do tempo (DOC-03 §4.3).
+        2:   78:    const std::size_t L = valids.front().size();
+        2:   79:    out.samples.assign(L, 0.0);
+       10:   80:    for (const auto& v : valids)
+   460808:   81:        for (std::size_t i = 0; i < L && i < v.size(); ++i) out.samples[i] += v[i];
+   115202:   82:    for (double& s : out.samples) s /= static_cast<double>(valids.size());
+        2:   83:    out.validUsed = static_cast<int>(valids.size());
+        2:   84:    return out;
+        4:   85:}
+        -:   86:
+        -:   87:} // namespace aamp

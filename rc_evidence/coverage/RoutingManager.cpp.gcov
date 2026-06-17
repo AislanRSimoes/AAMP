@@ -1,0 +1,67 @@
+        -:    0:Source:src/routing/RoutingManager.cpp
+        -:    0:Graph:RoutingManager.gcno
+        -:    0:Data:RoutingManager.gcda
+        -:    0:Runs:2
+        -:    1:// AAMP - src/routing/RoutingManager.cpp
+        -:    2:#include "RoutingManager.h"
+        -:    3:#include <algorithm>
+        -:    4:
+        -:    5:namespace aamp {
+        -:    6:
+        8:    7:Routing RoutingManager::resolveRouting(const DeviceInfo& dev) {
+        8:    8:    Routing r;
+        8:    9:    const int outs = dev.caps.outputChannels;
+        8:   10:    const int ins  = dev.caps.inputChannels;
+       8*:   11:    if (outs <= 0 || ins <= 0) { r.resolved = false; return r; }
+        -:   12:    // Estereo quando ha >= 2 canais de saida E entrada; caso contrario, mono (BR-010).
+        8:   13:    if (outs >= 2 && ins >= 2) {
+        4:   14:        r.mode = ChannelMode::Stereo;
+        4:   15:        r.outputChannels = {0, 1};
+        4:   16:        r.inputChannels = {0, 1};
+        -:   17:    } else {
+        4:   18:        r.mode = ChannelMode::Mono;
+        4:   19:        r.outputChannels = {0};
+        4:   20:        r.inputChannels = {0};
+        -:   21:    }
+        8:   22:    r.resolved = true;
+        8:   23:    return r;
+    =====:   24:}
+        -:   25:
+        4:   26:RoutingVerification RoutingManager::verifyRouting(const Routing& routing,
+        -:   27:                                                  const std::vector<double>& levelByInputChannel,
+        -:   28:                                                  double minLevel) {
+        4:   29:    RoutingVerification v;
+       4*:   30:    if (!routing.resolved) { v.message = "Roteamento nao resolvido."; return v; }
+        -:   31:    // ER-022: nenhum sinal recebido em qualquer canal de entrada usado -> bloqueia inicio.
+        4:   32:    bool anySignal = false;
+       12:   33:    for (int ch : routing.inputChannels)
+        8:   34:        if (ch >= 0 && ch < static_cast<int>(levelByInputChannel.size())
+       16:   35:            && levelByInputChannel[static_cast<std::size_t>(ch)] >= minLevel)
+        4:   36:            anySignal = true;
+        4:   37:    if (!anySignal) {
+        2:   38:        v.ok = false; v.error = RoutingError::NoSignal;
+        2:   39:        v.message = "Nenhum sinal recebido no canal de entrada. Verifique as conexoes fisicas.";
+        2:   40:        return v;
+        -:   41:    }
+        2:   42:    v.ok = true;
+        2:   43:    return v;
+    =====:   44:}
+        -:   45:
+        4:   46:RoutingVerification RoutingManager::detectChannelFaults(const std::vector<bool>& outputResponds,
+        -:   47:                                                        const std::vector<bool>& inputResponds) {
+        4:   48:    RoutingVerification v;
+        4:   49:    const std::size_t n = std::min(outputResponds.size(), inputResponds.size());
+       10:   50:    for (std::size_t i = 0; i < n; ++i) {
+        -:   51:        // ER-025: canal parcialmente funcional (entrada OK / saida falha ou vice-versa).
+        8:   52:        if (outputResponds[i] != inputResponds[i]) {
+        2:   53:            v.ok = false; v.error = RoutingError::ChannelFault;
+        2:   54:            v.faultyChannel = static_cast<int>(i);
+        2:   55:            v.message = "O canal " + std::to_string(i) + " nao esta respondendo corretamente. Verifique o roteamento.";
+        2:   56:            return v;
+        -:   57:        }
+        -:   58:    }
+        2:   59:    v.ok = true;
+        2:   60:    return v;
+    =====:   61:}
+        -:   62:
+        -:   63:} // namespace aamp
