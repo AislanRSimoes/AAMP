@@ -1,5 +1,0 @@
-=== P-08/P-09 SCOPE AUDIT (Fases 1-4 final) ===
-marcas de hardware (excl. backend OS): 0
-conceitos fora de escopo (raw): 1 (= disclaimer DOC-10 §5.1; violacoes efetivas: 0)
-P-07 zero-warning Release (src/ headless): <none>
-Resultado: ==== 347 checks passed, 0 failed ==== | casos: 45

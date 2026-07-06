@@ -22,6 +22,11 @@ const DeviceCapabilities* HardwareManager::getCapabilities(const std::string& de
     return nullptr;
 }
 
+DeviceInfo HardwareManager::describeDevice(const std::string& deviceId) const {
+    DeviceInfo d = m_enum ? m_enum->describe(deviceId) : DeviceInfo{};
+    return d.connected ? d : DeviceInfo{};   // BR-001: so dispositivos efetivamente conectados
+}
+
 ConfigValidation HardwareManager::validateConfig(const DeviceInfo& dev, double sampleRate, int bufferSize) const {
     ConfigValidation v;
     const auto& sr = dev.caps.sampleRates;

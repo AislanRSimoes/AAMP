@@ -1,5 +1,0 @@
-# A SER GERADO NA MAQUINA-ALVO WINDOWS.
-# Este arquivo sera preenchido por scripts/60_collect_evidence.ps1, concatenando os logs
-# brutos reais de: build_msvc_release.log, test_output_windows_unit.log,
-# test_output_windows_e2e.log, hw_suite_run.log, slas_run.log.
-# Nenhuma linha de resultado e fornecida aqui (nao ha evidencia fora da maquina-alvo).

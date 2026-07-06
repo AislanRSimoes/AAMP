@@ -1,0 +1,46 @@
+# ==========================
+# Build
+# ==========================
+build/
+
+# Visual Studio
+.vs/
+
+# Objetos e binários
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+
+# Logs
+*.log
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Ninja
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Testes
+Testing/
+
+# WebView2 Runtime
+*.WebView2/
+
+# Arquivos temporários
+*.tmp
+*.bak
+# Configuração local
+CMakeUserPresets.json
+
+# Evidências geradas
+rc_evidence_core/coverage_summary.txt
+rc_evidence_core/flags_W4_WX.txt

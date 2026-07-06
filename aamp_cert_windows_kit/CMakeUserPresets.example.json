@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-release-ninja",
+      "displayName": "Windows Release (Ninja + MSVC cl) - override local",
+      "inherits": "windows-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-ninja",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset":      { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/juce-install",
+        "CMAKE_PROJECT_INCLUDE": "C:/aamp/aamp_cert_windows_kit/cmake/enable_c.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-release-ninja", "configurePreset": "windows-release-ninja" }
+  ]
+}

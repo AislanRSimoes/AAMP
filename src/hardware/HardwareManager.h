@@ -30,6 +30,7 @@ struct DeviceCapabilities {
 struct DeviceInfo {
     std::string id;
     std::string name;
+    std::string backend;                 // DOC-05 §3.2: tipo do driver (ASIO/WASAPI/CoreAudio); vazio => desconhecido
     bool connected = true;               // BR-001: so conectados aparecem
     DeviceCapabilities caps;
 };
@@ -39,6 +40,15 @@ class IDeviceEnumerator {
 public:
     virtual ~IDeviceEnumerator() = default;
     virtual std::vector<DeviceInfo> enumerate() = 0;  // pode incluir desconectados; M-01 filtra
+
+    // Capacidades COMPLETAS de UM dispositivo (abre/consulta somente o escolhido). Usado no prepare
+    // (nao na listagem), evitando abrir todos os devices na enumeracao. Default: devolve o que a
+    // enumeracao ja conhece (suficiente para mock/testes); backends de OS sobrescrevem com a
+    // consulta completa (sample rates, buffers, etc.).
+    virtual DeviceInfo describe(const std::string& id) {
+        for (auto& d : enumerate()) if (d.id == id) return d;
+        return {};
+    }
 };
 
 struct ConfigValidation {
@@ -61,6 +71,10 @@ public:
 
     // FR-003: capacidades do dispositivo (fabricante so quando o driver expoe).
     const DeviceCapabilities* getCapabilities(const std::string& deviceId) const;
+
+    // FR-003 (prepare): descricao COMPLETA de um unico dispositivo — abre/consulta apenas o
+    // escolhido e devolve caps completas + backend. Fonte unica de verdade para o painel (DOC-05 §3.2).
+    DeviceInfo describeDevice(const std::string& deviceId) const;
 
     // FR-004/BR-002: valida SR/buffer contra as capacidades reais -> ER-003 se invalido.
     ConfigValidation validateConfig(const DeviceInfo& dev, double sampleRate, int bufferSize) const;

@@ -54,7 +54,42 @@ TEST_CASE("TC-032 THD seno puro loopback < 0.001 porcento") {
     const double thd = AnalysisEngine::thdPercent(sig, f, FS, N);
     CHECK(thd < 0.001);
 }
+TEST_CASE("EXP-B THD CAPTURADO")
+{
+    CapturedSet cap = harness::makeLoopback(FS, 0, false);
 
+    AnalysisEngine eng(FS);
+
+    ResultBundle b = eng.computeAllMetrics(cap);
+
+    const MetricResult* r = b.find("MS-05");
+
+    CHECK(r != nullptr);
+
+    if (r)
+    {
+        printf("\n\n===== EXP-B ST03 CAPTURADO =====\n");
+
+        for (const auto& sc : r->scalars)
+        {
+            if (sc.valuePresent)
+            {
+                printf("%s = %.12f %s\n",
+                       sc.key.c_str(),
+                       sc.value,
+                       sc.unit.c_str());
+            }
+            else
+            {
+                printf("%s = N/A\n",
+                       sc.key.c_str());
+            }
+        }
+
+        printf("===============================\n\n");
+    }
+
+}
 // TC-033: SNR de referencia -80 dBFS -> 80 dB ±0.5.
 TEST_CASE("TC-033 SNR referencia 80 dB +-0.5") {
     const int N = 48000;

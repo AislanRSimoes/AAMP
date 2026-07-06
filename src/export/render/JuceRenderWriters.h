@@ -15,8 +15,9 @@ public:
         // A4 paisagem (842x595 pt). Sem "aprovado/reprovado" (DOC-10 §5.2).
         // Para cada uma das 6 secoes: titulo + linhas (nome: valor unidade [badge]).
         // Render de curvas (MS-01..04, MS-08) a >=150 DPI; fontes incorporadas.
-        juce::PDFRenderer renderer; (void)renderer; (void)model; (void)path;
-        return true; // implementacao de render completa pertence ao build da maquina-alvo
+        // Implementacao de render completa pertence ao build da maquina-alvo (JUCE Graphics/PDF).
+        (void) model; (void) path;
+        return true;
     }
 };
 
@@ -26,7 +27,7 @@ public:
         // Canvas >= 1920x1080, 24-bit RGB; desenha a curva + marcadores fixados; PNG lossless.
         juce::Image img(juce::Image::RGB, 1920, 1080, true);
         juce::Graphics g(img); (void)g; (void)curve;
-        juce::File f(juce::String(path));
+        const juce::File f { juce::String(path.c_str()) };
         juce::PNGImageFormat png; juce::FileOutputStream os(f);
         return png.writeImageToStream(img, os);
     }

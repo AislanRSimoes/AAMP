@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Reproduz exatamente o build/execucao headless usado para o pacote de evidencias.
 set -euo pipefail
+set -x
 cd "$(dirname "$0")"
 SRC="src/analysis/Fft.cpp src/analysis/Windows.cpp src/analysis/Hilbert.cpp \
      src/analysis/Deconvolution.cpp src/analysis/AnalysisEngine.cpp src/stimulus/StimulusGenerator.cpp \

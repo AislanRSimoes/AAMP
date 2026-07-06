@@ -1,6 +1,6 @@
-# 40_run_hardware_suite.ps1 — Passo 4 — suite automatica em hardware real (P-03).
+# 40_run_hardware_suite.ps1 - Passo 4 - suite automatica em hardware real (P-03).
 . "$PSScriptRoot\lib_common.ps1"
-Write-Step "Passo 4 — Suite automatica em hardware real (P-03)"
+Write-Step "Passo 4 - Suite automatica em hardware real (P-03)"
 
 Write-Host "Pre-condicao: interface de audio real conectada e configurada em Settings." -ForegroundColor Yellow
 Write-Host "Modelo automatico unico: um comando dispara a suite completa (sem selecao)." -ForegroundColor Yellow

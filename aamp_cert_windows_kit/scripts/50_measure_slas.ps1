@@ -1,6 +1,6 @@
-# 50_measure_slas.ps1 — Passo 5 — SLAs DOC-09 §6/§7 na maquina de referencia.
+# 50_measure_slas.ps1 - Passo 5 - SLAs DOC-09 sec.6/7 na maquina de referencia.
 . "$PSScriptRoot\lib_common.ps1"
-Write-Step "Passo 5 — Medicao de SLAs (maquina de referencia)"
+Write-Step "Passo 5 - Medicao de SLAs (maquina de referencia)"
 
 $log = Join-Path $EvidenceDir "slas_run.log"
 # AJUSTE: flag de timing/memoria do app.

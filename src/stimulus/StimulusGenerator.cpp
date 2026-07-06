@@ -166,7 +166,7 @@ std::vector<double> StimulusGenerator::dynamicStep() const {
 
 // ---------------- ST-09 Silence ----------------
 std::vector<double> StimulusGenerator::silence() const {
-    return std::vector<double>(static_cast<std::size_t>(secToSamples(2.0, m_fs)), 0.0);
+    return std::vector<double>(static_cast<std::size_t>(secToSamples(10.0, m_fs)), 0.0);
 }
 
 // ---------------- ST-10 Hard Attack Pulse ----------------
