@@ -68,32 +68,109 @@ inline juce::var aamp_metricToVar(const MetricResult& m) {
     return juce::var(o);
 }
 
-// Devolve o payload da Session ja como juce::var (para embutir em runFinished sem re-parse).
-inline juce::var serializeSessionVar(const ResultBundle& b) {
+// ===========================================================================================
+// ARCH-01: serializacao CANONICA da Session = arquivo .aamp (mesmo formato lido por fromAamp()).
+// Produz os bytes de um ZIP STORE (metodo 0, sem compressao) contendo:
+//   manifest.json : {device,sampleRate,mode,timestamp,analysis:"analysis.json",capture:[],primaryCapture:null,acquisition:null}
+//   analysis.json : {meta:{...}, metrics:[...]}   (MESMAS metricas/curvas/escalares; DBG preservado)
+// captures = [] porque o ResultBundle NAO carrega audio bruto (NOTA A2); fromAamp() ja degrada
+// graciosamente sem WAV — identico ao que a caracterizacao ja entregava. Nenhum DSP/metrica muda.
+// ===========================================================================================
+
+// analysis.json (meta + metricas), consumido por normalizeMetrics(an) no frontend.
+inline juce::String aamp_analysisJson(const ResultBundle& b) {
     auto* meta = new juce::DynamicObject();
     meta->setProperty("device",     juce::String(b.meta.deviceName.c_str()));
     meta->setProperty("sampleRate", b.meta.sampleRate);
     meta->setProperty("mode",       juce::String(b.meta.mode == ChannelMode::Stereo ? "Stereo" : "Mono"));
-    // meta.timestamp: consumido por fromEngineSession() (meta.timestamp). Emitido quando presente;
-    // o frontend aceita ausencia ('—'). Nao emitir vazio para nao sobrepor o fallback do frontend.
-    if (!b.meta.timestamp.empty())
-        meta->setProperty("timestamp", juce::String(b.meta.timestamp.c_str()));
-
+    meta->setProperty("timestamp",  juce::String(b.meta.timestamp.c_str()));
     juce::Array<juce::var> metrics;
     for (const auto& m : b.metrics) metrics.add(aamp_metricToVar(m));
-
     auto* root = new juce::DynamicObject();
-    root->setProperty("source",   "Measurement Engine");
-    root->setProperty("meta",     juce::var(meta));
-    root->setProperty("metrics",  metrics);
-    root->setProperty("captures", juce::var(juce::Array<juce::var>())); // A2: preencher com buffers do CaptureEngine
-    root->setProperty("primary",  0);
-    return juce::var(root);
+    root->setProperty("meta",    juce::var(meta));
+    root->setProperty("metrics", metrics);
+    return juce::JSON::toString(juce::var(root), false);
 }
 
-// Conveniencia: string JSON (p/ log/diag).
-inline juce::String serializeSessionJson(const ResultBundle& b) {
-    return juce::JSON::toString(serializeSessionVar(b), true);
+// manifest.json exigido por fromAamp() (readZipStore -> f['manifest.json']).
+inline juce::String aamp_manifestJson(const ResultBundle& b) {
+    auto* root = new juce::DynamicObject();
+    root->setProperty("device",         juce::String(b.meta.deviceName.c_str()));
+    root->setProperty("sampleRate",     b.meta.sampleRate);
+    root->setProperty("mode",           juce::String(b.meta.mode == ChannelMode::Stereo ? "Stereo" : "Mono"));
+    root->setProperty("timestamp",      juce::String(b.meta.timestamp.c_str()));
+    root->setProperty("analysis",       "analysis.json");
+    root->setProperty("capture",        juce::var(juce::Array<juce::var>())); // sem audio bruto (ResultBundle)
+    root->setProperty("primaryCapture", juce::var());   // null
+    root->setProperty("acquisition",    juce::var());   // null
+    return juce::JSON::toString(juce::var(root), false);
+}
+
+// CRC-32 (poly 0xEDB88320) p/ os cabecalhos do ZIP (readZipStore nao valida, mas geramos correto).
+inline juce::uint32 aamp_crc32(const juce::uint8* p, size_t len) {
+    juce::uint32 table[256];
+    for (juce::uint32 i = 0; i < 256; ++i) { juce::uint32 c = i;
+        for (int k = 0; k < 8; ++k) c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1); table[i] = c; }
+    juce::uint32 c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; ++i) c = table[(c ^ p[i]) & 0xFFu] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+namespace aamp_zip_detail {
+    struct Entry { juce::String name; juce::MemoryBlock data; };
+    inline void put16(juce::MemoryBlock& b, juce::uint16 v) {
+        const juce::uint8 t[2] = { (juce::uint8)(v & 0xFF), (juce::uint8)((v >> 8) & 0xFF) }; b.append(t, 2); }
+    inline void put32(juce::MemoryBlock& b, juce::uint32 v) {
+        const juce::uint8 t[4] = { (juce::uint8)(v & 0xFF), (juce::uint8)((v >> 8) & 0xFF),
+                                   (juce::uint8)((v >> 16) & 0xFF), (juce::uint8)((v >> 24) & 0xFF) }; b.append(t, 4); }
+}
+
+// Monta um ZIP STORE (metodo 0) no layout exato que readZipStore() parseia (EOCD + dir central + local headers).
+inline juce::MemoryBlock aamp_buildStoreZip(const std::vector<aamp_zip_detail::Entry>& entries) {
+    using namespace aamp_zip_detail;
+    juce::MemoryBlock out;
+    std::vector<juce::uint32> lho(entries.size()), crc(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const Entry& e = entries[i];
+        lho[i] = (juce::uint32) out.getSize();
+        const size_t nlen = e.name.getNumBytesAsUTF8();
+        crc[i] = aamp_crc32((const juce::uint8*) e.data.getData(), e.data.getSize());
+        put32(out, 0x04034b50u); put16(out, 20); put16(out, 0); put16(out, 0);     // sig, ver, flags, method=STORE
+        put16(out, 0); put16(out, 0x21);                                           // mod time, mod date (1980-01-01)
+        put32(out, crc[i]); put32(out, (juce::uint32) e.data.getSize()); put32(out, (juce::uint32) e.data.getSize());
+        put16(out, (juce::uint16) nlen); put16(out, 0);                            // fnlen, extralen
+        out.append(e.name.toRawUTF8(), nlen);
+        out.append(e.data.getData(), e.data.getSize());
+    }
+    const juce::uint32 cdStart = (juce::uint32) out.getSize();
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const Entry& e = entries[i];
+        const size_t nlen = e.name.getNumBytesAsUTF8();
+        put32(out, 0x02014b50u); put16(out, 20); put16(out, 20); put16(out, 0); put16(out, 0); // sig,vmade,vneed,flags,method
+        put16(out, 0); put16(out, 0x21);                                           // time, date
+        put32(out, crc[i]); put32(out, (juce::uint32) e.data.getSize()); put32(out, (juce::uint32) e.data.getSize());
+        put16(out, (juce::uint16) nlen); put16(out, 0); put16(out, 0);             // fnlen, extralen, commentlen
+        put16(out, 0); put16(out, 0); put32(out, 0);                               // disk#, intattr, extattr
+        put32(out, lho[i]);
+        out.append(e.name.toRawUTF8(), nlen);
+    }
+    const juce::uint32 cdSize = (juce::uint32) out.getSize() - cdStart;
+    put32(out, 0x06054b50u); put16(out, 0); put16(out, 0);
+    put16(out, (juce::uint16) entries.size()); put16(out, (juce::uint16) entries.size());
+    put32(out, cdSize); put32(out, cdStart); put16(out, 0);
+    return out;
+}
+
+// Serializacao CANONICA: bytes de um .aamp (manifest.json + analysis.json em ZIP STORE).
+inline juce::MemoryBlock serializeAampBytes(const ResultBundle& b) {
+    std::vector<aamp_zip_detail::Entry> entries;
+    { aamp_zip_detail::Entry e; e.name = "manifest.json";
+      const juce::String s = aamp_manifestJson(b); e.data.append(s.toRawUTF8(), s.getNumBytesAsUTF8());
+      entries.push_back(std::move(e)); }
+    { aamp_zip_detail::Entry e; e.name = "analysis.json";
+      const juce::String s = aamp_analysisJson(b); e.data.append(s.toRawUTF8(), s.getNumBytesAsUTF8());
+      entries.push_back(std::move(e)); }
+    return aamp_buildStoreZip(entries);
 }
 
 } // namespace aamp

@@ -15,6 +15,57 @@
 
 namespace aamp {
 
+// ===== INSTRUMENTACAO TEMPORARIA — BOOT-01 (remover apos diagnostico) =====
+// Grava no MESMO diag_log.txt do Main.cpp, sem depender do diagLog() estatico (outro TU).
+static void bridgeDiag(const juce::String& line) {
+    juce::File f = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                       .getChildFile("AAMP").getChildFile("diag_log.txt");
+    f.getParentDirectory().createDirectory();
+    f.appendText(line + "\n");
+}
+static juce::String bootTs() { return juce::Time::getCurrentTime().toString(true, true, true, true); }
+static double s_bootT0        = 0.0;     // instante (ms hi-res) do inicio do ctor; base dos deltas
+static int    s_htmlLoadCount = 0;       // nº de navegacoes (goToURL) no bootstrap
+static bool   s_firstCbLogged = false;   // guarda p/ registrar o 1º callback do WebView uma vez
+static void bootMark(const juce::String& label) {
+    const double t = juce::Time::getMillisecondCounterHiRes();
+    bridgeDiag("[BOOT-01] " + label + " | wall=" + bootTs()
+        + " | t=+" + juce::String(s_bootT0 > 0.0 ? t - s_bootT0 : 0.0, 1) + " ms");
+}
+// ===== FIM INSTRUMENTACAO TEMPORARIA =====
+
+// ------------------------- helpers de device (PORTADOS de Main.cpp, a implementacao de
+// referencia) -------------------------
+// O bridge referenciava juce_hw_detail::findType/bestInputFor, mas esse namespace nao existe no
+// codigo (era suposicao de scaffolding, nunca compilada). Definimos os helpers localmente, com a
+// MESMA logica de Main.cpp (cleanDeviceName/bestInputFor), para o TU ser autossuficiente.
+static juce::String bridgeCleanDeviceName(const juce::String& raw) {
+    juce::String s = raw.trim();
+    if (s.startsWithIgnoreCase("ASIO ")) s = s.substring(5).trim();
+    int d = 0;
+    while (d < s.length() && s[d] >= '0' && s[d] <= '9') ++d;
+    if (d > 0 && d < s.length() && s[d] == '-') s = s.substring(d + 1).trim();
+    const int a = s.indexOfChar('('), b = s.lastIndexOfChar(')');
+    if (a >= 0 && b > a) s = s.substring(a + 1, b).trim();
+    return s;
+}
+// Resolve o AudioIODeviceType pelo nome do backend (fiel aos loops de Main.cpp).
+static juce::AudioIODeviceType* findType(juce::AudioDeviceManager& dm, const juce::String& typeName) {
+    for (auto* t : dm.getAvailableDeviceTypes())
+        if (t != nullptr && t->getTypeName() == typeName) return t;
+    return nullptr;
+}
+// Melhor entrada para um dado tipo + nome de saida (versao 2-args do bridge; logica de Main.cpp:
+// casa por nome "limpo", senao usa a primeira entrada). So chamado para nao-ASIO.
+static juce::String bestInputFor(juce::AudioIODeviceType* type, const juce::String& outName) {
+    if (type == nullptr) return {};
+    const auto ins = type->getDeviceNames(true);
+    const juce::String key = bridgeCleanDeviceName(outName);
+    for (const auto& n : ins)
+        if (key.isNotEmpty() && bridgeCleanDeviceName(n).equalsIgnoreCase(key)) return n;
+    return ins.size() > 0 ? ins[0] : juce::String();
+}
+
 // ------------------------- helpers locais -------------------------
 static juce::var stateObj(const char* s) {
     auto* o = new juce::DynamicObject();
@@ -48,22 +99,31 @@ static juce::var capsVar(const DeviceInfo& d) {
 }
 
 // ------------------------- ciclo de vida -------------------------
+// BOOT-01 (TEMPORARIO): subclasse so para instrumentar o callback NATIVO de conclusao de navegacao
+// do JUCE/WebView2. NAO sobrescreve pageAboutToLoad (default = permite tudo) -> navegacao inalterada.
+struct Boot01WebView : public juce::WebBrowserComponent {
+    explicit Boot01WebView(const Options& o) : juce::WebBrowserComponent(o) {}
+    void pageFinishedLoading(const juce::String& url) override {
+        bootMark("5N navegacao-concluida (pageFinishedLoading, NATIVO) url=" + url);
+    }
+};
+
 AampWebBridge::AampWebBridge() {
     using WBC = juce::WebBrowserComponent;
+    s_bootT0 = juce::Time::getMillisecondCounterHiRes();
+    bootMark("1 ctor-inicio");                                        // ponto 1
 
     m_hw = std::make_unique<HardwareManager>(std::make_shared<JuceDeviceEnumerator>());
-    m_dm.initialise(2, 2, nullptr, true);                 // prepara o manager/tipos (fiel ao MainComponent)
+    m_dm.initialise(2, 2, nullptr, true);   // (custo aparece no delta 1->2; abertura ASIO e sincrona)
 
-    m_web.reset(new WBC(
+    bootMark("2 antes-de-criar-WebBrowserComponent");                 // ponto 2
+    m_web.reset(new Boot01WebView(                                    // subclasse instrumentada (ponto 5N)
         WBC::Options{}
             .withBackend(WBC::Options::Backend::webview2)         // Edge/Chromium (nao IE); requer NEEDS_WEBVIEW2
             .withNativeIntegrationEnabled()                       // expoe window.__JUCE__.backend ao HTML
-            // Canal de comandos JS->C++: o frontend chama window.__JUCE__.backend.emitEvent("aampCommand", "<json>")
-            // (API documentada, mesmo objeto backend usado para receber eventos). getNativeFunction NAO
-            // esta disponivel sem carregar o modulo JS do JUCE; por isso usamos o event listener.
             .withEventListener("aampCommand",
                 [this](const juce::var& payload) { onCommand(payload.toString()); })
-            .withNativeFunction("aampCommand",                    // mantido (funciona se o modulo JS do JUCE for carregado)
+            .withNativeFunction("aampCommand",
                 [this](const juce::Array<juce::var>& args,
                        WBC::NativeFunctionCompletion complete) {
                     if (args.size() > 0) onCommand(args[0].toString());
@@ -71,13 +131,24 @@ AampWebBridge::AampWebBridge() {
                 })
         // >>> DEV: SEM withResourceProvider / SEM BinaryData <<<
         ));
+    bootMark("3 apos-criar-WebBrowserComponent");                     // ponto 3
 
     addAndMakeVisible(*m_web);
 
     // DEV: carrega o HTML de arquivo externo (edicao sem recompilar).
     const juce::File html = resolveHtmlFile();
+    // BOOT-01: resultado COMPLETO de resolveHtmlFile() -> elimina duvida sobre QUAL HTML carrega.
+    bridgeDiag("[BOOT-01] resolveHtmlFile"
+        + juce::String(" | path=") + html.getFullPathName()
+        + " | exists=" + juce::String(html.existsAsFile() ? "SIM" : "NAO")
+        + " | mtime=" + (html.existsAsFile() ? html.getLastModificationTime().toString(true, true) : juce::String("-"))
+        + " | size=" + (html.existsAsFile() ? juce::String(html.getSize()) + " bytes" : juce::String("-"))
+        + " | wall=" + bootTs());
+    ++s_htmlLoadCount;
+    bootMark("4 antes-do-goToURL #" + juce::String(s_htmlLoadCount)   // ponto 4
+        + (html.existsAsFile() ? " (arquivo-externo)" : " (FALLBACK-data-url)"));
     if (html.existsAsFile()) {
-        m_web->goToURL(juce::URL(html).toString(false));          // file:///.../aamp_laboratory.html
+        m_web->goToURL(juce::URL(html).toString(false));              // file:///.../aamp_laboratory.html
     } else {
         m_web->goToURL("data:text/html,"
             "<body style='background:%230b0f13;color:%238a9ba6;font-family:sans-serif;"
@@ -109,7 +180,7 @@ juce::File AampWebBridge::resolveHtmlFile() {
 }
 
 // ------------------------- emit ao JS -------------------------
-void AampWebBridge::emitEvent(const juce::String& evt, juce::var data) {
+void AampWebBridge::emitEvent(const juce::String& evt, const juce::var& data) {
     auto* o = new juce::DynamicObject();
     o->setProperty("evt", evt);
     o->setProperty("data", data);
@@ -125,6 +196,7 @@ void AampWebBridge::emitEvent(const juce::String& evt, juce::var data) {
 
 // ------------------------- roteamento de comandos -------------------------
 void AampWebBridge::onCommand(const juce::String& json) {
+    if (!s_firstCbLogged) { s_firstCbLogged = true; bootMark("5 primeiro-comando-JS (onCommand -- NAO e fim de navegacao; ver 5N)"); } // ponto 5
     const auto v    = juce::JSON::parse(json);
     const auto cmd  = v.getProperty("cmd", juce::var()).toString();
     const auto args = v.getProperty("args", juce::var());
@@ -134,6 +206,8 @@ void AampWebBridge::onCommand(const juce::String& json) {
     else if (cmd == "cancel")    doCancel();
     else if (cmd == "export")    doExport(args);
     else if (cmd == "diag")      diagLog("[JS] " + args.getProperty("msg", juce::var()).toString()); // INSTRUMENTACAO TEMPORARIA
+    else if (cmd == "fperf")     bridgeDiag("[FPERF] " + args.getProperty("msg", juce::var()).toString()); // INSTRUMENTACAO TEMPORARIA
+    else if (cmd == "boot01")    bridgeDiag("[BOOT-01/JS] " + args.getProperty("msg", juce::var()).toString()); // BOOT-01 (marcas do HTML)
 }
 
 void AampWebBridge::doEnumerate() {
@@ -154,7 +228,6 @@ void AampWebBridge::doEnumerate() {
 }
 
 void AampWebBridge::doPrepare(juce::var args) {
-    using namespace juce_hw_detail;
     const std::string id = args.getProperty("deviceId", juce::var()).toString().toStdString();
     const std::string modeStr = args.getProperty("mode", juce::var("Mono")).toString().toStdString();
     const bool stereo  = (modeStr == "Stereo");
@@ -186,15 +259,27 @@ void AampWebBridge::doPrepare(juce::var args) {
     const juce::String typeName(chosen->backend.c_str());
     const juce::String devName(chosen->id.c_str());
     const bool isAsio = typeName.containsIgnoreCase("asio");
-    m_dm.setCurrentAudioDeviceType(typeName, true);
-    juce::AudioIODeviceType* devType = findType(m_dm, typeName);
-    juce::AudioDeviceManager::AudioDeviceSetup s;
-    s.outputDeviceName = devName;
-    s.inputDeviceName  = isAsio ? devName
-                                : (devType != nullptr ? bestInputFor(devType, devName) : devName);
-    s.useDefaultInputChannels = true; s.useDefaultOutputChannels = true;
-    m_dm.setAudioDeviceSetup(s, true);
+
+    // Se o MESMO dispositivo/tipo ja esta aberto (alternancia Mono<->Estereo ou re-selecao do
+    // device vigente), pula a 1a abertura — feita SO para ler nIn/nOut. O device ja aberto expoe
+    // os nomes de canais (independente do bitmask ativo), entao a contagem sai dele diretamente.
+    // Reduz de 2 aberturas para 1 no caso repetido (abrir ASIO e caro). Se algo divergir, o
+    // fallback e a abertura completa: a otimizacao nunca quebra o resultado final.
     juce::AudioIODevice* dev = m_dm.getCurrentAudioDevice();
+    const bool sameOpen = m_deviceReady && dev != nullptr
+        && dev->getName() == devName
+        && (typeName.isEmpty() || m_dm.getCurrentAudioDeviceType() == typeName);
+    if (!sameOpen) {
+        m_dm.setCurrentAudioDeviceType(typeName, true);
+        juce::AudioIODeviceType* devType = findType(m_dm, typeName);
+        juce::AudioDeviceManager::AudioDeviceSetup s;
+        s.outputDeviceName = devName;
+        s.inputDeviceName  = isAsio ? devName
+                                    : (devType != nullptr ? bestInputFor(devType, devName) : devName);
+        s.useDefaultInputChannels = true; s.useDefaultOutputChannels = true;
+        m_dm.setAudioDeviceSetup(s, true);                 // 1a abertura: SO quando o device muda
+        dev = m_dm.getCurrentAudioDevice();
+    }
     if (dev == nullptr) { emitError("Nao foi possivel abrir o dispositivo selecionado."); return; }
 
     const int nIn  = dev->getInputChannelNames().size();
@@ -312,13 +397,20 @@ void AampWebBridge::doStart() {
                     juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S").toStdString();
             m_lastBundle  = r.bundle;                              // retido p/ ExportEngine (M-07)
             m_haveBundle  = true;
+            // ARCH-01: persiste a Session como .aamp CANONICO e a entrega ao frontend como bytes,
+            // para reabertura pelo MESMO caminho de fromAamp() (sem payload/ fromEngineSession dedicados).
             const double tSer0 = juce::Time::getMillisecondCounterHiRes();    // INSTRUMENTACAO TEMPORARIA
-            juce::var payload = serializeSessionVar(r.bundle);    // -> fromEngineSession()
+            const juce::MemoryBlock aamp = serializeAampBytes(r.bundle);      // manifest.json + analysis.json (ZIP STORE)
+            const juce::File tmp = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                       .getChildFile("aamp_characterization.aamp");
+            tmp.replaceWithData(aamp.getData(), aamp.getSize());             // gravacao automatica do .aamp temporario
             const double tSer1 = juce::Time::getMillisecondCounterHiRes();    // INSTRUMENTACAO TEMPORARIA
-            diagLog("[TIMER] serialize(C++)=" + juce::String(tSer1 - tSer0, 0) + "ms  -> emitindo runFinished");
+            diagLog("[TIMER] serialize(.aamp)=" + juce::String(tSer1 - tSer0, 0) + "ms  bytes="
+                    + juce::String((int) aamp.getSize()) + "  path=" + tmp.getFullPathName());
             auto* o = new juce::DynamicObject();
-            o->setProperty("outcome", "Completed");
-            o->setProperty("payload", payload);
+            o->setProperty("outcome",  "Completed");
+            o->setProperty("aamp",     juce::Base64::toBase64(aamp.getData(), aamp.getSize())); // bytes do .aamp
+            o->setProperty("aampPath", tmp.getFullPathName());
             emitEvent("runFinished", juce::var(o));
         } else {
             auto* o = new juce::DynamicObject();

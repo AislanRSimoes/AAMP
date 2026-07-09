@@ -944,6 +944,15 @@ body{background:
 
 <script>
 "use strict";
+/* ===== BOOT-01 — sondas de tempo TEMPORARIAS (aditivas; sem mudar comportamento/layout).
+   Enviam apenas timestamps ao diag_log.txt (canal 'boot01'). Remover apos diagnostico. ===== */
+function __boot01(l){try{var t=(window.performance&&performance.now)?performance.now():Date.now();
+  var line=l+' | perf='+t.toFixed(1)+'ms | wall='+new Date().toISOString();
+  if(window.__JUCE__&&window.__JUCE__.backend)window.__JUCE__.backend.emitEvent('aampCommand',JSON.stringify({cmd:'boot01',args:{msg:line}}));
+}catch(e){}}
+__boot01('6 inicio-do-script-HTML');
+requestAnimationFrame(function(){__boot01('9 primeiro-requestAnimationFrame');});
+/* ===== FIM BOOT-01 (topo) ===== */
 let M=null;
 
 /* ===== ZIP store ===== */
@@ -988,10 +997,34 @@ function captureIntegrity(s){let peak=0,sq=0,sum=0,clip=0,sil=0;const n=s.length
   return {peak,peakDb:db(peak),rms,rmsDb:db(rms),crest:db(peak)-db(rms),dc:sum/Math.max(1,n),clip,silPct:100*sil/Math.max(1,n)};}
 
 /* ===== modelo interno único ===== */
+/* ===== PDBG — instrumentação TEMPORÁRIA do pipeline do Laboratório (OFF por padrão).
+   Ativar: window.AAMP_DEBUG=true no console, ou abrir a página com ?dbg na URL.
+   Expõe, por estágio, tempo (bloqueio de UI) e presença de dados (perda de dado).
+   Remover integralmente após a resolução (bloco único, autocontido). ===== */
+const PDBG=(()=>{
+  const on=()=>{try{return !!(window.AAMP_DEBUG)||String(location.search||'').indexOf('dbg')>=0;}catch(e){return false;}};
+  const now=()=>{try{return performance.now();}catch(e){return Date.now();}};
+  const log=(...a)=>{if(on())console.log('%c[PDBG]','color:#4DA3FF;font-weight:600',...a);};
+  const mark=label=>{const t0=now();return extra=>log(label,'·',(now()-t0).toFixed(1)+'ms',extra!==undefined?extra:'');};
+  function dumpPayload(p){if(!on())return;if(!p){log('payload AUSENTE');return;}
+    const ms=(p.metrics||[]).map(m=>m.id+' {'+(m.curves||[]).map(c=>c.name+':'+((c.x||[]).length)).join(' | ')+'}');
+    log('payload.metrics ('+ms.length+')',ms);
+    const cps=(p.captures||[]).map((c,i)=>'#'+i+':'+((c.samples||[]).length)+'smp');
+    log('payload.captures',(p.captures||[]).length,cps.length?cps:'[] (VAZIO — origvschar/temporal degradam)');}
+  function dumpSession(M){if(!on())return;if(!M){log('session AUSENTE');return;}
+    const b=(M.metrics&&M.metrics.byId)||{};
+    log('session.byId',Object.keys(b));
+    const m04=b['MS-04'];
+    if(m04)log('session.MS-04.curves',(m04.curves||[]).map(c=>c.name+':'+((c.x||[]).length))); else log('session.MS-04 AUSENTE (Impulsiva/Envelope/Decaimento sem dado)');
+    log('session.captures',(M.captures||[]).length,'primary='+M.primary,'· com .wav:',(M.captures||[]).filter(c=>c.wav).length);}
+  return {on,mark,log,dumpPayload,dumpSession};
+})();
+
 function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
   (a&&a.metrics||[]).forEach(m=>{byId[m.id]=m;
     (m.scalars||[]).forEach(s=>{sc[s.key]=s;if(s.quality==='LowConfidence')low++;if(s.quality==='NotApplicable'||s.valuePresent===false)na++;});
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
+  PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
 async function fromAamp(file){
   const f=readZipStore(await file.arrayBuffer());
@@ -1009,24 +1042,8 @@ async function fromExternalWav(file){const wav=parseWAV(await file.arrayBuffer()
     meta:{device:'—',sampleRate:wav.sampleRate,mode:wav.channels>1?'Stereo':'Mono',timestamp:'—'},
     captures:[{stimulus:'—',file:file.name,wav}],primary:0,metrics:{byId:{},scalars:{},curves:{},lowConf:0,na:0},hasAnalysis:false,acquisition:null};}
 
-/* ===========================================================
-   fromEngineSession — Measurement Engine (C++) → Session ao vivo.
-   Recebe o ResultBundle serializado + capturas expostas pela ponte in-process
-   e devolve EXATAMENTE o mesmo objeto que fromAamp, reusando normalizeMetrics.
-   bootSession() permanece inalterado — origem agnóstica (arquivo OU ao vivo).
-   =========================================================== */
-async function fromEngineSession(payload){
-  const p=payload||{},meta=p.meta||{};
-  const caps=(p.captures||[]).map((c,i)=>({
-    stimulus:c.stimulus||('captura '+(i+1)),
-    file:c.file||('cap'+i),
-    wav:{samples:c.samples,sampleRate:c.sampleRate||meta.sampleRate,channels:c.channels||1}
-  })).filter(c=>c.wav&&c.wav.samples&&c.wav.samples.length);
-  let pr=(typeof p.primary==='number')?p.primary:0;if(pr<0||pr>=caps.length)pr=0;
-  const an={meta,metrics:p.metrics||[]};
-  return {provenance:'normative',source:p.source||'Measurement Engine',
-    meta:{device:meta.device||meta.deviceName||'—',sampleRate:meta.sampleRate,mode:meta.mode,timestamp:meta.timestamp},
-    captures:caps,primary:pr,metrics:normalizeMetrics(an),hasAnalysis:!!(p.metrics&&p.metrics.length),acquisition:p.acquisition||null};}
+/* ARCH-01: fromEngineSession REMOVIDO. A caracterização agora persiste um .aamp e é reaberta
+   pelo MESMO caminho da importação (ingest → fromAamp → bootSession). Sem pipeline paralelo. */
 
 /* ===========================================================
    LabChart — instrumento gráfico reutilizável (DNA)
@@ -1063,6 +1080,10 @@ class LabChart{
   resize(){const dpr=window.devicePixelRatio||1;const w=this.el.clientWidth||700;const h=this.opt.height;
     this.cv.style.height=h+'px';this.cv.width=Math.round(w*dpr);this.cv.height=Math.round(h*dpr);
     this.W=w;this.H=h;this.ctx=this.cv.getContext('2d');this.ctx.setTransform(dpr,0,0,dpr,0,0);this.pad={l:46,r:14,t:10,b:24};this.draw();}
+  requestDraw(){if(this._drawRAF)return;this._drawRAF=requestAnimationFrame(()=>{this._drawRAF=0;this.draw();});}
+  destroy(){if(this._drawRAF){cancelAnimationFrame(this._drawRAF);this._drawRAF=0;}
+    if(this._onMouseUp){window.removeEventListener('mouseup',this._onMouseUp);this._onMouseUp=null;}
+    this.opt.onHover=null;this.onSelect=null;this.host=null;this.ctx=null;}
   xPix(x){const{l}=this.pad,pw=this.W-this.pad.l-this.pad.r;
     if(this.opt.xScale==='log'){const a=Math.log10(this.vx0),b=Math.log10(this.vx1);return l+(Math.log10(Math.max(x,1e-9))-a)/(b-a)*pw;}
     return l+(x-this.vx0)/(this.vx1-this.vx0)*pw;}
@@ -1074,6 +1095,28 @@ class LabChart{
     else{const step=niceStep((this.vx1-this.vx0)/6);let v=Math.ceil(this.vx0/step)*step;for(;v<=this.vx1;v+=step)t.push(v);}return t;}
   yticks(){const step=niceStep((this.vy1-this.vy0)/5),t=[];let v=Math.ceil(this.vy0/step)*step;for(;v<=this.vy1;v+=step)t.push(v);return t;}
   fmtX(v){if(this.opt.xScale==='log')return v>=1000?(v/1000)+'k':''+v;return v.toFixed(Math.abs(v)<1?3:(Math.abs(v)<10?2:0));}
+  // ===== LOD (Level of Detail) — SOMENTE renderização =====
+  // Deriva do traço CIENTÍFICO (s.x/s.y, jamais alterados) um conjunto de pontos dimensionado à
+  // largura útil do gráfico (pw) para o intervalo visível [vx0,vx1]. Nunca decima a série; nunca é
+  // usado por cálculo, hover, marcadores nem export (esses leem s.x/s.y integrais). Preserva
+  // picos/vales (min E max por coluna de pixel), então nenhuma feição visível se perde ao afastar
+  // o zoom. Ao aproximar o zoom, o range visível encolhe e o mesmo pw revela mais detalhe — até
+  // que, com poucos pontos por pixel, o traço científico é desenhado ponto a ponto.
+  _idxBefore(x,v){let lo=0,hi=x.length-1;if(v<=x[0])return 0;if(v>=x[hi])return hi;while(hi-lo>1){const m=(lo+hi)>>1;(x[m]<=v)?lo=m:hi=m;}return lo;}
+  _idxAfter(x,v){let lo=0,hi=x.length-1;if(v<=x[0])return 0;if(v>=x[hi])return hi;while(hi-lo>1){const m=(lo+hi)>>1;(x[m]<v)?lo=m:hi=m;}return hi;}
+  _lodStroke(s,l,pw){const x=s.x,y=s.y,n=x?x.length:0,logx=this.opt.xScale==='log';if(!n)return[];
+    let i0=this._idxBefore(x,this.vx0),i1=this._idxAfter(x,this.vx1);if(i0>0)i0--;if(i1<n-1)i1++;
+    const span=i1-i0+1,budget=Math.max(2,Math.floor(pw)),out=[];
+    if(span<=budget*2){                                   // já ≤ ~2 pts/pixel → desenha o traço científico
+      for(let i=i0;i<=i1;i++){const xv=x[i],yv=y[i];if(logx&&xv<=0)continue;if(!isFinite(yv))continue;out.push(this.xPix(xv),this.yPix(yv));}
+      return out;}
+    const step=span/budget;                               // LOD dinâmico = largura útil (pw) × range visível
+    for(let b=0;b<budget;b++){const a=i0+Math.floor(b*step),z=Math.min(i1,i0+Math.floor((b+1)*step)-1);
+      let mnI=-1,mxI=-1,mn=Infinity,mx=-Infinity;
+      for(let i=a;i<=z;i++){const yv=y[i];if(!isFinite(yv)||(logx&&x[i]<=0))continue;if(yv<mn){mn=yv;mnI=i;}if(yv>mx){mx=yv;mxI=i;}}
+      if(mnI<0)continue;const f=Math.min(mnI,mxI),g=Math.max(mnI,mxI);
+      out.push(this.xPix(x[f]),this.yPix(y[f]));if(g!==f)out.push(this.xPix(x[g]),this.yPix(y[g]));}
+    return out;}
   draw(){const c=this.ctx;if(!c)return;const{l,r,t,b}=this.pad,W=this.W,H=this.H,pw=W-l-r,ph=H-t-b;c.clearRect(0,0,W,H);
     const g=c.createLinearGradient(0,t,0,t+ph);g.addColorStop(0,'#060709');g.addColorStop(1,'#040506');c.fillStyle=g;c.fillRect(l,t,pw,ph);
     c.lineWidth=1;c.font='8px Roboto Mono';
@@ -1091,13 +1134,15 @@ class LabChart{
     let _lblR=-1e9;const _mk=this.markers.map(m=>({m,x:this.xPix(m.x)})).filter(o=>o.x>=l&&o.x<=l+pw).sort((a,b)=>a.x-b.x);
     _mk.forEach(({m,x})=>{c.strokeStyle='rgba(200,212,222,.18)';c.setLineDash([3,4]);c.beginPath();c.moveTo(x,t);c.lineTo(x,t+ph);c.stroke();c.setLineDash([]);
       c.font='8px Roboto Mono';const lx=x+3;if(lx>_lblR+7){c.fillStyle='rgba(190,205,216,.6)';c.textAlign='left';c.fillText(m.label,lx,t+9);_lblR=lx+c.measureText(m.label).width;}});
-    this.series.forEach(s=>{if(!s.visible)return;const col=s.color||this.opt.trace;c.beginPath();let started=false;
+    this.series.forEach(s=>{if(!s.visible)return;const col=s.color||this.opt.trace;
       if(s.ghost){c.strokeStyle=col;c.lineWidth=1;c.shadowBlur=0;c.globalAlpha=.55;c.setLineDash([2,3]);}else{c.strokeStyle=col;c.lineWidth=1.8;c.shadowColor=col;c.shadowBlur=10;c.setLineDash([]);}
-      for(let i=0;i<s.x.length;i++){const xv=s.x[i],yv=s.y[i];if(this.opt.xScale==='log'&&xv<=0)continue;if(!isFinite(yv))continue;
-        const X=this.xPix(xv),Y=this.yPix(yv);if(X<l-2||X>l+pw+2){started=false;continue;}started?c.lineTo(X,Y):c.moveTo(X,Y);started=true;}
-      c.stroke();c.shadowBlur=0;c.setLineDash([]);c.globalAlpha=1;});
-    if(this.opt.confMask)this.opt.confMask.forEach(m=>{const A=this.xPix(m[0]),B=this.xPix(m[1]);if(Math.abs(B-A)<1)return;c.fillStyle='rgba(6,10,14,.62)';c.fillRect(Math.min(A,B),t,Math.abs(B-A),ph);
-      c.fillStyle='rgba(120,140,150,.5)';c.font='8px Roboto Mono';c.textAlign='center';c.fillText('baixa confiança',(A+B)/2,t+ph/2);});
+      const P=this._lodStroke(s,l,pw);   // LOD só p/ desenho; s.x/s.y (científico) intactos p/ hover/análise/export
+      if(P.length>=2){c.beginPath();c.moveTo(P[0],P[1]);for(let k=2;k<P.length;k+=2)c.lineTo(P[k],P[k+1]);c.stroke();}
+      c.shadowBlur=0;c.setLineDash([]);c.globalAlpha=1;});
+    if(this.opt.confMask){c.font='8px Roboto Mono';const _lw=c.measureText('baixa confiança').width;let _cr=-1e9;
+      this.opt.confMask.forEach(m=>{const A=this.xPix(m[0]),B=this.xPix(m[1]);if(Math.abs(B-A)<1)return;
+        const x0=Math.min(A,B),w=Math.abs(B-A),cx=x0+w/2;c.fillStyle='rgba(6,10,14,.62)';c.fillRect(x0,t,w,ph);   // sombreado preservado
+        if(w>=_lw+6&&cx-_lw/2>_cr+8){c.fillStyle='rgba(120,140,150,.55)';c.textAlign='center';c.fillText('baixa confiança',cx,t+ph-6);_cr=cx+_lw/2;}});}  // rótulo na base, sem sobrepor curvas nem a si mesmo
     this.cursors.forEach((cxv,idx)=>{const X=this.xPix(cxv);if(X<l||X>l+pw)return;
       c.strokeStyle='rgba(230,240,247,.7)';c.lineWidth=1;c.beginPath();c.moveTo(X,t);c.lineTo(X,t+ph);c.stroke();
       c.fillStyle='rgba(230,240,247,.92)';c.font='10px Roboto Mono';c.textAlign='left';c.fillText(idx===0?'M1':'M2',X+3,t+ph-5);
@@ -1118,20 +1163,21 @@ class LabChart{
       if(this.pan){const dx=px-this.pan.px;if(Math.abs(px-this.pan.px)>4||Math.abs(py-this.pan.py)>4)this.moved=true;
         if(this.opt.xScale==='log'){const a=Math.log10(this.vx0),bb=Math.log10(this.vx1);const dt=-dx/pw*(bb-a);this.vx0=Math.pow(10,a+dt);this.vx1=Math.pow(10,bb+dt);}
         else{const d=-dx/pw*(this.vx1-this.vx0);this.vx0=this.pan.x0+d;this.vx1=this.pan.x1+d;}
-        const dy=(py-this.pan.py)/ph*(this.vy1-this.vy0);this.vy0=this.pan.y0+dy;this.vy1=this.pan.y1+dy;this.draw();return;}
-      if(this.selDrag){this.sel={a:this.selDrag.a,b:this.xVal(px)};this.draw();this.measure(px,py);return;}
-      if(px<l||px>l+pw||py<t||py>t+ph){this.cursorX=this.cursorY=null;this.tip.style.display='none';this.broadcast(null);if(this.opt.onHover)this.opt.onHover(null,this);this.draw();return;}
-      this.cursorX=this.xVal(px);this.cursorY=this.vy1-(py-t)/ph*(this.vy1-this.vy0);this.showTip(px,py,this.cursorX);this.broadcast(this.cursorX);if(this.opt.onHover)this.opt.onHover(this.cursorX,this);this.draw();});
-    cv.addEventListener('mouseleave',()=>{this.cursorX=this.cursorY=null;this.tip.style.display='none';this.broadcast(null);if(this.opt.onHover)this.opt.onHover(null,this);this.draw();});
+        const dy=(py-this.pan.py)/ph*(this.vy1-this.vy0);this.vy0=this.pan.y0+dy;this.vy1=this.pan.y1+dy;this.requestDraw();return;}
+      if(this.selDrag){this.sel={a:this.selDrag.a,b:this.xVal(px)};this.requestDraw();this.measure(px,py);return;}
+      if(px<l||px>l+pw||py<t||py>t+ph){this.cursorX=this.cursorY=null;this.tip.style.display='none';this.broadcast(null);if(this.opt.onHover)this.opt.onHover(null,this);this.requestDraw();return;}
+      this.cursorX=this.xVal(px);this.cursorY=this.vy1-(py-t)/ph*(this.vy1-this.vy0);this.showTip(px,py,this.cursorX);this.broadcast(this.cursorX);if(this.opt.onHover)this.opt.onHover(this.cursorX,this);this.requestDraw();});
+    cv.addEventListener('mouseleave',()=>{this.cursorX=this.cursorY=null;this.tip.style.display='none';this.broadcast(null);if(this.opt.onHover)this.opt.onHover(null,this);this.requestDraw();});
     cv.addEventListener('mousedown',e=>{const R=cv.getBoundingClientRect();const px=e.clientX-R.left,py=e.clientY-R.top;
       const{l,r,t,b}=this.pad,pw=this.W-l-r,ph=this.H-t-b;const inPlot=px>=l&&px<=l+pw&&py>=t&&py<=t+ph;
       const selMode=(this.opt.mode==='measure'||this.opt.mode==='local');
       if((e.shiftKey||selMode)&&inPlot){this.selDrag={a:this.xVal(px)};this.sel={a:this.xVal(px),b:this.xVal(px)};this.click=null;}
       else{this.pan={px,py,x0:this.vx0,x1:this.vx1,y0:this.vy0,y1:this.vy1};this.moved=false;this.click=inPlot?{x:this.xVal(px)}:null;}});
-    window.addEventListener('mouseup',()=>{if(this.click&&!this.moved)this.pinCursor(this.click.x);
+    this._onMouseUp=()=>{if(this.click&&!this.moved)this.pinCursor(this.click.x);
       if(this.selDrag&&this.sel){const a=Math.min(this.sel.a,this.sel.b),b=Math.max(this.sel.a,this.sel.b);
         if(Math.abs(this.xPix(b)-this.xPix(a))>5){this.sel=null;this.commitBand({a,b});}else{this.sel=null;this.draw();}}
-      this.click=null;this.pan=null;this.selDrag=null;});
+      this.click=null;this.pan=null;this.selDrag=null;};
+    window.addEventListener('mouseup',this._onMouseUp);
     cv.addEventListener('dblclick',()=>{this.sel=null;this.tip.style.display='none';this.resetView();this.draw();});
     cv.addEventListener('wheel',e=>{e.preventDefault();const R=cv.getBoundingClientRect();const px=e.clientX-R.left;const f=e.deltaY<0?0.82:1.22;const cxv=this.xVal(px);
       if(this.opt.xScale==='log'){const a=Math.log10(this.vx0),b=Math.log10(this.vx1),cc=Math.log10(cxv);this.vx0=Math.pow(10,cc+(a-cc)*f);this.vx1=Math.pow(10,cc+(b-cc)*f);}
@@ -1140,11 +1186,11 @@ class LabChart{
     if(r0){const ya=r0.y[this.nearest(r0,a)],yb=r0.y[this.nearest(r0,b)];dy=` · Δ${this.opt.yUnit} ${(yb-ya).toFixed(2)}`;}
     this.tip.innerHTML=`<div class="tx">Δ ${this.fmtNum(dx)} ${this.opt.xUnit}${dy}</div>`;this.tip.style.display='block';
     const tw=this.tip.offsetWidth;let L=px+14;if(L+tw>this.W)L=px-tw-14;this.tip.style.left=Math.max(2,L)+'px';this.tip.style.top=Math.max(2,py-30)+'px';}
-  broadcast(x){if(!this.opt.sync)return;(SYNC[this.opt.sync]||[]).forEach(ch=>{if(ch!==this){ch.extCursor=x;ch.draw();}});}
+  broadcast(x){if(!this.opt.sync)return;(SYNC[this.opt.sync]||[]).forEach(ch=>{if(ch!==this){ch.extCursor=x;ch.requestDraw();}});}
   pinCursor(x){const xs=this.cursors.length>=2?[x]:this.cursors.concat([x]);(this.opt.sync&&SYNC[this.opt.sync])?SYNC[this.opt.sync].forEach(ch=>ch.setCursors(xs)):this.setCursors(xs);}
   clearCursors(){(this.opt.sync&&SYNC[this.opt.sync])?SYNC[this.opt.sync].forEach(ch=>ch.setCursors([])):this.setCursors([]);}
   setCursors(xs){this.cursors=xs.slice();this.renderDock();this.draw();}
-  updateSeries(name,newY){const s=this.series.find(x=>x.name===name);if(!s)return;s.y=newY;this.computeBounds();this.renderDock();this.draw();}
+  updateSeries(name,newY){const s=this.series.find(x=>x.name===name);if(!s)return;s.y=newY;this.computeBounds();this.renderDock();this.requestDraw();}
   commitBand(band){this.setBand(band);if(this.opt.sync&&SYNC[this.opt.sync])SYNC[this.opt.sync].forEach(ch=>{if(ch!==this)ch.setBand(band);});if(this.onSelect)this.onSelect(band);}
   setBand(band){this.selBand=band;this.draw();}
   setMode(m){this.opt.mode=m;this.cv.style.cursor=(m==='measure'||m==='local')?'crosshair':(m==='cursors'?'pointer':'grab');}
@@ -1188,6 +1234,10 @@ const BUILT=new Set(['integrity','frequency','impulse','noise','imd']);
 const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const fmt=(v,d)=>(v==null||!isFinite(v))?'—':v.toFixed(d==null?2:d);
 const charts=[];
+let chartResizeRAF=0;
+function clearCharts(){if(chartResizeRAF){cancelAnimationFrame(chartResizeRAF);chartResizeRAF=0;}charts.forEach(c=>{try{if(c&&c.destroy)c.destroy();}catch(e){}});charts.length=0;for(const k in SYNC)delete SYNC[k];}
+function resizeCharts(){chartResizeRAF=0;charts.forEach(c=>{try{if(c&&c.resize)c.resize();}catch(e){}});}
+function scheduleChartResize(){if(chartResizeRAF)return;chartResizeRAF=requestAnimationFrame(resizeCharts);}
 
 function lamp(state,label){return `<span class="lamp ${state}"><i></i>${label}</span>`;}
 function meterBar(o){
@@ -1231,6 +1281,48 @@ function meanFinite(a){let s=0,n=0;for(const v of a)if(isFinite(v)){s+=v;n++;}re
 function smoothFracOct(x,y,frac){if(!frac)return y.slice();const half=1/(2*frac),out=new Array(y.length);
   for(let i=0;i<y.length;i++){const lo=Math.log2(x[i])-half,hi=Math.log2(x[i])+half;let s=0,n=0;
     for(let j=0;j<x.length;j++){const lx=Math.log2(x[j]);if(lx>=lo&&lx<=hi&&isFinite(y[j])){s+=y[j];n++;}}out[i]=n?s/n:y[i];}return out;}
+/* ===== FPERF — instrumentação TEMPORÁRIA da abertura da aba Frequência (OFF por padrão).
+   Ativar: window.AAMP_FPERF=true no console, ou abrir a página com ?fperf na URL.
+   Cronometra de showDomain('frequency') até o primeiro frame pintado, por etapa (console.table).
+   Só age quando o domínio é 'frequency' — nenhuma outra aba é afetada. Remover após diagnóstico. ===== */
+const FPERF=(()=>{
+  const on=()=>{try{return !!window.AAMP_FPERF||String(location.search||'').indexOf('fperf')>=0;}catch(e){return false;}};
+  const now=()=>{try{return performance.now();}catch(e){return Date.now();}};
+  let t0=0,last=0,rows=[],active=false,note='';
+  return {
+    begin(id){active=(on()&&id==='frequency');if(!active)return;t0=last=now();rows=[];note='';rows.push({etapa:'entrada em showDomain',ms:0,acumulado:0});},
+    note(s){if(active)note=(note?note+' ':'')+s;},   // metadados p/ o cabeçalho (ex.: nº de pontos de MS-01)
+    mark(label){if(!active)return;const t=now();rows.push({etapa:label,ms:+(t-last).toFixed(1),acumulado:+(t-t0).toFixed(1)});last=t;},
+    end(){if(!active)return;const t=now();rows.push({etapa:'primeiro frame desenhado',ms:+(t-last).toFixed(1),acumulado:+(t-t0).toFixed(1)});
+      const total=+(t-t0).toFixed(1);
+      const line='Frequência total='+total+'ms'+(note?' '+note:'')+' | '+rows.map(r=>r.etapa+':'+r.ms).join(' | ');
+      console.log('%c[FPERF] Aba Frequência — '+total+' ms até o primeiro frame','color:#2977E7;font-weight:600');
+      if(console.table)console.table(rows);else rows.forEach(r=>console.log(r.etapa,r.ms+'ms','(acum '+r.acumulado+'ms)'));
+      try{window.__AAMP_LAST_FPERF={total:total,note:note,rows:rows.slice()};}catch(e){}   // inspeção via DevTools
+      try{if(typeof send==='function')send('fperf',{msg:line});}catch(e){}                 // grava no diag_log.txt ([FPERF])
+      active=false;}
+  };
+})();
+
+/* Suavização fracional de oitava LOCAL, usada EXCLUSIVAMENTE por buildFrequencyEnv.
+   Bit-idêntica a smoothFracOct (mesma janela, mesma ordem de soma crescente, mesmo filtro isFinite),
+   porém O(n·W) por janela deslizante de dois ponteiros monotônicos — o eixo de frequência x é
+   ascendente, então a janela em log2 [lx[i]-half, lx[i]+half] avança monotonicamente. Se x não for
+   ascendente, cai no algoritmo O(n²) idêntico ao compartilhado. NÃO altera o helper compartilhado. */
+function smoothFracOctFq(x,y,frac){if(!frac)return y.slice();
+  const N=y.length,half=1/(2*frac),out=new Array(N),lx=new Array(N);
+  let asc=true;for(let j=0;j<N;j++){lx[j]=Math.log2(x[j]);if(j&&lx[j]<lx[j-1])asc=false;}
+  if(!asc){for(let i=0;i<N;i++){const lo=lx[i]-half,hi=lx[i]+half;let s=0,n=0;
+      for(let j=0;j<N;j++){if(lx[j]>=lo&&lx[j]<=hi&&isFinite(y[j])){s+=y[j];n++;}}out[i]=n?s/n:y[i];}return out;}
+  let jlo=0,jhi=-1;
+  for(let i=0;i<N;i++){const lo=lx[i]-half,hi=lx[i]+half;
+    while(jlo<N&&lx[jlo]<lo)jlo++;                       // 1ª posição com lx>=lo (monotônico)
+    if(jhi<jlo-1)jhi=jlo-1;                              // jhi = última posição com lx<=hi
+    while(jhi+1<N&&lx[jhi+1]<=hi)jhi++;
+    let s=0,n=0;for(let j=jlo;j<=jhi;j++){if(isFinite(y[j])){s+=y[j];n++;}}  // soma fresca, ordem crescente
+    out[i]=n?s/n:y[i];}
+  return out;}
+
 function crossInterp(x,y,i,thr){const t=(thr-y[i-1])/(y[i]-y[i-1]);const lx=Math.log2(x[i-1])+t*(Math.log2(x[i])-Math.log2(x[i-1]));return Math.pow(2,lx);}
 function freqStats(x,y){let pk=0;for(let i=1;i<y.length;i++)if(y[i]>y[pk])pk=i;
   const thr=y[pk]-3,cr=[];for(let i=1;i<y.length;i++)if(isFinite(y[i-1])&&isFinite(y[i])&&(y[i-1]-thr)*(y[i]-thr)<0)cr.push(crossInterp(x,y,i,thr));
@@ -1280,6 +1372,7 @@ function buildFrequencyEnv(stage,focus){
   const fr=M.metrics.curves['MS-01'],ph=M.metrics.curves['MS-02'],gd=M.metrics.curves['MS-03'];
   if(!(fr&&fr.x&&fr.x.length)){stage.innerHTML='<div class="notice" style="margin:30px">MS-01 ausente nesta medição.</div>';return;}
   const rawMag=fr.y.slice();
+  FPERF.note('MS-01_pts='+fr.x.length+(ph&&ph.x?' MS-02_pts='+ph.x.length:'')+(gd&&gd.x?' MS-03_pts='+gd.x.length:''));
   let smooth=6,ref='peak',inited=false;const mode='nav',showGhost=true,showPhase=true,showGd=true;
   let dispMag=rawMag.slice(),curBand=null,curFeat=null,feats=[],lastPct=null;
   // excesso de GD (relativo à mediana) — o que importa é a variação, não o atraso fixo
@@ -1314,6 +1407,7 @@ function buildFrequencyEnv(stage,focus){
       <div id="fq-cursor"></div>
     </div>`;
   stage.appendChild(ws);
+  FPERF.mark('criação do DOM (workspace)');
 
   const mainEl=ws.querySelector('#fq-mainscroll');mainEl.style.overflowY='auto';
   ws.querySelector('.ws-side').style.overflowY='auto';
@@ -1322,6 +1416,7 @@ function buildFrequencyEnv(stage,focus){
   const magChart=hostChart(ws.querySelector('#fq-chart'),{name:'freq_magnitude',xScale:'log',xUnit:'Hz',yUnit:'dB',trace:cssv('--d-frequency'),height:magH,sync:'freq',markers:[],mode,
     onHover:(x,ch)=>updateCursor(x),
     series:[{name:'Crua',x:fr.x,y:rawMag.slice(),color:'rgba(123,196,255,.30)',ghost:true},{name:'Magnitude',x:fr.x,y:dispMag}]});
+  FPERF.mark('criação do gráfico de magnitude');
   let phChart=null,gdChart=null;
   const phWrap=ws.querySelector('#fq-phase'),gdWrap=ws.querySelector('#fq-gd');
   function buildLanes(){
@@ -1444,15 +1539,17 @@ function buildFrequencyEnv(stage,focus){
       +(gdDisp?vchip('GD VARIAÇÃO',fmt((rangeStats({x:gd.x,y:gdDisp},fr.x[0],fr.x[fr.x.length-1])||{}).ripple,2),'ms','','m-time'):'');
     const tlab=M._trust==='bad'?'Confiança comprometida':M._trust==='warn'?'Confiável c/ ressalvas':M._trust==='idle'?'Análise externa':'Medição confiável';
     trustEl.className='vtrust '+(M._trust==='idle'?'warn':M._trust);trustEl.innerHTML='<i></i>'+tlab;}
-  function renderTonal(){const avg=(a,b)=>{let s=0,n=0;for(let i=0;i<fr.x.length;i++){if(fr.x[i]>=a&&fr.x[i]<b){s+=dispMag[i];n++;}}return n?s/n:null;};
-    const lo=avg(20,300),mid=avg(300,4000),hi=avg(4000,20000);let chr='equilibrado';
+  function renderTonal(st){let sLo=0,nLo=0,sMid=0,nMid=0,sHi=0,nHi=0;   // 3 faixas em uma passagem
+    for(let i=0;i<fr.x.length;i++){const f=fr.x[i],v=dispMag[i];
+      if(f>=20&&f<300){sLo+=v;nLo++;}else if(f>=300&&f<4000){sMid+=v;nMid++;}else if(f>=4000&&f<20000){sHi+=v;nHi++;}}
+    const lo=nLo?sLo/nLo:null,mid=nMid?sMid/nMid:null,hi=nHi?sHi/nHi:null;let chr='equilibrado';
     if(lo!=null&&mid!=null&&hi!=null){const hb=hi-mid,lb=lo-mid;
       if(hb>2&&hb>=lb)chr='brilhante · +'+fmt(hb,1)+' dB nos agudos';
       else if(lb>2&&lb>hb)chr='encorpado · +'+fmt(lb,1)+' dB nos graves';
       else if(hb<-2)chr='abafado · '+fmt(hb,1)+' dB nos agudos';
       else if(lb<-2)chr='magro · '+fmt(lb,1)+' dB nos graves';}
-    tonalEl.innerHTML=screen('<div class="side-cap">Balanço tonal · oitavas</div>'+bandBars(bandLevels(fr.x,dispMag))+'<div class="phen-co" style="margin-top:6px">Caráter: <b style="color:var(--c)">'+chr+'</b>'+(()=>{const t=freqStats(fr.x,dispMag).tilt;return t!=null?' · inclinação '+(t>0?'+':'')+fmt(t,2)+' dB/oct':'';})()+'</div>');}
-  function renderConformance(){const st=freqStats(fr.x,dispMag),lo=st.lo3||fr.x[0],hi=st.hi3||fr.x[fr.x.length-1];
+    tonalEl.innerHTML=screen('<div class="side-cap">Balanço tonal · oitavas</div>'+bandBars(bandLevels(fr.x,dispMag))+'<div class="phen-co" style="margin-top:6px">Caráter: <b style="color:var(--c)">'+chr+'</b>'+(()=>{const t=st.tilt;return t!=null?' · inclinação '+(t>0?'+':'')+fmt(t,2)+' dB/oct':'';})()+'</div>');}
+  function renderConformance(st){const lo=st.lo3||fr.x[0],hi=st.hi3||fr.x[fr.x.length-1];
     let sum=0,n=0;for(let i=0;i<fr.x.length;i++){if(fr.x[i]<lo||fr.x[i]>hi)continue;sum+=dispMag[i];n++;}const mean=n?sum/n:0;
     let inS=0,sq=0,m=0,regs=[],rs=null;
     for(let i=0;i<fr.x.length;i++){if(fr.x[i]<lo||fr.x[i]>hi)continue;const d=dispMag[i]-mean;sq+=d*d;m++;if(Math.abs(d)<=3)inS++;const out=Math.abs(d)>3;
@@ -1460,24 +1557,27 @@ function buildFrequencyEnv(stage,focus){
     lastPct=m?Math.round(100*inS/m):null;const rms=m?Math.sqrt(sq/m):0;
     confEl.innerHTML=screen('<div class="side-cap">Conformidade · ±3 dB na passbanda</div>'+(regs.length?('<div class="phen-co" style="margin-bottom:6px">Fora de ±3 dB: <b style="color:var(--c)">'+regs.slice(0,3).map(r=>fHz(r[0])+'–'+fHz(r[1])).join(' · ')+'</b></div>'):'<div class="phen-co" style="margin-bottom:6px">Toda a passbanda dentro de ±3 dB.</div>')+'<div class="ros">'+readout('DESVIO RMS',fmt(rms,2),'dB')+readout('BANDA',fHz(lo)+'–'+fHz(hi),'')+'</div>');}
 
-  function recompute(){let y=rawMag.slice();
+  function recompute(){FPERF.mark('entrada em recompute');let y=rawMag.slice();
     if(ref==='peak'){let p=0;for(let i=1;i<y.length;i++)if(y[i]>y[p])p=i;const off=y[p];y=y.map(v=>v-off);}
     else if(ref==='1000'){const off=y[nearestIdx(fr.x,1000)];y=y.map(v=>v-off);}
-    const rawRef=y.slice();dispMag=smoothFracOct(fr.x,y,smooth);
-    magChart.series[0].y=rawRef;magChart.series[0].visible=showGhost&&smooth>0;magChart.updateSeries('Magnitude',dispMag);
-    const st=freqStats(fr.x,dispMag);
+    const rawRef=y.slice();FPERF.mark('preparação de arrays (referência)');
+    dispMag=smoothFracOctFq(fr.x,y,smooth);FPERF.mark('suavização (smoothFracOctFq)');
+    magChart.series[0].y=rawRef;magChart.series[0].visible=showGhost&&smooth>0;
+    {const _s=magChart.series.find(s=>s.name==='Magnitude');if(_s)_s.y=dispMag;}magChart.computeBounds();magChart.renderDock();  // sem draw aqui — o draw() único é abaixo
+    const st=freqStats(fr.x,dispMag);FPERF.mark('freqStats');
     magChart.markers=[{x:st.pkF,label:'pico '+fmt(st.pkV,1)+' dB'}].concat(st.lo3!=null?[{x:st.lo3,label:'-3 dB'}]:[]).concat(st.hi3!=null?[{x:st.hi3,label:'-3 dB'}]:[]);
     const floor=st.pkV-32,mask=[];let rs=null;
     for(let i=0;i<fr.x.length;i++){const below=dispMag[i]<floor;if(below&&rs==null)rs=fr.x[i];if((!below||i===fr.x.length-1)&&rs!=null){if(fr.x[i]-rs>0)mask.push([rs,fr.x[i]]);rs=null;}}
-    magChart.opt.confMask=mask;{const ei=magChart.series.findIndex(s=>s.name==='Após EQ');if(ei>=0){magChart.series.splice(ei,1);eqOn=false;}}magChart.draw();
-    const peaks=detectPeaks(fr.x,dispMag,1.5,1).slice(0,5).map(p=>Object.assign({type:'Pico'},p));
-    const notches=detectPeaks(fr.x,dispMag,1.5,-1).slice(0,4).map(p=>Object.assign({type:'Notch'},p));
+    magChart.opt.confMask=mask;{const ei=magChart.series.findIndex(s=>s.name==='Após EQ');if(ei>=0){magChart.series.splice(ei,1);eqOn=false;}}FPERF.mark('máscara de baixa confiança');
+    magChart.draw();FPERF.mark('render do gráfico (draw magnitude)');
+    const peaks=detectPeaks(fr.x,dispMag,1.5,1).slice(0,5).map(p=>Object.assign({type:'Pico'},p));FPERF.mark('detectPeaks (picos)');
+    const notches=detectPeaks(fr.x,dispMag,1.5,-1).slice(0,4).map(p=>Object.assign({type:'Notch'},p));FPERF.mark('detectNotches');
     const sl=steepest(fr.x,dispMag);feats=peaks.concat(notches);feats.push({type:'Inclinação máx',f:sl.f,slope:sl.slope,a:sl.a,b:sl.b});
     if(st.hi3){const ro=rangeStats({x:fr.x,y:dispMag},st.hi3,fr.x[fr.x.length-1]);if(ro&&ro.slope!=null)feats.push({type:'Roll-off agudo',f:st.hi3,slope:ro.slope,a:st.hi3,b:fr.x[fr.x.length-1]});}
-    feats.sort((p,q)=>p.f-q.f);if(curFeat)curFeat=feats.find(f=>f.type===curFeat.type&&Math.abs(f.f-curFeat.f)<1)||null;
+    feats.sort((p,q)=>p.f-q.f);if(curFeat)curFeat=feats.find(f=>f.type===curFeat.type&&Math.abs(f.f-curFeat.f)<1)||null;FPERF.mark('steepest + roll-off + feats');
     if(!inited){inited=true;const dom=feats.filter(f=>f.type==='Pico'||f.type==='Notch').sort((a,b)=>b.prom-a.prom)[0];
       if(dom){curFeat=dom;curBand={a:dom.a,b:dom.b};allCharts().forEach(c=>c.setBand(curBand));}}
-    renderConformance();renderVerdict(st);renderAuto();renderFeatures();renderPhenomenon();renderTonal();renderCursor();}
+    renderConformance(st);renderVerdict(st);renderAuto();renderFeatures();renderPhenomenon();renderTonal(st);renderCursor();FPERF.mark('investigação automática + cards + painel lateral');}
 
   const onSel=band=>{curBand=band;curFeat=null;featEl.querySelectorAll('.feat').forEach(e=>e.classList.remove('on'));renderLocal(band);renderPhenomenon();};
   magChart.onSelect=onSel;
@@ -1486,7 +1586,7 @@ function buildFrequencyEnv(stage,focus){
   ws.querySelector('#fq-smooth').onchange=e=>{smooth=+e.target.value;recompute();};
   ws.querySelector('#fq-ref').onchange=e=>{ref=e.target.value;recompute();};
 
-  buildLanes();recompute();
+  buildLanes();FPERF.mark('criação dos gráficos fase/GD (lanes)');recompute();
   if(focus&&focus.f){const ft=feats.filter(f=>f.type==='Pico'||f.type==='Notch').sort((a,b)=>Math.abs(a.f-focus.f)-Math.abs(b.f-focus.f))[0];if(ft)selectFeature(ft);}
 }
 
@@ -1501,10 +1601,32 @@ function linFitRange(xs,ys,yHi,yLo){let n=0,sx=0,sy=0,sxx=0,sxy=0;for(let i=0;i<
 function timeStats(x,y,a,b){let pk=0,sq=0,n=0,pi=-1;for(let i=0;i<x.length;i++){if(x[i]<a||x[i]>b)continue;const av=Math.abs(y[i]);if(av>pk){pk=av;pi=i;}sq+=y[i]*y[i];n++;}return n?{peak:pk,peakT:x[pi],rms:Math.sqrt(sq/n),energy:sq,n}:null;}
 function qcap(parent,html){const d=document.createElement('div');d.className='qline';d.innerHTML=html;parent.appendChild(d);}
 
+/* MS-04: o engine emite APENAS a curva de IR ("Impulse Response"); a curva de envelope pode não
+   vir no payload. Este helper devolve {ir, env}: usa o envelope explícito se existir (ex.: fixtures
+   .aamp), senão DERIVA um envelope de exibição a partir da própria IR — mesma prática já usada no
+   Laboratório para Schroeder/ETC (curvas derivadas da IR para representação). NÃO altera métrica,
+   DSP ou payload; é apenas a representação da bancada temporal a partir do dado disponível.
+   Regex ampliadas para casar nomenclatura EN ("Impulse Response") e PT ("impulso"/"envoltória"). */
+function ms04Curves(m04){
+  if(!m04||!m04.curves)return {ir:null,env:null};
+  const ir=m04.curves.find(c=>/impuls/i.test(c.name))||null;
+  let env=m04.curves.find(c=>/envelope|envolt/i.test(c.name))||null;
+  if(!env&&ir&&ir.x&&ir.x.length){
+    const y=ir.y,n=y.length,mag=new Array(n);
+    for(let i=0;i<n;i++)mag[i]=Math.abs(y[i]);
+    const w=Math.max(1,Math.round(n/600)),sm=new Array(n);   // envelope: |IR| com suavização curta
+    let acc=0;for(let i=0;i<Math.min(n,w+1);i++)acc+=mag[i];  // média móvel O(n)
+    for(let i=0;i<n;i++){const lo=Math.max(0,i-w),hi=Math.min(n-1,i+w);
+      if(i>0){const add=i+w;if(add<n)acc+=mag[add];const rem=i-w-1;if(rem>=0)acc-=mag[rem];}
+      sm[i]=acc/(hi-lo+1);}
+    env={name:'Envelope (derivado da IR)',xUnit:ir.xUnit||'ms',yUnit:'',x:ir.x.slice(),y:sm,derived:true};
+  }
+  return {ir,env};
+}
+
 function buildImpulseEnv(stage,focus,pc){
   const m04=LAB.getById('MS-04');
-  const irc=m04&&m04.curves&&m04.curves.find(c=>/impulse/i.test(c.name));
-  const envc=m04&&m04.curves&&m04.curves.find(c=>/envelope/i.test(c.name));
+  const {ir:irc,env:envc}=ms04Curves(m04);
   const sc=k=>M.metrics.scalars[k];
   if(!(irc&&irc.x&&irc.x.length)){stage.className='scroll';
     const cap=M.captures.find(c=>/ir/i.test(c.file)||/impuls/i.test(c.stimulus||''))||pc;
@@ -1633,27 +1755,31 @@ function openContext(){closeContext();const m=M.meta||{},F=acquisitionFindings()
   document.body.appendChild(bd);document.body.appendChild(sh);sh.querySelector('#ctx-x').onclick=closeContext;}
 let CURRENT=null,DOMS=[];
 
-/* bootSession(session) — ENTRADA DEFINITIVA DO PRODUTO.
-   No fluxo final o Analysis Core gera a Session e chama bootSession(session);
-   o Laboratório abre e a investigação começa. A abertura de arquivo (ingest)
-   é apenas ferramenta auxiliar de importação/desenvolvimento. */
+/* bootSession(session) — ENTRADA CANÔNICA E ÚNICA DO LABORATÓRIO.
+   A Session que chega aqui é SEMPRE produzida pelo mesmo pipeline: ingest → fromAamp → bootSession.
+   Origem indistinta — arquivo .aamp salvo OU caracterização recém-finalizada (que persiste um .aamp
+   e é reaberta pelo mesmo caminho). Não há fonte "ao vivo" separada; a Session é única e canônica. */
 function bootSession(session){
+  const _end=PDBG.mark('bootSession');
   if(session)M=session;
+  M._vizCache={};
+  PDBG.dumpSession(M);
   const en=document.getElementById('entry');if(en)en.classList.add('hide');
   document.getElementById('view').classList.remove('hide');
 
   const pc=M.captures[M.primary],wav=pc&&pc.wav;
-  let clipTot=0;M.captures.forEach(c=>{if(c.wav)for(const x of c.wav.samples)if(Math.abs(x)>=0.999)clipTot++;});
   const q=wav?SCI.integrity(wav.samples):null;
+  let clipTot=q?q.clip:0;M.captures.forEach((c,i)=>{if(i!==M.primary&&c.wav)for(const x of c.wav.samples)if(Math.abs(x)>=0.999)clipTot++;});
   const trust=(clipTot||(q&&q.peakDb>-1))?'bad':(((q&&q.peakDb>-6)||M.metrics.lowConf)?'warn':(q?'ok':'idle'));
   M._trust=trust;M._integ={q,clipTot};
 
-  SESSION.history=[];SESSION.wfStep=0;
+  SESSION.history=[];SESSION.wfStep=0;SESSION._anomalies=null;
   DOMS=[{id:'investigation',label:'Investigação',q:'Existe alguma anomalia?',led:'ok',build:buildInvestigationEnv}];
   ECOSYSTEM.forEach(g=>g.items.forEach(([id,label])=>{if(BUILDERS[id])DOMS.push({id,label,led:domLed(id),build:BUILDERS[id]});}));
 
   buildRail();
   showDomain('integrity');
+  _end();
 }
 function freqLed(){const fr=M.metrics.curves['MS-01'];if(!fr)return 'idle';const st=freqStats(fr.x,fr.y);return (st.ripple!=null&&st.ripple>12)?'warn':'ok';}
 function domLabel(d){return {integrity:'Integridade',frequency:'Frequência',noise:'Ruído',imd:'Distorção',impulse:'Impulsiva'}[d]||d;}
@@ -1680,10 +1806,11 @@ function scanAnomalies(M){const A=[],sc=k=>M.metrics.scalars[k],val=e=>(e&&e.val
   if(snr!=null&&snr<60)A.push({dom:'noise',sev:snr<40?'high':'low',conf:'alta',label:'SNR baixo',detail:snr.toFixed(1)+' dB'});
   if(nf!=null&&nf>-60)A.push({dom:'noise',sev:'low',conf:'alta',label:'Piso de ruído alto',detail:nf.toFixed(1)+' dBFS'});
   const m04=M.metrics.byId&&M.metrics.byId['MS-04'];
-  if(m04){const envc=(m04.curves||[]).find(c=>/envelope/i.test(c.name));
+  if(m04){const envc=ms04Curves(m04).env;
     if(envc){const etc=etcToDb(envc.y);detectPeaks(envc.x,etc,6,1).filter(p=>p.f>1.5&&p.f<50).sort((a,b)=>b.level-a.level).slice(0,2)
       .forEach(p=>A.push({dom:'impulse',focus:{t:p.f},sev:p.level>-9?'med':'low',conf:'alta',label:'Reflexão em '+fmt(p.f,1)+' ms',detail:fmt(p.level,1)+' dB rel. ao direto · pente-filtro ~'+fHz(500/p.f)}));}}
   const rank={high:0,med:1,low:2};A.sort((a,b)=>rank[a.sev]-rank[b.sev]);return A;}
+function sessionAnomalies(){if(!M)return [];return SESSION._anomalies||(SESSION._anomalies=scanAnomalies(M));}
 
 /* ===== FASE 2 · serviços compartilhados da plataforma (em memória; sem persistência — DOC-00) ===== */
 /* Knowledge Base — conhecimento de engenharia compartilhado por todos os instrumentos */
@@ -1706,7 +1833,7 @@ function correlate(ph){const out=[],phc=M.metrics.curves['MS-02'],gd=M.metrics.c
   if(ph.dom==='frequency'&&ph.f){const f=ph.f;
     if(phc){const rs=rangeStats(phc,f*0.8,f*1.25);if(rs&&rs.ripple>20)out.push({dom:'phase',label:'Coincide em fase',detail:fmt(rs.ripple,0)+'° em torno de '+fHz(f)+' — fase mínima'});}
     if(gd){const s=gd.y.filter(isFinite).slice().sort((a,b)=>a-b),med=s[s.length>>1],ex=gd.y[nearestIdx(gd.x,f)]-med;if(Math.abs(ex)>0.5)out.push({dom:'groupdelay',label:'Pico de atraso de grupo',detail:fmt(ex,2)+' ms de excesso em '+fHz(f)});}
-    if(ph.type==='notch'&&m04){const env=m04.curves.find(c=>/envelope/i.test(c.name));if(env){const etc=etcToDb(env.y),refl=detectPeaks(env.x,etc,6,1).filter(p=>p.f>1.5&&p.f<50),dt=500/f,near=refl.sort((a,b)=>Math.abs(a.f-dt)-Math.abs(b.f-dt))[0];if(near&&Math.abs(near.f-dt)<dt*0.6)out.push({dom:'impulse',label:'Compatível com reflexão',detail:'reflexão em '+fmt(near.f,2)+' ms prevê este notch'});}}}
+    if(ph.type==='notch'&&m04){const env=ms04Curves(m04).env;if(env){const etc=etcToDb(env.y),refl=detectPeaks(env.x,etc,6,1).filter(p=>p.f>1.5&&p.f<50),dt=500/f,near=refl.sort((a,b)=>Math.abs(a.f-dt)-Math.abs(b.f-dt))[0];if(near&&Math.abs(near.f-dt)<dt*0.6)out.push({dom:'impulse',label:'Compatível com reflexão',detail:'reflexão em '+fmt(near.f,2)+' ms prevê este notch'});}}}
   if(ph.dom==='impulse'&&ph.t)out.push({dom:'frequency',label:'Imprime pente-filtro',detail:'notches a partir de '+fHz(500/ph.t)});
   return out;}
 
@@ -1749,7 +1876,7 @@ function workflowSteps(an){const steps=[{k:'trust',label:'1 · Confiança',dom:'
 
 function buildInvestigationEnv(stage){stage.className='scroll';
   const active=new Set(DOMS.map(d=>d.id));
-  const an=scanAnomalies(M).filter(a=>active.has(a.dom));
+  const an=sessionAnomalies().filter(a=>active.has(a.dom));
   const trust=M._trust,hi=an.filter(a=>a.sev==='high').length;
   const headline=an.length?(an.length+' anomalia'+(an.length>1?'s':'')+(hi?' · '+hi+' crítica'+(hi>1?'s':''):'')):'Nenhuma anomalia acima do limiar';
   const tlab=trust==='bad'?'não confiável':trust==='warn'?'confiável com ressalvas':trust==='idle'?'análise externa':'confiável';
@@ -1847,7 +1974,7 @@ function buildGdEnv(stage){curveEnv(stage,{id:'gd_c',condRead:'Variação de GD 
   need:'Requer MS-03 (atraso de grupo). Abra uma medição normativa.',needShort:'Atraso de grupo indisponível neste sinal.',
   verdict:(cv,yv,st)=>vchip('VARIAÇÃO',fmt(st.ripple,2),'ms','flag')+vchip('EXCESSO MÁX',fmt(st.max,2),'ms','')+vchip('AUDÍVEL',st.ripple>1?'sim · >1 ms':'não','',st.ripple>1?'flag':''),
   link:{label:'investigar em Frequência →',onclick:()=>showDomain('frequency')}});}
-function buildEnvelopeEnv(stage){const m=LAB.getById('MS-04'),e=m&&m.curves&&m.curves.find(c=>/envelope/i.test(c.name));
+function buildEnvelopeEnv(stage){const m=LAB.getById('MS-04'),e=ms04Curves(m).env;
   curveEnv(stage,{id:'env_c',condRead:'O ataque e o decaimento vêm da resposta impulsiva — veja a forma no tempo para localizar reflexões.',q:'Qual a forma de ataque e decaimento no tempo?',title:'Envelope',curve:e,xScale:'linear',xUnit:'ms',yUnit:'',trace:'--d-temporal',sync:'time',xLab:'TEMPO',yLab:'AMPL',
     need:'Requer MS-04 (envelope analítico de Hilbert), de uma medição com resposta impulsiva.',needShort:'Envelope indisponível neste sinal.',
     verdict:(cv,yv,st)=>{let pi=0;for(let i=1;i<yv.length;i++)if(yv[i]>yv[pi])pi=i;return vchip('ATAQUE @',fmt(cv.x[pi],2),'ms','flag')+vchip('PICO',fmt(yv[pi],3),'','')+vchip('JANELA',fmt(cv.x[cv.x.length-1]-cv.x[0],0),'ms','');},
@@ -1879,7 +2006,7 @@ function buildDistortion(stage,cfg){const {answer,main,side}=instWS(stage,cfg.q,
   const V=k=>LAB.getMetric(k);
   const cells='<div class="ros">'+readout('THD',V('THD_pct')!=null?fmt(V('THD_pct'),3):'—','%')+readout('THD+N',V('THDN_pct')!=null?fmt(V('THDN_pct'),3):'—','%')+readout('IMD',V('IMD_pct')!=null?fmt(V('IMD_pct'),3):'—','%')+'</div>';
   const cap=cfg.spectrum?LAB.getCapture('sine'):null;
-  if(cap&&cap.wav&&cap.wav.samples&&cap.wav.samples.length>8192){const A=SCI.harmonics(cap);
+  if(cap&&cap.wav&&cap.wav.samples&&cap.wav.samples.length>8192){const A=cachedHarmonics(cap);
     answer.innerHTML=cfg.chips(V,A);
     const host=document.createElement('div');host.className='ws-chart';main.appendChild(host);
     const specY=A.sp.y.map(v=>v-A.l0),markers=[{x:A.f0,label:'f0 '+fHz(A.f0)}].concat(A.harm.filter(h=>h.rel>-95).map(h=>({x:h.f,label:'H'+h.n})));
@@ -1947,6 +2074,13 @@ function stft(samples,fs,frameSize,hop){const N=frameSize,bins=N>>1,freqs=new Ar
   for(let s=0;s+N<=samples.length;s+=hop){const re=new Array(N),im=new Array(N).fill(0);for(let i=0;i<N;i++)re[i]=samples[s+i]*win[i];fftRadix2(re,im);
     const col=new Float32Array(bins);for(let k=0;k<bins;k++)col[k]=20*Math.log10(Math.hypot(re[k],im[k])/N*2+1e-12);frames.push({t:(s+N/2)/fs*1000,col});}
   return {freqs,frames};}
+function vizCache(key){const c=M&&(M._vizCache||(M._vizCache={}));return c&&(c[key]||(c[key]={}));}
+function cachedStft(key,samples,fs,N,hop,offset){const c=vizCache(key),off=offset||0;if(!c)return stft(off?samples.slice(off):samples,fs,N,hop);
+  if(c.samples===samples&&c.fs===fs&&c.N===N&&c.hop===hop&&c.offset===off)return c.res;
+  c.samples=samples;c.fs=fs;c.N=N;c.hop=hop;c.offset=off;c.res=stft(off?samples.slice(off):samples,fs,N,hop);return c.res;}
+function cachedHarmonics(cap){const w=cap&&cap.wav,c=vizCache('harmonics');if(!w||!c)return harmonicAnalysis(cap);
+  if(c.samples===w.samples&&c.fs===(w.sampleRate||48000))return c.res;
+  c.samples=w.samples;c.fs=w.sampleRate||48000;c.res=harmonicAnalysis(cap);return c.res;}
 function dbColor(v){v=Math.max(0,Math.min(1,v));const st=[[8,11,16],[20,34,74],[18,96,112],[35,150,96],[150,180,70],[235,225,150],[252,250,224]];
   const sg=v*(st.length-1),i=Math.floor(sg),f=sg-i,a=st[i],b=st[Math.min(i+1,st.length-1)];return `rgb(${Math.round(a[0]+(b[0]-a[0])*f)},${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)})`;}
 function heatmapChart(host,cfg){const {freqs,frames}=cfg,fmin=cfg.fmin||20,fmax=cfg.fmax||Math.min(freqs[freqs.length-1],20000);
@@ -1954,6 +2088,7 @@ function heatmapChart(host,cfg){const {freqs,frames}=cfg,fmin=cfg.fmin||20,fmax=
   const wrap=document.createElement('div');wrap.className='lc';wrap.style.padding='10px 12px';
   const head=document.createElement('div');head.style.cssText='font-family:var(--fmono);font-size:10px;color:var(--txt3);margin-bottom:6px;display:flex;justify-content:space-between;gap:10px';
   head.innerHTML='<span>'+(cfg.title||'')+'</span><span id="hm-read" style="color:var(--c)">—</span>';wrap.appendChild(head);
+  const readEl=head.querySelector('#hm-read');
   const cv=document.createElement('canvas');cv.style.cursor='crosshair';wrap.appendChild(cv);host.appendChild(wrap);
   const dpr=window.devicePixelRatio||1,lf0=Math.log10(fmin),lf1=Math.log10(fmax);
   let mx=-Infinity;frames.forEach(fr=>fr.col.forEach(v=>{if(v>mx)mx=v;}));const dbMax=cfg.dbMax!=null?cfg.dbMax:mx,dbMin=dbMax-(cfg.dbSpan||80);
@@ -1968,8 +2103,8 @@ function heatmapChart(host,cfg){const {freqs,frames}=cfg,fmin=cfg.fmin||20,fmax=
     c.textAlign='center';const tmax=frames.length?frames[frames.length-1].t:0;[0,.25,.5,.75,1].forEach(fr=>c.fillText(fmt(tmax*fr,0),padL+pw*fr,H-9));
     c.fillStyle=cssv('--txt3');c.textAlign='left';c.fillText((cfg.xUnit||'ms'),W-padR-20,H-9);
     cv._map=(X,Y)=>{if(X<padL||X>W-padR||Y<padT||Y>padT+ph)return null;const fi=Math.min(frames.length-1,Math.max(0,Math.floor((X-padL)/colW)));const f=Math.pow(10,lf0+(lf1-lf0)*(1-(Y-padT)/ph));const k=Math.max(1,Math.min(freqs.length-1,Math.round(f/binHz)));return {t:frames[fi].t,f,db:frames[fi].col[k]};};}
-  cv.addEventListener('mousemove',e=>{const R=cv.getBoundingClientRect();const m=cv._map&&cv._map(e.clientX-R.left,e.clientY-R.top);head.querySelector('#hm-read').textContent=m?(fHz(m.f)+' · '+fmt(m.t,0)+(cfg.xUnit||'ms')+' · '+fmt(m.db,1)+' dB'):'—';if(cfg.onHover)cfg.onHover(m);});
-  cv.addEventListener('mouseleave',()=>{head.querySelector('#hm-read').textContent='—';if(cfg.onHover)cfg.onHover(null);});
+  cv.addEventListener('mousemove',e=>{const R=cv.getBoundingClientRect();const m=cv._map&&cv._map(e.clientX-R.left,e.clientY-R.top);readEl.textContent=m?(fHz(m.f)+' · '+fmt(m.t,0)+(cfg.xUnit||'ms')+' · '+fmt(m.db,1)+' dB'):'—';if(cfg.onHover)cfg.onHover(m);});
+  cv.addEventListener('mouseleave',()=>{readEl.textContent='—';if(cfg.onHover)cfg.onHover(null);});
   draw();charts.push({resize:draw});return {draw};}
 function hmLegend(){return screen('<div class="side-cap">Escala</div><div style="height:10px;border-radius:3px;margin:2px 0 6px;background:linear-gradient(90deg,rgb(8,11,16),rgb(20,34,74),rgb(18,96,112),rgb(35,150,96),rgb(150,180,70),rgb(252,250,224))"></div><div style="display:flex;justify-content:space-between;font-family:var(--fmono);font-size:9px;color:var(--txt3)"><span>baixa energia</span><span>alta</span></div>');}
 function hmCur(m){return screen('<div class="side-cap">Cursor</div>'+(m?('<div class="ros">'+readout('FREQ',fHz(m.f),'')+readout('TEMPO',fmt(m.t,0),'ms')+readout('NÍVEL',fmt(m.db,1),'dB')+'</div>'):'<div class="feat-empty">passe o mouse sobre o mapa</div>'));}
@@ -1979,25 +2114,27 @@ function buildSpectrogram(stage){const cap=LAB.getCapture('primary');
     reveals:'O espectrograma mapeia energia por frequência ao longo do tempo, revelando transitórios, sweeps e componentes que aparecem só em instantes específicos. Deriva da STFT de uma captura no tempo.',
     need:'Requer uma captura no tempo (WAV) com amostras suficientes.'});
   const {answer,main,side}=instWS(stage,'Como o espectro evolui no tempo?','Espectrograma');
-  const fs=cap.wav.sampleRate||48000,N=2048,hop=512,res=SCI.stft(cap.wav.samples,fs,N,hop);
+  const fs=cap.wav.sampleRate||48000,N=2048,hop=512,res=cachedStft('spectrogram',cap.wav.samples,fs,N,hop);
   answer.innerHTML=vchip('JANELA',N,'amostras','')+vchip('QUADROS',res.frames.length,'','flag')+vchip('RESOLUÇÃO',fmt(fs/N,0),'Hz','')+vchip('fs',fmt(fs,0),'Hz','');
+  let curEl=null;
   heatmapChart(main,{title:'Energia por frequência ao longo do tempo · '+(cap.stimulus||cap.file||'captura'),freqs:res.freqs,frames:res.frames,fmax:Math.min(20000,fs/2),height:Math.max(280,(stage.clientHeight||640)-170),dbSpan:80,
-    onHover:m=>{side.querySelector('#sg-cur').innerHTML=hmCur(m);}});
+    onHover:m=>{if(curEl)curEl.innerHTML=hmCur(m);}});
   side.innerHTML='<div id="sg-cur"></div>'+hmLegend()+screen('<div class="side-cap">Leitura</div><div class="phen-nat">Transitórios e sweeps aparecem como cristas que se movem no tempo; componentes estáveis, como linhas horizontais. Cada coluna é uma FFT de '+N+' amostras.</div>');
-  side.querySelector('#sg-cur').innerHTML=hmCur(null);}
+  curEl=side.querySelector('#sg-cur');curEl.innerHTML=hmCur(null);}
 function buildWaterfall(stage){const m04=LAB.getById('MS-04'),ir=m04&&m04.curves&&m04.curves.find(c=>/impulse/i.test(c.name));
   if(!(ir&&ir.x&&ir.x.length>2048))return infoEnv(stage,{q:'Como cada frequência decai ao longo do tempo?',title:'Waterfall',status:'requer IR',
     reveals:'O decaimento espectral cumulativo expõe ressonâncias que persistem no tempo: cristas que demoram a decair revelam modos e ringing invisíveis na resposta em frequência estática. Deriva da resposta impulsiva por STFT.',
     need:'Requer MS-04 (resposta impulsiva) com amostras suficientes; o decaimento de energia já é investigável no instrumento Decaimento.'});
   const {answer,main,side}=instWS(stage,'Como cada frequência decai ao longo do tempo?','Waterfall');
-  const dt=(ir.x[1]-ir.x[0])/1000,fs=dt>0?1/dt:48000,i0=Math.max(0,ir.x.findIndex(v=>v>=0)),samp=ir.y.slice(i0);
-  const N=1024,hop=256,res=SCI.stft(samp,fs,N,hop);
+  const dt=(ir.x[1]-ir.x[0])/1000,fs=dt>0?1/dt:48000,i0=Math.max(0,ir.x.findIndex(v=>v>=0));
+  const N=1024,hop=256,res=cachedStft('waterfall',ir.y,fs,N,hop,i0);
   let ringK=1,ringT=0;if(res.frames.length>2){for(let k=2;k<res.freqs.length;k++){let last=0;for(let fi=0;fi<res.frames.length;fi++)if(res.frames[fi].col[k]>res.frames[0].col[k]-20)last=res.frames[fi].t;if(last>ringT){ringT=last;ringK=k;}}}
   answer.innerHTML=vchip('JANELA',N,'amostras','')+vchip('QUADROS',res.frames.length,'','flag')+vchip('RINGING',fHz(res.freqs[ringK]),'','flag')+vchip('PERSISTE ATÉ',fmt(ringT,1),'ms','');
+  let curEl=null;
   heatmapChart(main,{title:'Decaimento espectral cumulativo (CSD) — cristas que persistem revelam ringing/modos',freqs:res.freqs,frames:res.frames,fmax:Math.min(20000,fs/2),height:Math.max(280,(stage.clientHeight||640)-170),dbSpan:60,
-    onHover:mm=>{side.querySelector('#wf-cur').innerHTML=hmCur(mm);}});
+    onHover:mm=>{if(curEl)curEl.innerHTML=hmCur(mm);}});
   side.innerHTML='<div id="wf-cur"></div>'+hmLegend()+screen('<div class="side-cap">Leitura</div><div class="phen-nat">A frequência que mais persiste no tempo é <b style="color:var(--c)">'+fHz(res.freqs[ringK])+'</b>, audível como ringing até ~'+fmt(ringT,1)+' ms. Deriva da STFT da resposta impulsiva.</div>');
-  side.querySelector('#wf-cur').innerHTML=hmCur(null);}
+  curEl=side.querySelector('#wf-cur');curEl.innerHTML=hmCur(null);}
 
 /* ===== distorção espectral — harmônicos reais via FFT do estímulo tonal ===== */
 function harmonicAnalysis(cap){const w=cap.wav,fs=w.sampleRate||48000,N=8192,start=Math.max(0,Math.floor(w.samples.length/2)-N/2),frame=w.samples.slice(start,start+N);
@@ -2020,7 +2157,7 @@ function liveSpectrumEnv(stage,cfg){const {answer,main,side}=instWS(stage,cfg.q,
     analyser=ctx.createAnalyser();analyser.fftSize=4096;analyser.smoothingTimeConstant=0.65;
     const bins=analyser.frequencyBinCount,fs=ctx.sampleRate,xs=[];for(let k=1;k<bins;k++)xs.push(k*fs/analyser.fftSize);
     chart=hostChart(host,{name:cfg.id,xScale:'log',xUnit:'Hz',yUnit:'dB',trace:cssv(cfg.mode==='mic'?'--d-noise':'--d-frequency'),height:Math.max(220,(stage.clientHeight||640)-205),series:[{name:'Espectro ao vivo',x:xs,y:xs.map(()=>-110)}]});
-    const data=new Float32Array(bins);const loop=()=>{analyser.getFloatFrequencyData(data);chart.updateSeries('Espectro ao vivo',Array.prototype.slice.call(data,1));chart.draw();raf=requestAnimationFrame(loop);};
+    const data=new Float32Array(bins),liveY=data.subarray(1);const loop=()=>{analyser.getFloatFrequencyData(data);chart.updateSeries('Espectro ao vivo',liveY);raf=requestAnimationFrame(loop);};
     const begin=node=>{node.connect(analyser);if(cfg.mode==='playback')analyser.connect(ctx.destination);setState('ativo');loop();};
     if(cfg.mode==='mic'){if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ctrl.querySelector('#lv-msg').textContent='microfone indisponível neste contexto';stop();return;}
       navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{src=ctx.createMediaStreamSource(stream);src._stream=stream;begin(src);}).catch(e=>{ctrl.querySelector('#lv-msg').textContent='microfone negado: '+(e.name||e.message);stop();});}
@@ -2044,7 +2181,7 @@ const SCI={fft:fftRadix2,spectrum:magSpectrum,stft:stft,smooth:smoothFracOct,pea
   schroeder:schroeder,crossTime:crossTime,linFit:linFitRange,timeStats:timeStats,nearestIdx:nearestIdx,
   integrity:captureIntegrity,harmonics:harmonicAnalysis};
 /* Motores — serviços de investigação, consumidos por todos os instrumentos */
-const Investigation={scan:m=>scanAnomalies(m),conclude:(an,t)=>synthesizeConclusion(an,t)};
+const Investigation={scan:m=>(m===M?sessionAnomalies():scanAnomalies(m)),conclude:(an,t)=>synthesizeConclusion(an,t)};
 const Correlation={of:ph=>correlate(ph)};
 const Recommendation={forAnomaly:a=>recommend(a)};
 const Knowledge={of:t=>kb(t),topicOf:a=>anomalyTopic(a)};
@@ -2066,7 +2203,7 @@ const LAB={
   getMetricObj:k=>(M.metrics&&M.metrics.scalars&&M.metrics.scalars[k])||null,
   getCapture:role=>{const C=M.captures||[];if(role==='primary')return C[M.primary];if(role==='sine')return sineCapture();if(role==='silence')return C.find(c=>/silence|st01/i.test(c.file||''));if(role==='ir')return C.find(c=>/ir|impuls/i.test((c.file||'')+(c.stimulus||'')));return null;},
   getCaptures:()=>M.captures||[],
-  getAnomalies:()=>Investigation.scan(M),
+  getAnomalies:()=>sessionAnomalies(),
   getCorrelation:ph=>Correlation.of(ph),
   getRecommendation:a=>Recommendation.forAnomaly(a),
   getKnowledge:t=>Knowledge.of(t),
@@ -2074,7 +2211,7 @@ const LAB={
   getTrace:(op,cv,arg)=>op==='smooth'?TraceMath.smooth(cv,arg):op==='invert'?TraceMath.invert(cv):op==='normalize'?TraceMath.normalize(cv):op==='diff'?TraceMath.diff(cv,arg):null,
   getSession:()=>SessionSvc.get(),
   getWorkflow:()=>Workflow,
-  conclusion:()=>Investigation.conclude(Investigation.scan(M),M._trust),
+  conclusion:()=>Investigation.conclude(sessionAnomalies(),M._trust),
   sci:SCI};
 
 function buildRail(){const rail=document.getElementById('rail');
@@ -2107,8 +2244,8 @@ function buildRail(){const rail=document.getElementById('rail');
   rail.querySelectorAll('.rg-head').forEach(h=>h.onclick=()=>{const g=h.parentElement;if(g.classList.contains('rail-locked'))return;const was=g.classList.contains('open');rail.querySelectorAll('.rail-grp:not(.rail-char)').forEach(x=>x.classList.remove('open'));if(!was)g.classList.add('open');});
   const og=[...rail.querySelectorAll('.rail-grp:not(.rail-char)')].find(g=>g.querySelector('.rdom[data-go="'+CURRENT+'"]'))||rail.querySelector('.rail-grp:not(.rail-char)');if(og&&has)og.classList.add('open');}
 
-function toggleRail(){const v=document.getElementById('view');if(!v)return;v.classList.toggle('rail-collapsed');setTimeout(()=>charts.forEach(c=>{try{c.resize();}catch(e){}}),240);}
-function guideSteps(){try{const an=scanAnomalies(M).filter(a=>DOMS.some(d=>d.id===a.dom));return workflowSteps(an);}catch(e){return [];}}
+function toggleRail(){const v=document.getElementById('view');if(!v)return;v.classList.toggle('rail-collapsed');setTimeout(scheduleChartResize,240);}
+function guideSteps(){try{const active=new Set(DOMS.map(d=>d.id));const an=sessionAnomalies().filter(a=>active.has(a.dom));return workflowSteps(an);}catch(e){return [];}}
 function renderGuide(){let g=document.getElementById('guide');const steps=guideSteps();
   if(!SESSION.guideOn||!steps.length){if(g)g.remove();return;}
   if(!g){g=document.createElement('div');g.id='guide';document.getElementById('view').appendChild(g);}
@@ -2119,14 +2256,21 @@ function renderGuide(){let g=document.getElementById('guide');const steps=guideS
     +'<button class="guide-x" id="guide-x" title="fechar">×</button>';
   g.querySelector('#guide-next').onclick=()=>{if(last){SESSION.guideOn=false;SESSION.wfStep=0;showDomain('investigation');}else{const n=cur+1;SESSION.wfStep=n;const st=steps[n];showDomain(st.dom,st.focus);}};
   g.querySelector('#guide-x').onclick=()=>{SESSION.guideOn=false;renderGuide();};}
-function showDomain(id,focus){const d=DOMS.find(x=>x.id===id);if(!d)return;CURRENT=id;stopLive();logHistory(id,d.label);
-  for(const k in SYNC)delete SYNC[k];charts.length=0;
+function showDomain(id,focus){const d=DOMS.find(x=>x.id===id);if(!d)return;FPERF.begin(id);CURRENT=id;stopLive();logHistory(id,d.label);
+  clearCharts();
   const stage=document.getElementById('stage');stage.className='';stage.innerHTML='';stage.style.setProperty('--c','var('+(COLORMAP[id]||DOMAINS[id]||'--d-frequency')+')');
-  document.querySelectorAll('.rdom').forEach(el=>el.classList.toggle('on',el.dataset.go===id));
-  {const ag=[...document.querySelectorAll('.rail-grp')].find(g=>g.querySelector('.rdom[data-go="'+id+'"]'));if(ag){document.querySelectorAll('.rail-grp').forEach(x=>x.classList.remove('open'));ag.classList.add('open');}}
-  d.build(stage,focus);
-  charts.forEach(c=>c.resize());
-  renderGuide();}
+  const rail=document.getElementById('rail');
+  if(rail){rail.querySelectorAll('.rdom').forEach(el=>el.classList.toggle('on',el.dataset.go===id));
+    const groups=rail.querySelectorAll('.rail-grp'),ag=[...groups].find(g=>g.querySelector('.rdom[data-go="'+id+'"]'));if(ag){groups.forEach(x=>x.classList.remove('open'));ag.classList.add('open');}}
+  const _end=PDBG.mark('showDomain:'+id);
+  try{ d.build(stage,focus); }
+  catch(err){ console.error('[AAMP] falha ao renderizar o domínio "'+id+'":',err);   // não mascara: erro visível
+    stage.innerHTML='<div class="notice" style="margin:30px">Não foi possível renderizar este instrumento nesta medição.</div>'; }
+  _end();
+  scheduleChartResize();
+  renderGuide();
+  requestAnimationFrame(()=>requestAnimationFrame(()=>FPERF.end()));   // após o primeiro frame pintado
+}
 
 function buildIntegrityEnv(stage){stage.className='scroll';
   const q=M._integ.q,clipTot=M._integ.clipTot,sc=k=>M.metrics.scalars[k],snr=sc('SNR_dB'),cons=sc('RepetitionConsistency_pct'),trust=M._trust;
@@ -2163,7 +2307,7 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over');}
 dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files.length)ingest(e.dataTransfer.files[0]);});
 fi.addEventListener('change',e=>{if(e.target.files.length)ingest(e.target.files[0]);});
-let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>charts.forEach(c=>c.resize()),120);});
+let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(scheduleChartResize,120);});
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeContext();});
 
 /* =========================================================================
@@ -2246,7 +2390,8 @@ const AAMP=(function(){
   /* ---- Estado do produto: um ambiente, dois estados (sem/com Session) ---- */
   let exported=false,acquiring=false,hardware=null,configuring=false,lastDevices=[],hwPendingThen=null,hwSel=null;
   let prepared=false,preparedId=null;   // device aberto/validado (READY) — evita abrir duas vezes
-  function teardown(){M=null;for(const k in SYNC)delete SYNC[k];charts.length=0;const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();prepared=false;preparedId=null;}
+  let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
+  function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();prepared=false;preparedId=null;}
   function hwInfoHTML(){return hardware
     ?'<div class="lab-hw"><span>Hardware: <b style="color:var(--txt2)">'+hardware.name+'</b></span><button class="lab-hw-gear" title="Configurar hardware de aquisição">⚙</button></div>'
     :'<div class="lab-hw warn"><span>Nenhum hardware configurado. Para criar uma nova caracterização será necessário configurar um hardware de aquisição.</span></div>';}
@@ -2369,10 +2514,10 @@ const AAMP=(function(){
       +'</div>';}
 
   /* Console de aquisição — renderizado no próprio palco (sem modal, sem troca de tela) */
-  function acqLog(text,run){const box=el('acqLog');if(!box)return;const prev=box.querySelector('.acq-line.run');if(prev){prev.classList.remove('run');const k=prev.querySelector('.lk');if(k)k.textContent='✓';}
-    const line=document.createElement('div');line.className='acq-line'+(run?' run':'');line.innerHTML='<span class="lk">'+(run?'▸':'✓')+'</span><span>'+text+'</span>';box.appendChild(line);box.scrollTop=box.scrollHeight;}
-  function acqBar(p){const f=el('acqFill'),t=el('acqPct');if(f&&p!=null)f.style.width=p+'%';if(t&&p!=null)t.textContent=p+'%';}
-  function startAcquisition(){acquiring=true;exported=false;
+  function acqLog(text,run){const box=el('acqLog');if(!box)return;const prev=acqRunLine&&acqRunLine.isConnected?acqRunLine:box.querySelector('.acq-line.run');if(prev){prev.classList.remove('run');const k=prev.querySelector('.lk');if(k)k.textContent='✓';}
+    const line=document.createElement('div');line.className='acq-line'+(run?' run':'');line.innerHTML='<span class="lk">'+(run?'▸':'✓')+'</span><span>'+text+'</span>';box.appendChild(line);box.scrollTop=box.scrollHeight;acqRunLine=run?line:null;}
+  function acqBar(p){if(p==null)return;acqBarPending=p;if(acqBarRAF)return;acqBarRAF=requestAnimationFrame(()=>{acqBarRAF=0;const v=acqBarPending;const f=el('acqFill'),t=el('acqPct');if(f)f.style.width=v+'%';if(t)t.textContent=v+'%';});}
+  function startAcquisition(){acquiring=true;exported=false;acqRunLine=null;acqBuildLogged=false;acqState='';acqBarPending=null;if(acqBarRAF){cancelAnimationFrame(acqBarRAF);acqBarRAF=0;}
     const st=el('stage');st.className='';
     st.innerHTML='<div class="acq"><div class="acq-eyebrow">Caracterização</div><div class="acq-title">Executando caracterização</div>'
       +'<div class="acq-console" id="acqLog"></div><div class="acq-track"><div class="acq-fill" id="acqFill"></div></div>'
@@ -2395,13 +2540,22 @@ const AAMP=(function(){
     if(acquiring){if(ready){prepared=true;preparedId=hardware&&hardware.id;acqLog('Dispositivo pronto',false);send('start');}
       else{acquiring=false;prepared=false;preparedId=null;acqLog('Não foi possível preparar o dispositivo de aquisição.',false);setTimeout(()=>renderEmpty(),600);}}});
   on('state',d=>{
+    if(d.state&&d.state===acqState)return;
+    acqState=d.state||acqState;
     if(d.state==='Measuring'){if(acquiring)acqLog('Gerando suíte automática e capturando…',true);}
     else if(d.state==='Processing'){if(acquiring){acqLog('Processando dados…',true);acqLog('Calculando métricas oficiais…',true);}}
     else if(d.state==='Error'){if(acquiring){acquiring=false;prepared=false;preparedId=null;acqLog('Não foi possível preparar o dispositivo de aquisição.',false);setTimeout(()=>renderEmpty(),600);}}});
-  on('progress',d=>{if(!acquiring)return;if(d.percent!=null)acqBar(d.percent);if(d.percent!=null&&d.percent>=100)acqLog('Construindo Session…',true);});
+  on('progress',d=>{if(!acquiring)return;if(d.percent!=null)acqBar(d.percent);if(d.percent!=null&&d.percent>=100&&!acqBuildLogged){acqBuildLogged=true;acqLog('Construindo Session…',true);}});
   on('exported',()=>{exported=true;});
   on('runFinished',async d=>{if(!acquiring)return;acquiring=false;prepared=false;preparedId=null;
-    if(d.outcome==='Completed'){acqLog('Caracterização concluída.',false);try{const session=await fromEngineSession(d.payload);exported=false;setTimeout(()=>bootSession(session),380);}catch(e){console.error('boot falhou',e);renderEmpty();}}
+    if(d.outcome==='Completed'){acqLog('Caracterização concluída.',false);
+      try{
+        // ARCH-01: a caracterização entrega um .aamp; reabrimos pelo MESMO caminho do arquivo (ingest→fromAamp→bootSession).
+        const bin=atob(d.aamp||'');const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        const nm=(d.aampPath&&String(d.aampPath).split(/[\\/]/).pop())||'characterization.aamp';
+        exported=false;
+        await ingest(new File([bytes],nm));
+      }catch(e){console.error('boot falhou',e);renderEmpty();}}
     else{renderEmpty();}});
 
   /* ---- Ações de produto (grupo Caracterização) ---- */
@@ -2436,7 +2590,9 @@ const AAMP=(function(){
 /* Religações da casca */
 (function(){const bs=document.getElementById('btnStart');if(bs)bs.onclick=()=>AAMP.newCharacterization();})();
 window.addEventListener('beforeunload',e=>{if(AAMP.hasSession()&&!AAMP.isExported()){e.preventDefault();e.returnValue='';}});
+__boot01('7 antes-do-initShell');
 AAMP.initShell();
+__boot01('8 apos-initShell');
 </script>
 </body>
 </html>

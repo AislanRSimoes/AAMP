@@ -62,7 +62,7 @@ private:
     std::atomic<bool>                            m_haveBundle { false }; // bundle valido para exportar
 
     // emit ao JS (sempre empacotado para a thread de mensagens)
-    void emitEvent(const juce::String& evt, juce::var data);
+    void emitEvent(const juce::String& evt, const juce::var& data);
 
     // roteamento de comandos vindos do JS
     void onCommand(const juce::String& json);

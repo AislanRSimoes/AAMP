@@ -249,6 +249,8 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
         return true;
     };
 
+    std::map<std::string, MetricResult> computed;   // adotadas (emitidas uma vez, quando completas)
+    int emittedDuringLoop = 0;                       // evidencia de nao-batch (Requisito 4)
     baseline::BaselineState suiteBaseline;           // EXPERIMENTAL: basal explicito do ST-09 (observacional)
     bool baselineReady = false;
 
@@ -293,41 +295,48 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
             observeTailAgainstBaseline(cap.captured[s.id], s.samples.size(), suiteBaseline, m_fs);
         }
 
-        // FASE 1 (Aquisicao): este laco APENAS captura buffers + observa baseline. NENHUMA analise
-        // aqui — a analise ocorre UMA vez apos a suite completa (Fase 3, abaixo). Isso elimina o
-        // reprocessamento repetido (computeAllMetrics por estimulo) que inflava o tempo total.
+        // 4) Cadeia estimulo -> analise. Se este estimulo COMPLETA o conjunto de dependencias de
+        //    alguma metrica ainda nao emitida, processa a observacao disponivel e emite as prontas.
+        bool anyNew = false;
+        for (const MetricDep& md : table)
+            if (!computed.count(md.id) && depsReady(md)) { anyNew = true; break; }
+        if (anyNew) {
+            ResultBundle partial = m_analysis.computeAllMetrics(cap);
+            for (const MetricDep& md : table) {
+                if (computed.count(md.id) || !depsReady(md)) continue;
+                const MetricResult* mr = nullptr;
+                for (const MetricResult& m : partial.metrics) if (m.id == md.id) { mr = &m; break; }
+                if (mr == nullptr) continue;
+                computed[md.id] = *mr;
+                ++emittedDuringLoop;
+                if (m_result) {
+                    MetricEmissionInfo info;
+                    info.deps = md.depLabel;
+                    info.stimuliCompleted = done;
+                    info.totalStimuli = total;
+                    info.emittedIndex = emittedDuringLoop;
+                    info.totalMetrics = static_cast<int>(table.size());
+                    m_result(*mr, info);           // 5) resultado imediato + contexto (Requisito 4/5)
+                }
+            }
+        }
     }
 
-    // FASE 3 (Processamento) — apos capturar TODA a suite, o AnalysisEngine processa o conjunto
-    // COMPLETO uma UNICA vez. Sem reprocessamento por estimulo. Ordem canonica = table.
+    // PROCESSING (M-05): monta o bundle final em ordem canonica a partir do que ja foi calculado.
     if (!m_sm.transition(State::Processing)) { m_sm.forceError(); rr.userMessage = "Falha de transicao."; return rr; }
     report("Processando resultados", total, total);
     rr.bundle.meta.sampleRate = cap.fs;
     rr.bundle.meta.mode = cap.mode;
-
-    ResultBundle full = m_analysis.computeAllMetrics(cap);   // UNICA passagem de analise (todos os buffers)
-    int errors = 0, emitted = 0;
+    int errors = 0;
     for (const MetricDep& md : table) {
-        if (!depsReady(md)) continue;                        // metrica sem seus estimulos: ignorada
-        const MetricResult* mr = nullptr;
-        for (const MetricResult& m : full.metrics) if (m.id == md.id) { mr = &m; break; }
-        if (mr == nullptr) continue;
-        rr.bundle.metrics.push_back(*mr);
-        if (mr->quality == Quality::Error) ++errors;
-        ++emitted;
-        if (m_result) {                                      // emite as metricas prontas (apos a suite)
-            MetricEmissionInfo info;
-            info.deps = md.depLabel;
-            info.stimuliCompleted = total;
-            info.totalStimuli = total;
-            info.emittedIndex = emitted;
-            info.totalMetrics = static_cast<int>(table.size());
-            m_result(*mr, info);
-        }
+        auto it = computed.find(md.id);
+        if (it == computed.end()) continue;
+        rr.bundle.metrics.push_back(it->second);
+        if (it->second.quality == Quality::Error) ++errors;
     }
     rr.errorMetrics = errors;
-    rr.emittedIncremental = 0;                               // analise em fase unica (nao incremental)
-    rr.emittedAfterSuite  = emitted;
+    rr.emittedIncremental = emittedDuringLoop;   // todas emitidas DURANTE o laco
+    rr.emittedAfterSuite  = 0;                    // a montagem final apenas copia o ja calculado (sem novo processamento)
     // Falha de TODAS as metricas -> suite falha (ER-033); caso contrario, prossegue (degradacao FR-040).
     if (!rr.bundle.metrics.empty() && errors >= static_cast<int>(rr.bundle.metrics.size())) {
         m_sm.forceError();
