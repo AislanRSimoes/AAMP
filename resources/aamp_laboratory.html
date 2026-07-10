@@ -1136,8 +1136,18 @@ class LabChart{
       c.font='8px Roboto Mono';const lx=x+3;if(lx>_lblR+7){c.fillStyle='rgba(190,205,216,.6)';c.textAlign='left';c.fillText(m.label,lx,t+9);_lblR=lx+c.measureText(m.label).width;}});
     this.series.forEach(s=>{if(!s.visible)return;const col=s.color||this.opt.trace;
       if(s.ghost){c.strokeStyle=col;c.lineWidth=1;c.shadowBlur=0;c.globalAlpha=.55;c.setLineDash([2,3]);}else{c.strokeStyle=col;c.lineWidth=1.8;c.shadowColor=col;c.shadowBlur=10;c.setLineDash([]);}
-      const P=this._lodStroke(s,l,pw);   // LOD só p/ desenho; s.x/s.y (científico) intactos p/ hover/análise/export
-      if(P.length>=2){c.beginPath();c.moveTo(P[0],P[1]);for(let k=2;k<P.length;k+=2)c.lineTo(P[k],P[k+1]);c.stroke();}
+      // LOD seletivo por metrica — UNICO ponto de decisao, por propriedade EXPLICITA (sem depender
+      // de nome interno). Aplica _lodStroke() somente onde o grafico declara useLOD:true (MS-01).
+      // Os demais (useLOD ausente/false) desenham TODOS os pontos cientificos visiveis (== Python).
+      if(this.opt.useLOD){
+        const P=this._lodStroke(s,l,pw);   // s.x/s.y (cientifico) intactos p/ hover/analise/export
+        if(P.length>=2){c.beginPath();c.moveTo(P[0],P[1]);for(let k=2;k<P.length;k+=2)c.lineTo(P[k],P[k+1]);c.stroke();}
+      } else {
+        c.beginPath();let started=false;
+        for(let i=0;i<s.x.length;i++){const xv=s.x[i],yv=s.y[i];if(this.opt.xScale==='log'&&xv<=0)continue;if(!isFinite(yv))continue;
+          const X=this.xPix(xv),Y=this.yPix(yv);if(X<l-2||X>l+pw+2){started=false;continue;}started?c.lineTo(X,Y):c.moveTo(X,Y);started=true;}
+        c.stroke();
+      }
       c.shadowBlur=0;c.setLineDash([]);c.globalAlpha=1;});
     if(this.opt.confMask){c.font='8px Roboto Mono';const _lw=c.measureText('baixa confiança').width;let _cr=-1e9;
       this.opt.confMask.forEach(m=>{const A=this.xPix(m[0]),B=this.xPix(m[1]);if(Math.abs(B-A)<1)return;
@@ -1413,7 +1423,7 @@ function buildFrequencyEnv(stage,focus){
   ws.querySelector('.ws-side').style.overflowY='auto';
   const stageH=stage.clientHeight||640;
   const laneH=142,magH=Math.max(220,Math.round(stageH-120-46-48-(showPhase?laneH:0)-(showGd?laneH:0)-28));
-  const magChart=hostChart(ws.querySelector('#fq-chart'),{name:'freq_magnitude',xScale:'log',xUnit:'Hz',yUnit:'dB',trace:cssv('--d-frequency'),height:magH,sync:'freq',markers:[],mode,
+  const magChart=hostChart(ws.querySelector('#fq-chart'),{name:'freq_magnitude',useLOD:true,xScale:'log',xUnit:'Hz',yUnit:'dB',trace:cssv('--d-frequency'),height:magH,sync:'freq',markers:[],mode,
     onHover:(x,ch)=>updateCursor(x),
     series:[{name:'Crua',x:fr.x,y:rawMag.slice(),color:'rgba(123,196,255,.30)',ghost:true},{name:'Magnitude',x:fr.x,y:dispMag}]});
   FPERF.mark('criação do gráfico de magnitude');
