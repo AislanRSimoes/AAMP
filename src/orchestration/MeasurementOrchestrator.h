@@ -68,6 +68,11 @@ public:
     void setResultCallback(std::function<void(const MetricResult&, const MetricEmissionInfo&)> cb) { m_result = std::move(cb); }
     // Integridade de cada estimulo logo apos a captura (Requisito 2: monitoramento continuo).
     void setStimulusCallback(std::function<void(const StimulusReport&)> cb) { m_stimcb = std::move(cb); }
+    // Observacao SOMENTE-LEITURA da aquisicao (Etapa 2): expoe os fatos ja produzidos por estimulo
+    // (Stimulus emitido + CaptureResult observado) a um observador externo (ex.: EvidenceRecorder),
+    // que os transforma em EvidencePackage. O Orchestrator apenas coordena e emite; nao registra e
+    // nao conhece a evidencia. Falhas do observador NUNCA interrompem a aquisicao (ver .cpp).
+    void setObservationCallback(std::function<void(const Stimulus&, const CaptureResult&)> cb) { m_observe = std::move(cb); }
     // Valida o dispositivo e transita IDLE -> READY (BR-003).
     bool prepare(IAudioDevice& dev);
     // Executa a suite completa automaticamente (FR-037). Unico comando. Fluxo por estimulo.
@@ -90,6 +95,7 @@ private:
     std::function<void(const Progress&)> m_progress;
     std::function<void(const MetricResult&, const MetricEmissionInfo&)> m_result;
     std::function<void(const StimulusReport&)> m_stimcb;
+    std::function<void(const Stimulus&, const CaptureResult&)> m_observe;  // observador da aquisicao (Etapa 2)
     bool m_cancel = false;
     double m_noiseFloorRms = 0.0;          // piso medido (ST-09) p/ limiar de decaimento adaptativo
     void report(const std::string& label, int completed, int total);

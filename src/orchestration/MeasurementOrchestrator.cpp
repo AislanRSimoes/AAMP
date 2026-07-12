@@ -278,6 +278,14 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
         if (m_stimcb) m_stimcb(sreport);
         if (s.id == StimulusId::ST09_Silence) m_noiseFloorRms = sreport.rms; // piso p/ limiar adaptativo
 
+        // Observacao SOMENTE-LEITURA (Etapa 2): expoe os fatos ja produzidos (estimulo emitido +
+        // captura observada) a um observador externo, ANTES do move (c ainda integro). O observador
+        // e isolado: qualquer falha sua NUNCA interrompe nem invalida a aquisicao.
+        if (m_observe) {
+            try { m_observe(s, c); }
+            catch (...) { /* observador isolado: a caracterizacao prossegue normalmente */ }
+        }
+
         cap.captured[s.id] = std::move(c.samples);
         ++done;
         report("Medindo", done, total);
