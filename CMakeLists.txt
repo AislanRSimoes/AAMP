@@ -68,6 +68,17 @@ endif()
 add_executable(wav_metric_harness tools/wav_metric_harness.cpp)
 target_link_libraries(wav_metric_harness PRIVATE aamp_core)
 
+# ---- Scientific Validation Harness (validation/): infraestrutura permanente de validação ----
+# Etapa 0: ponto de entrada permanente da validação científica, integrado ao CTest. Reutiliza
+# o núcleo determinístico (StimulusGenerator/ExportEngine) e o framework de teste (tests/).
+# Sem casos científicos, sem parser JSON, sem abstrações antecipadas.
+add_executable(aamp_validation_harness validation/harness/validation_main.cpp)
+target_link_libraries(aamp_validation_harness PRIVATE aamp_core)
+target_include_directories(aamp_validation_harness PRIVATE tests)   # tests/TestRunner.h
+target_compile_definitions(aamp_validation_harness PRIVATE
+  AAMP_VALIDATION_DATASET_DIR="${CMAKE_SOURCE_DIR}/validation/dataset")
+add_test(NAME aamp_scientific_validation COMMAND aamp_validation_harness)
+
 # ---- Camadas de máquina-alvo (JUCE): casca WebView (M-06), backends (M-01/04), render (M-07) ----
 option(AAMP_WITH_JUCE "Compila a aplicação GUI/hardware na máquina-alvo" OFF)
 if(AAMP_WITH_JUCE)
