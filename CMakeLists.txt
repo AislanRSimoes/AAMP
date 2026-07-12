@@ -50,6 +50,7 @@ add_executable(aamp_tests
   tests/test_export.cpp
   tests/test_hardware_routing.cpp
   tests/test_dashboard.cpp
+  tests/test_evidence.cpp
   tests/main.cpp
 )
 target_link_libraries(aamp_tests PRIVATE aamp_core)
