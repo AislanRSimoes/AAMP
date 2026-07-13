@@ -778,37 +778,62 @@ function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
   PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
-/* MS-05 (THD) — PRIMEIRA família científica NATIVA do Laboratory.
-   Reproduz FIELMENTE o MÉTODO CIENTÍFICO definido pelo AnalysisEngine, preservando o conhecimento
-   científico independentemente da implementação (a AUTORIDADE é o método, não o código C++):
-   recorte do bloco de 1 kHz, janela Blackman-Harris 4 termos, FFT 65536, soma de energia em ±4 bins,
-   e THD sobre harmônicos 2..10 relativo ao fundamental FIXO de 1 kHz.
-   Função PURA e agnóstica da origem: recebe apenas o SINAL científico { samples, sampleRate } — não
-   conhece Session, Evidence Package nem o contrato metrics; sem estado/cache; janela calculada sob
-   demanda; reutiliza SOMENTE SCI.fft. Toda a infraestrutura (janela BH4, recorte, energyNear) é
-   PRIVADA à MS-05 e não deve ser promovida a SCI enquanto uma segunda família não exigir o mesmo.
-   NOTA — pureza científica: retorna sempre o valor matemático calculado, SEM qualquer limiar interno.
-   O piso de equivalência numérica existe apenas no harness de validação, nunca aqui. */
+/* Autoridade científica = CAMINHO ATIVO do AnalysisEngine (USE_FULL_OBSERVATION=true) -> fullSpectrum.
+   Os caminhos _fixed / thdPercent / FFT 65536 são auxiliares/diagnósticos e NÃO servem de referência.
+   MS-05 (THD) — PRIMEIRA família científica NATIVA. Reproduz FIELMENTE o método oficial fullSpectrum:
+   bloco de 1 kHz COMPLETO [seg,2·seg); janela Blackman-Harris 4 de comprimento = bloco; zero-pad até
+   npow2 (p.ex. 96000 -> 131072); FFT nesse tamanho; soma de energia ±4 bins nessa resolução; THD sobre
+   harmônicos 2..10 relativo ao fundamental fixo de 1 kHz.
+   Função PURA e agnóstica da origem { samples, sampleRate }; sem estado/cache; janela sob demanda;
+   reutiliza SOMENTE SCI.fft; SEM limiar interno (o ganho coerente cancela na razão — regra de
+   cancelamento). Infraestrutura PRIVADA à MS-05 (Subetapa A — sem promoção compartilhada). */
 function computeMS05(signal){
-  const samples=signal.samples, fs=signal.sampleRate, N=65536;
-  const seg=Math.round(2*fs), base=seg;                  // bloco de 1 kHz (região canônica do método)
-  const a0=0.35875,a1=0.48829,a2=0.14128,a3=0.01168;     // Blackman-Harris 4 termos
-  const re=new Array(N).fill(0), im=new Array(N).fill(0);
-  const L=Math.max(0,Math.min(N, samples.length-base));  // primeiros N samples do bloco (zero-pad)
-  for(let i=0;i<L;i++){const r=i/(N-1);
-    const w=a0-a1*Math.cos(2*Math.PI*r)+a2*Math.cos(4*Math.PI*r)-a3*Math.cos(6*Math.PI*r);
-    re[i]=samples[base+i]*w;}
-  SCI.fft(re,im);                                         // única primitiva compartilhada reutilizada
-  const half=N>>1, mag=new Array(half);
-  for(let k=0;k<half;k++)mag[k]=Math.hypot(re[k],im[k]);
-  const energyNear=f=>{const c=Math.round(f*N/fs);let e=0;
-    for(let b=c-4;b<=c+4;b++)if(b>=0&&b<half)e+=mag[b]*mag[b];return e;};
+  const samples=signal.samples, fs=signal.sampleRate;
+  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);   // bloco de 1 kHz COMPLETO
+  if(a>=b) return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
+  const L=b-a; let nfft=1; while(nfft<L) nfft<<=1;                        // janela=L; zero-pad -> npow2
+  const c0=0.35875,c1=0.48829,c2=0.14128,c3=0.01168;                     // Blackman-Harris 4 termos
+  const re=new Array(nfft).fill(0), im=new Array(nfft).fill(0);
+  for(let i=0;i<L;i++){const r=i/(L-1);
+    const w=c0-c1*Math.cos(2*Math.PI*r)+c2*Math.cos(4*Math.PI*r)-c3*Math.cos(6*Math.PI*r);
+    re[i]=samples[a+i]*w;}
+  SCI.fft(re,im);
+  const half=nfft>>1;
+  const energyNear=f=>{const c=Math.round(f*nfft/fs);let e=0;
+    for(let k=c-4;k<=c+4;k++)if(k>=0&&k<half)e+=re[k]*re[k]+im[k]*im[k];return e;};  // |X|² (cg cancela)
   const A1=energyNear(1000);
-  if(A1<=0)return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
+  if(A1<=0) return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
   let harm=0;for(let n=2;n<=10;n++){const fh=n*1000;if(fh>=fs/2)break;harm+=energyNear(fh);}
   const thd_pct=100*Math.sqrt(harm)/Math.sqrt(A1);
   const thd_db=20*Math.log10(Math.max(thd_pct/100,1e-12));
   return {thd_pct, thd_db};
+}
+/* MS-06 (THD+N) — SEGUNDA família nativa. MESMO método oficial fullSpectrum (bloco 1 kHz completo,
+   janela BH4 de comprimento = bloco, zero-pad npow2, FFT nesse tamanho); energia TOTAL na banda
+   [20,20000] Hz menos o fundamental (±4 bins) = residual; THD+N = 100·√(rest)/√(A1). PURA, agnóstica
+   { samples, sampleRate }, sem estado, sem limiar (cg cancela na razão), reutiliza só SCI.fft.
+   Subetapa A: a base espectral é INTENCIONALMENTE duplicada em relação à MS-05 para comprovar por
+   implementação real o SEGUNDO consumidor concreto; a promoção do trecho compartilhado é decisão da
+   auditoria de reutilização (Subetapas B/C), NUNCA no meio desta implementação. */
+function computeMS06(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);
+  if(a>=b) return {thdn_pct:0, thdn_db:20*Math.log10(1e-12)};
+  const L=b-a; let nfft=1; while(nfft<L) nfft<<=1;
+  const c0=0.35875,c1=0.48829,c2=0.14128,c3=0.01168;
+  const re=new Array(nfft).fill(0), im=new Array(nfft).fill(0);
+  for(let i=0;i<L;i++){const r=i/(L-1);
+    const w=c0-c1*Math.cos(2*Math.PI*r)+c2*Math.cos(4*Math.PI*r)-c3*Math.cos(6*Math.PI*r);
+    re[i]=samples[a+i]*w;}
+  SCI.fft(re,im);
+  const half=nfft>>1, fb=Math.round(1000*nfft/fs), BAND_LO=20, BAND_HI=20000;
+  let Et=0,A1=0;                                          // energia total na banda e do fundamental ±4
+  for(let k=0;k<half;k++){const f=k*fs/nfft; if(f<BAND_LO||f>BAND_HI)continue;
+    const e=re[k]*re[k]+im[k]*im[k]; Et+=e; if(Math.abs(k-fb)<=4)A1+=e;}
+  const rest=Math.max(0,Et-A1);
+  const thdn_pct=A1>0 ? 100*Math.sqrt(rest)/Math.sqrt(A1) : 0;
+  const thdn_db=20*Math.log10(Math.max(thdn_pct/100,1e-12));
+  return {thdn_pct, thdn_db};
 }
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
@@ -825,11 +850,17 @@ const LabEngine={
     const byId={},scalars={},curves={};let lowConf=0,na=0;
     const st03=(session.captures||[]).find(c=>c.stimulus==='ST-03');   // localização = responsabilidade do LabEngine
     if(st03&&st03.wav){
-      const r=computeMS05({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate});
-      const mr={id:'MS-05',name:'THD',quality:'Normal',scalars:[
-        {key:'THD_pct',value:r.thd_pct,unit:'%', quality:'Normal',valuePresent:true},
-        {key:'THD_dB', value:r.thd_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
-      byId[mr.id]=mr; mr.scalars.forEach(s=>{scalars[s.key]=s;});
+      const sig={samples:st03.wav.samples, sampleRate:st03.wav.sampleRate};
+      const m05=computeMS05(sig);
+      const mr05={id:'MS-05',name:'THD',quality:'Normal',scalars:[
+        {key:'THD_pct',value:m05.thd_pct,unit:'%', quality:'Normal',valuePresent:true},
+        {key:'THD_dB', value:m05.thd_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr05.id]=mr05; mr05.scalars.forEach(s=>{scalars[s.key]=s;});
+      const m06=computeMS06(sig);
+      const mr06={id:'MS-06',name:'THD+N',quality:'Normal',scalars:[
+        {key:'THDN_pct',value:m06.thdn_pct,unit:'%', quality:'Normal',valuePresent:true},
+        {key:'THDN_dB', value:m06.thdn_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr06.id]=mr06; mr06.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
