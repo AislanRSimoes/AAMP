@@ -778,6 +778,18 @@ function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
   PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
+/* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
+   Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
+   DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
+   nem modifica a Session, não depende de globais além das primitivas científicas (SCI), e dada a
+   mesma Session produz sempre o mesmo contrato metrics. Todo estado pertence à Session.
+   Nesta etapa NÃO há famílias: run retorna o contrato metrics vazio. A forma definitiva de uma
+   família (assinatura, registro, deps, ordem) surgirá com a primeira família científica. */
+const LabEngine={
+  run(session){
+    return {byId:{},scalars:{},curves:{},lowConf:0,na:0};
+  }
+};
 /* Sub-etapa 3.0 — consumo do Evidence Package pelo Laboratory.
    isEvidenceFormat: reconhece o CONTRATO estrutural do pacote de evidência (arrays stimuli+captures,
    conforme o EvidenceSerializer) — reconhecimento positivo da estrutura esperada, sem heurísticas
@@ -792,10 +804,11 @@ function fromEvidence(f,man,file){
   const readJson=name=>(man[name]&&f[man[name]])?JSON.parse(asText(f[man[name]])):{};
   const ses=readJson('session'),hw=readJson('hardware'),acq=readJson('acquisition');
   const caps=(man.captures||[]).map(c=>({stimulus:c.code,file:c.file,wav:f[c.file]?parseWAV(asAB(f[c.file])):null})).filter(c=>c.wav);
-  return {provenance:'evidence',source:file.name,
+  const session={provenance:'evidence',source:file.name,
     meta:{device:hw.deviceName,sampleRate:hw.sampleRate,mode:hw.channels,timestamp:ses.timestamp},
-    captures:caps,primary:0,
-    metrics:{byId:{},scalars:{},curves:{},lowConf:0,na:0},hasAnalysis:false,acquisition:acq};
+    captures:caps,primary:0,hasAnalysis:false,acquisition:acq};
+  session.metrics=LabEngine.run(session);   // pipeline Session -> LabEngine -> metrics (vazio nesta etapa)
+  return session;
 }
 async function fromAamp(file){
   const f=readZipStore(await file.arrayBuffer());
