@@ -778,10 +778,30 @@ function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
   PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
+/* Sub-etapa 3.0 — consumo do Evidence Package pelo Laboratory.
+   isEvidenceFormat: reconhece o CONTRATO estrutural do pacote de evidência (arrays stimuli+captures,
+   conforme o EvidenceSerializer) — reconhecimento positivo da estrutura esperada, sem heurísticas
+   nem dependência de "ausência de analysis".
+   fromEvidence: reconstrói a Session INTEGRALMENTE a partir da evidência (WAVs + metadados). NUNCA
+   consulta analysis.json e NÃO calcula nenhuma família científica (metrics vazias; hasAnalysis:false),
+   reutilizando o caminho sem-ciência já suportado pela Session (degradação graciosa). */
+function isEvidenceFormat(man){
+  return !!man && Array.isArray(man.stimuli) && Array.isArray(man.captures);
+}
+function fromEvidence(f,man,file){
+  const readJson=name=>(man[name]&&f[man[name]])?JSON.parse(asText(f[man[name]])):{};
+  const ses=readJson('session'),hw=readJson('hardware'),acq=readJson('acquisition');
+  const caps=(man.captures||[]).map(c=>({stimulus:c.code,file:c.file,wav:f[c.file]?parseWAV(asAB(f[c.file])):null})).filter(c=>c.wav);
+  return {provenance:'evidence',source:file.name,
+    meta:{device:hw.deviceName,sampleRate:hw.sampleRate,mode:hw.channels,timestamp:ses.timestamp},
+    captures:caps,primary:0,
+    metrics:{byId:{},scalars:{},curves:{},lowConf:0,na:0},hasAnalysis:false,acquisition:acq};
+}
 async function fromAamp(file){
   const f=readZipStore(await file.arrayBuffer());
   if(!f['manifest.json'])throw new Error('manifest.json ausente no .aamp');
   const man=JSON.parse(asText(f['manifest.json']));
+  if(isEvidenceFormat(man))return fromEvidence(f,man,file);
   const an=man.analysis&&f[man.analysis]?JSON.parse(asText(f[man.analysis])):null;
   const caps=(man.capture||[]).map(c=>({stimulus:c.stimulus,file:c.file,wav:f[c.file]?parseWAV(asAB(f[c.file])):null})).filter(c=>c.wav);
   let pr=caps.findIndex(c=>c.file===man.primaryCapture);if(pr<0)pr=0;
