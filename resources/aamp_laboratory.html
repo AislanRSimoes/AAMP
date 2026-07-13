@@ -838,6 +838,41 @@ function computeMS06(signal){
   const thdn_db=20*Math.log10(Math.max(thdn_pct/100,1e-12));
   return {thdn_pct, thdn_db};
 }
+/* MS-07 (IMD) — TERCEIRA família nativa. Método oficial (via officialSpectrum): observação espectral
+   sobre a CAPTURA MULTITOM INTEIRA (ST-02); energia dos produtos de intermodulação (fi+fj, |fi-fj|,
+   2fi+fj, |2fi-fj|) dentro da banda [20,20000] Hz, integrando ±4 bins, EXCLUINDO produtos que coincidem
+   com qualquer fundamental (regra CR-IMD); IMD = 100·√(imdE)/√(toneE). PURA, agnóstica { samples,
+   sampleRate }, sem estado, sem limiar. Todo o conhecimento específico da IMD (multitom, ±4, produtos,
+   CR-IMD, fórmula, dB) permanece NA FAMÍLIA; apenas a preparação espectral é a observação compartilhada.
+   O bloco é a captura inteira — não há recorte, ao contrário de MS-05/MS-06. */
+function computeMS07(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  if(!samples||samples.length===0) return {imd_pct:0, imd_db:20*Math.log10(1e-12)};
+  const {pow, nfft}=officialSpectrum(samples, fs);        // observação espectral oficial (captura multitom inteira)
+  const half=pow.length;
+  const TONES=[55,110,220,440,1320,3960,7920,15840];      // multitom oficial (conhecimento da família)
+  const BAND_LO=20, BAND_HI=20000;
+  const binOf=f=>Math.round(f*nfft/fs);
+  const enAt=f=>{const c=binOf(f);let e=0;
+    for(let k=c-4;k<=c+4;k++)if(k>=0&&k<half)e+=pow[k];return e;};   // integração ±4 (conhecimento da família)
+  const toneBin=TONES.map(binOf);
+  const coincides=cb=>{for(let i=0;i<toneBin.length;i++)if(Math.abs(cb-toneBin[i])<=4)return true;return false;};
+  let toneE=0;for(const f of TONES)toneE+=enAt(f);
+  let imdE=0;
+  for(let i=0;i<TONES.length;i++)for(let j=0;j<TONES.length;j++){
+    if(i===j)continue;
+    const fi=TONES[i],fj=TONES[j];
+    const prods=[fi+fj,Math.abs(fi-fj),2*fi+fj,Math.abs(2*fi-fj)];   // produtos de intermodulação
+    for(const p of prods){
+      if(p<BAND_LO||p>BAND_HI)continue;
+      if(coincides(binOf(p)))continue;   // CR-IMD: produto coincide com fundamental -> não soma
+      imdE+=enAt(p);
+    }
+  }
+  const imd_pct=toneE>0 ? 100*Math.sqrt(imdE)/Math.sqrt(toneE) : 0;
+  const imd_db=20*Math.log10(Math.max(imd_pct/100,1e-12));
+  return {imd_pct, imd_db};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -864,6 +899,15 @@ const LabEngine={
         {key:'THDN_pct',value:m06.thdn_pct,unit:'%', quality:'Normal',valuePresent:true},
         {key:'THDN_dB', value:m06.thdn_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr06.id]=mr06; mr06.scalars.forEach(s=>{scalars[s.key]=s;});
+    }
+    const st02=(session.captures||[]).find(c=>c.stimulus==='ST-02');   // localização = responsabilidade do LabEngine
+    if(st02&&st02.wav){
+      const sig={samples:st02.wav.samples, sampleRate:st02.wav.sampleRate};
+      const m07=computeMS07(sig);
+      const mr07={id:'MS-07',name:'IMD',quality:'Normal',scalars:[
+        {key:'IMD_pct',value:m07.imd_pct,unit:'%', quality:'Normal',valuePresent:true},
+        {key:'IMD_dB', value:m07.imd_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr07.id]=mr07; mr07.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
