@@ -1903,28 +1903,17 @@ function buildNoiseEnv(stage){const {answer,main,side}=instWS(stage,T('Qual o pi
 function buildDistortion(stage,cfg){const {answer,main,side}=instWS(stage,cfg.q,cfg.title);
   const V=k=>LAB.getMetric(k);
   const cells='<div class="ros">'+readout('THD',V('THD_pct')!=null?fmt(V('THD_pct'),3):'—','%')+readout('THD+N',V('THDN_pct')!=null?fmt(V('THDN_pct'),3):'—','%')+readout('IMD',V('IMD_pct')!=null?fmt(V('IMD_pct'),3):'—','%')+'</div>';
-  const cap=cfg.spectrum?LAB.getCapture('sine'):null;
-  if(cap&&cap.wav&&cap.wav.samples&&cap.wav.samples.length>8192){const A=cachedHarmonics(cap);
-    answer.innerHTML=cfg.chips(V,A);
-    const host=document.createElement('div');host.className='ws-chart';main.appendChild(host);
-    const specY=A.sp.y.map(v=>v-A.l0),markers=[{x:A.f0,label:'f0 '+fHz(A.f0)}].concat(A.harm.filter(h=>h.rel>-95).map(h=>({x:h.f,label:'H'+h.n})));
-    hostChart(host,{name:cfg.id,xScale:'log',xUnit:'Hz',yUnit:'dB',trace:cssv('--d-harmonics'),height:Math.max(230,(stage.clientHeight||640)-150),markers,series:[{name:'Espectro (rel. fundamental)',x:A.sp.f.slice(1),y:specY.slice(1)}]});
-    const bars=A.harm.map(h=>{const w=Math.max(2,Math.min(100,(h.rel+90)/90*100));return '<div class="hbar"><span class="hbar-k">H'+h.n+'</span><span class="hbar-t"><span class="hbar-f" style="width:'+w+'%"></span></span><span class="hbar-v">'+fmt(h.rel,1)+'</span></div>';}).join('');
-    side.innerHTML=screen('<div class="side-cap">'+T('Harmônicos · dB rel. ao fundamental')+'</div>'+bars+'<div class="phen-co" style="margin-top:8px">'+T('Fundamental')+' <b>'+fHz(A.f0)+'</b> '+T('· THD espectral')+' '+fmt(A.thd,3)+'%</div>')+screen('<div class="side-cap">Oficial · Core</div>'+cells);return;}
   const v=V(cfg.scalar);
   answer.innerHTML=(v!=null)?(vchip(cfg.label,fmt(v,3),'%','flag')+(cfg.headroom?vchip(T('vs LIMIAR 1%'),v<1?T('dentro'):T('acima'),'',v<1?'':'flag'):'')):vchip(T('STATUS'),T('sem dados'),'','flag');
   main.innerHTML=screen(cells)+'<div class="notice" style="margin-top:14px">'+cfg.note+'</div>';
   side.innerHTML=(v!=null)?screen('<div class="side-cap">'+T('Leitura')+'</div><div class="phen-nat">'+cfg.read(v)+'</div>'):needPanel(cfg.need);}
-function buildHarmonics(stage){buildDistortion(stage,{id:'harm_sp',spectrum:true,q:T('Como se distribuem os harmônicos individuais?'),title:T('Harmônicos'),scalar:'THD_pct',label:T('THD total'),
-  chips:(V,A)=>vchip('FUNDAMENTAL',fHz(A.f0),'','')+vchip(T('THD espectral'),fmt(A.thd,3),'%','flag')+vchip('H2',A.harm[0]?fmt(A.harm[0].rel,1):'—','dB','')+vchip('H3',A.harm[1]?fmt(A.harm[1].rel,1):'—','dB','')+vchip(T('THD oficial'),V('THD_pct')!=null?fmt(V('THD_pct'),3):'—','%',''),
+function buildHarmonics(stage){buildDistortion(stage,{q:T('Como se distribuem os harmônicos individuais?'),title:T('Harmônicos'),scalar:'THD_pct',label:T('THD total'),
   note:T('O perfil harmônico (H2, H3, … e a assinatura par/ímpar) deriva da FFT do estímulo senoidal; o agregado THD consta acima.'),read:v=>T('THD total de')+' '+fmt(v,3)+T('% agrega todos os harmônicos.'),need:T('Requer MS-05/06 (espectro harmônico) — estímulo senoidal puro.')});}
-function buildThd(stage){buildDistortion(stage,{id:'thd_sp',spectrum:true,q:T('Quanta distorção harmônica o sistema introduz?'),title:'THD',scalar:'THD_pct',label:'THD',headroom:true,
-  chips:(V,A)=>vchip(T('THD oficial'),V('THD_pct')!=null?fmt(V('THD_pct'),3):'—','%','flag')+vchip(T('THD espectral'),fmt(A.thd,3),'%','')+vchip('vs 1%',V('THD_pct')!=null?(V('THD_pct')<1?T('dentro'):T('acima')):'—','','')+vchip('FUNDAMENTAL',fHz(A.f0),'',''),
+function buildThd(stage){buildDistortion(stage,{q:T('Quanta distorção harmônica o sistema introduz?'),title:'THD',scalar:'THD_pct',label:'THD',headroom:true,
   note:T('O espectro harmônico completo (H2…Hn) deriva da FFT do estímulo senoidal.'),read:v=>T('THD de')+' '+fmt(v,3)+'% '+(v<1?T('— dentro do limiar de 1%.'):T('— acima de 1%, não-linearidade audível.')),need:T('Requer MS-05/06 (THD) — estímulo senoidal puro.')});}
-function buildThdn(stage){buildDistortion(stage,{id:'thdn_sp',spectrum:true,q:T('Distorção mais ruído somam quanto?'),title:'THD+N',scalar:'THDN_pct',label:'THD+N',headroom:true,
-  chips:(V,A)=>vchip(T('THD+N oficial'),V('THDN_pct')!=null?fmt(V('THDN_pct'),3):'—','%','flag')+vchip('THD',V('THD_pct')!=null?fmt(V('THD_pct'),3):'—','%','')+vchip('vs 1%',V('THDN_pct')!=null?(V('THDN_pct')<1?T('dentro'):T('acima')):'—','','')+vchip('FUNDAMENTAL',fHz(A.f0),'',''),
+function buildThdn(stage){buildDistortion(stage,{q:T('Distorção mais ruído somam quanto?'),title:'THD+N',scalar:'THDN_pct',label:'THD+N',headroom:true,
   note:T('THD+N combina harmônicos e ruído; a decomposição (sinal × distorção+ruído) deriva da FFT.'),read:v=>T('THD+N de')+' '+fmt(v,3)+T('% reúne harmônicos e ruído residual.'),need:T('Requer MS-05/06 (THD+N).')});}
-function buildImd(stage){buildDistortion(stage,{id:'imd_sp',spectrum:false,q:T('Há intermodulação entre tons?'),title:'IMD',scalar:'IMD_pct',label:'IMD',headroom:true,
+function buildImd(stage){buildDistortion(stage,{q:T('Há intermodulação entre tons?'),title:'IMD',scalar:'IMD_pct',label:'IMD',headroom:true,
   note:T('IMD revela produtos de soma/diferença entre dois tons — não aparece no THD de tom único. O espectro de dois tons requer estímulo SMPTE/CCIF.'),read:v=>T('Intermodulação de ')+fmt(v,3)+'% '+(v<1?T('— baixa.'):T('— elevada, sugere não-linearidade significativa.')),need:T('Requer MS-07 (IMD) — estímulo de dois tons (SMPTE/CCIF).')});}
 
 function infoEnv(stage,cfg){const {answer,main,side}=instWS(stage,cfg.q,cfg.title);
@@ -1964,9 +1953,6 @@ function fftRadix2(re,im){const n=re.length;for(let i=1,j=0;i<n;i++){let bit=n>>
   for(let len=2;len<=n;len<<=1){const ang=-2*Math.PI/len,wr=Math.cos(ang),wi=Math.sin(ang);
     for(let i=0;i<n;i+=len){let cr=1,ci=0;for(let k=0;k<len/2;k++){const a=i+k,b=i+k+len/2,vr=re[b]*cr-im[b]*ci,vi=re[b]*ci+im[b]*cr;
       re[b]=re[a]-vr;im[b]=im[a]-vi;re[a]+=vr;im[a]+=vi;const ncr=cr*wr-ci*wi;ci=cr*wi+ci*wr;cr=ncr;}}}}
-function magSpectrum(frame,fs,nfft){const N=nfft||(1<<Math.round(Math.log2(frame.length)));const re=new Array(N).fill(0),im=new Array(N).fill(0),L=Math.min(frame.length,N);
-  for(let i=0;i<L;i++){const w=0.5-0.5*Math.cos(2*Math.PI*i/(L-1));re[i]=frame[i]*w;}fftRadix2(re,im);
-  const half=N>>1,f=new Array(half),y=new Array(half);for(let k=0;k<half;k++){f[k]=k*fs/N;y[k]=20*Math.log10(Math.hypot(re[k],im[k])/N*2+1e-12);}return {f,y};}
 function stft(samples,fs,frameSize,hop){const N=frameSize,bins=N>>1,freqs=new Array(bins),frames=[];
   for(let k=0;k<bins;k++)freqs[k]=k*fs/N;const win=new Array(N);for(let i=0;i<N;i++)win[i]=0.5-0.5*Math.cos(2*Math.PI*i/(N-1));
   for(let s=0;s+N<=samples.length;s+=hop){const re=new Array(N),im=new Array(N).fill(0);for(let i=0;i<N;i++)re[i]=samples[s+i]*win[i];fftRadix2(re,im);
@@ -1976,9 +1962,6 @@ function vizCache(key){const c=M&&(M._vizCache||(M._vizCache={}));return c&&(c[k
 function cachedStft(key,samples,fs,N,hop,offset){const c=vizCache(key),off=offset||0;if(!c)return stft(off?samples.slice(off):samples,fs,N,hop);
   if(c.samples===samples&&c.fs===fs&&c.N===N&&c.hop===hop&&c.offset===off)return c.res;
   c.samples=samples;c.fs=fs;c.N=N;c.hop=hop;c.offset=off;c.res=stft(off?samples.slice(off):samples,fs,N,hop);return c.res;}
-function cachedHarmonics(cap){const w=cap&&cap.wav,c=vizCache('harmonics');if(!w||!c)return harmonicAnalysis(cap);
-  if(c.samples===w.samples&&c.fs===(w.sampleRate||48000))return c.res;
-  c.samples=w.samples;c.fs=w.sampleRate||48000;c.res=harmonicAnalysis(cap);return c.res;}
 function dbColor(v){v=Math.max(0,Math.min(1,v));const st=[[8,11,16],[20,34,74],[18,96,112],[35,150,96],[150,180,70],[235,225,150],[252,250,224]];
   const sg=v*(st.length-1),i=Math.floor(sg),f=sg-i,a=st[i],b=st[Math.min(i+1,st.length-1)];return `rgb(${Math.round(a[0]+(b[0]-a[0])*f)},${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)})`;}
 function heatmapChart(host,cfg){const {freqs,frames}=cfg,fmin=cfg.fmin||20,fmax=cfg.fmax||Math.min(freqs[freqs.length-1],20000);
@@ -2034,11 +2017,6 @@ function buildWaterfall(stage){const m04=LAB.getById('MS-04'),ir=m04&&m04.curves
   side.innerHTML='<div id="wf-cur"></div>'+hmLegend()+screen('<div class="side-cap">'+T('Leitura')+'</div><div class="phen-nat">'+T('A frequência que mais persiste no tempo é')+' <b style="color:var(--c)">'+fHz(res.freqs[ringK])+'</b>'+T(', audível como ringing até ~')+''+fmt(ringT,1)+' '+T('ms. Deriva da STFT da resposta impulsiva.')+'</div>');
   curEl=side.querySelector('#wf-cur');curEl.innerHTML=hmCur(null);}
 
-/* ===== distorção espectral — harmônicos reais via FFT do estímulo tonal ===== */
-function harmonicAnalysis(cap){const w=cap.wav,fs=w.sampleRate||48000,N=8192,start=Math.max(0,Math.floor(w.samples.length/2)-N/2),frame=w.samples.slice(start,start+N);
-  const sp=magSpectrum(frame,fs,N);let f0i=1;for(let k=2;k<sp.y.length;k++)if(sp.y[k]>sp.y[f0i])f0i=k;const f0=sp.f[f0i],l0=sp.y[f0i],harm=[];
-  for(let n=2;n<=10;n++){const fk=f0*n;if(fk>fs/2)break;let k=Math.round(fk/(fs/N)),kk=k;for(let j=Math.max(1,k-2);j<=Math.min(sp.y.length-1,k+2);j++)if(sp.y[j]>sp.y[kk])kk=j;harm.push({n,f:sp.f[kk],level:sp.y[kk],rel:sp.y[kk]-l0});}
-  const p0=Math.pow(10,l0/10);let ph=0;harm.forEach(h=>ph+=Math.pow(10,h.level/10));return {sp,f0,l0,harm,thd:Math.sqrt(ph/p0)*100};}
 function sineCapture(){return M.captures.find(c=>/sine|tone|1k|st02/i.test((c.file||'')+(c.stimulus||'')));}
 
 /* ===== tempo real — Web Audio (reprodução e microfone) ===== */
@@ -2074,10 +2052,10 @@ function interpY(cv,x){const xs=cv.x;if(x<=xs[0])return cv.y[0];if(x>=xs[xs.leng
    apenas pedem à API LAB, que delega aos motores e ao Scientific Engine.
    ============================================================ */
 /* Scientific Engine — única casa da matemática compartilhada (sem DOM) */
-const SCI={fft:fftRadix2,spectrum:magSpectrum,stft:stft,smooth:smoothFracOct,peaks:detectPeaks,
+const SCI={fft:fftRadix2,stft:stft,smooth:smoothFracOct,peaks:detectPeaks,
   freqStats:freqStats,rangeStats:rangeStats,steepest:steepest,bandLevels:bandLevels,etc:etcToDb,
   schroeder:schroeder,crossTime:crossTime,linFit:linFitRange,timeStats:timeStats,nearestIdx:nearestIdx,
-  integrity:captureIntegrity,harmonics:harmonicAnalysis};
+  integrity:captureIntegrity};
 /* Motores — serviços de investigação, consumidos por todos os instrumentos */
 const Investigation={scan:m=>(m===M?sessionAnomalies():scanAnomalies(m)),conclude:(an,t)=>synthesizeConclusion(an,t)};
 const Correlation={of:ph=>correlate(ph)};
