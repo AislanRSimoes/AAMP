@@ -33,6 +33,7 @@ add_library(aamp_core STATIC
   src/orchestration/StateMachine.cpp
   src/orchestration/MeasurementOrchestrator.cpp
   src/export/ExportEngine.cpp
+  src/evidence/EvidenceSerializer.cpp
   src/hardware/HardwareManager.cpp
   src/routing/RoutingManager.cpp
   src/dashboard/DashboardModel.cpp
@@ -52,6 +53,7 @@ add_executable(aamp_tests
   tests/test_dashboard.cpp
   tests/test_evidence.cpp
   tests/test_evidence_recorder.cpp
+  tests/test_evidence_serializer.cpp
   tests/main.cpp
 )
 target_link_libraries(aamp_tests PRIVATE aamp_core)
