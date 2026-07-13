@@ -778,29 +778,41 @@ function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
   PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
-/* Autoridade científica = CAMINHO ATIVO do AnalysisEngine (USE_FULL_OBSERVATION=true) -> fullSpectrum.
-   Os caminhos _fixed / thdPercent / FFT 65536 são auxiliares/diagnósticos e NÃO servem de referência.
-   MS-05 (THD) — PRIMEIRA família científica NATIVA. Reproduz FIELMENTE o método oficial fullSpectrum:
-   bloco de 1 kHz COMPLETO [seg,2·seg); janela Blackman-Harris 4 de comprimento = bloco; zero-pad até
-   npow2 (p.ex. 96000 -> 131072); FFT nesse tamanho; soma de energia ±4 bins nessa resolução; THD sobre
-   harmônicos 2..10 relativo ao fundamental fixo de 1 kHz.
-   Função PURA e agnóstica da origem { samples, sampleRate }; sem estado/cache; janela sob demanda;
-   reutiliza SOMENTE SCI.fft; SEM limiar interno (o ganho coerente cancela na razão — regra de
-   cancelamento). Infraestrutura PRIVADA à MS-05 (Subetapa A — sem promoção compartilhada). */
-function computeMS05(signal){
-  const samples=signal.samples, fs=signal.sampleRate;
-  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);   // bloco de 1 kHz COMPLETO
-  if(a>=b) return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
-  const L=b-a; let nfft=1; while(nfft<L) nfft<<=1;                        // janela=L; zero-pad -> npow2
-  const c0=0.35875,c1=0.48829,c2=0.14128,c3=0.01168;                     // Blackman-Harris 4 termos
+/* Observação espectral oficial — equivalente ao fullSpectrum do AnalysisEngine (Subetapa C).
+   Função CIENTÍFICA PURA. Responde apenas: "qual é a representação espectral oficial deste bloco?".
+   Entrada EXCLUSIVA: um BLOCO de amostras + sample rate. Saída: a representação espectral oficial do
+   bloco = potência |X|² por bin em [0,nfft/2) + nfft (para o mapeamento bin↔frequência feito pela
+   família). Método oficial: janela Blackman-Harris 4 de comprimento = bloco; zero-pad até npow2; FFT.
+   NÃO conhece Session, captura, ST-03, Evidence, LabEngine, contrato metrics, nem THD/THD+N/IMD/
+   fundamental/banda/harmônicos/±4/fórmulas/unidades. Reutiliza SOMENTE SCI.fft. Contém apenas o
+   conhecimento COMUM a todos os consumidores (MS-05, MS-06 e, naturalmente, MS-07). O ganho coerente
+   é omitido por cancelar na razão (regra de cancelamento) — mantém a aritmética idêntica às famílias. */
+function officialSpectrum(block, fs){
+  void fs;                                                 // fs é o contexto de amostragem da observação (mapeamento bin↔freq é da família)
+  const L=block.length; let nfft=1; while(nfft<L) nfft<<=1;// janela = bloco; zero-pad -> npow2
+  const c0=0.35875,c1=0.48829,c2=0.14128,c3=0.01168;       // Blackman-Harris 4 termos
   const re=new Array(nfft).fill(0), im=new Array(nfft).fill(0);
   for(let i=0;i<L;i++){const r=i/(L-1);
     const w=c0-c1*Math.cos(2*Math.PI*r)+c2*Math.cos(4*Math.PI*r)-c3*Math.cos(6*Math.PI*r);
-    re[i]=samples[a+i]*w;}
+    re[i]=block[i]*w;}
   SCI.fft(re,im);
-  const half=nfft>>1;
+  const half=nfft>>1, pow=new Array(half);
+  for(let k=0;k<half;k++)pow[k]=re[k]*re[k]+im[k]*im[k];    // |X|² (potência; cg omitido — cancela na razão)
+  return {pow, nfft};
+}
+/* MS-05 (THD) — PRIMEIRA família científica NATIVA. Método oficial (via officialSpectrum): THD sobre
+   harmônicos 2..10 relativo ao fundamental fixo de 1 kHz, integrando energia ±4 bins. Função PURA e
+   agnóstica da origem { samples, sampleRate }; sem estado/cache; SEM limiar interno. A SELEÇÃO/recorte
+   do bloco de 1 kHz e todo o conhecimento (fundamental, harmônicos, ±4, fórmula, dB) permanecem NA
+   FAMÍLIA; apenas a preparação espectral é a observação compartilhada. */
+function computeMS05(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);   // recorte do bloco de 1 kHz (FAMÍLIA)
+  if(a>=b) return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
+  const {pow, nfft}=officialSpectrum(samples.slice(a,b), fs);             // observação espectral oficial
+  const half=pow.length;
   const energyNear=f=>{const c=Math.round(f*nfft/fs);let e=0;
-    for(let k=c-4;k<=c+4;k++)if(k>=0&&k<half)e+=re[k]*re[k]+im[k]*im[k];return e;};  // |X|² (cg cancela)
+    for(let k=c-4;k<=c+4;k++)if(k>=0&&k<half)e+=pow[k];return e;};        // integração ±4 (conhecimento da família)
   const A1=energyNear(1000);
   if(A1<=0) return {thd_pct:0, thd_db:20*Math.log10(1e-12)};
   let harm=0;for(let n=2;n<=10;n++){const fh=n*1000;if(fh>=fs/2)break;harm+=energyNear(fh);}
@@ -808,28 +820,19 @@ function computeMS05(signal){
   const thd_db=20*Math.log10(Math.max(thd_pct/100,1e-12));
   return {thd_pct, thd_db};
 }
-/* MS-06 (THD+N) — SEGUNDA família nativa. MESMO método oficial fullSpectrum (bloco 1 kHz completo,
-   janela BH4 de comprimento = bloco, zero-pad npow2, FFT nesse tamanho); energia TOTAL na banda
-   [20,20000] Hz menos o fundamental (±4 bins) = residual; THD+N = 100·√(rest)/√(A1). PURA, agnóstica
-   { samples, sampleRate }, sem estado, sem limiar (cg cancela na razão), reutiliza só SCI.fft.
-   Subetapa A: a base espectral é INTENCIONALMENTE duplicada em relação à MS-05 para comprovar por
-   implementação real o SEGUNDO consumidor concreto; a promoção do trecho compartilhado é decisão da
-   auditoria de reutilização (Subetapas B/C), NUNCA no meio desta implementação. */
+/* MS-06 (THD+N) — SEGUNDA família nativa. Método oficial (via officialSpectrum): energia TOTAL na banda
+   [20,20000] Hz menos o fundamental (±4 bins) = residual; THD+N = 100·√(rest)/√(A1). PURA, agnóstica,
+   sem estado, sem limiar. A seleção do bloco e todo o conhecimento (banda, fundamental, ±4, fórmula, dB)
+   permanecem NA FAMÍLIA; apenas a preparação espectral é a observação compartilhada. */
 function computeMS06(signal){
   const samples=signal.samples, fs=signal.sampleRate;
-  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);
+  const seg=Math.round(2*fs), a=seg, b=Math.min(2*seg, samples.length);   // recorte do bloco de 1 kHz (FAMÍLIA)
   if(a>=b) return {thdn_pct:0, thdn_db:20*Math.log10(1e-12)};
-  const L=b-a; let nfft=1; while(nfft<L) nfft<<=1;
-  const c0=0.35875,c1=0.48829,c2=0.14128,c3=0.01168;
-  const re=new Array(nfft).fill(0), im=new Array(nfft).fill(0);
-  for(let i=0;i<L;i++){const r=i/(L-1);
-    const w=c0-c1*Math.cos(2*Math.PI*r)+c2*Math.cos(4*Math.PI*r)-c3*Math.cos(6*Math.PI*r);
-    re[i]=samples[a+i]*w;}
-  SCI.fft(re,im);
-  const half=nfft>>1, fb=Math.round(1000*nfft/fs), BAND_LO=20, BAND_HI=20000;
-  let Et=0,A1=0;                                          // energia total na banda e do fundamental ±4
+  const {pow, nfft}=officialSpectrum(samples.slice(a,b), fs);             // observação espectral oficial
+  const half=pow.length, fb=Math.round(1000*nfft/fs), BAND_LO=20, BAND_HI=20000;
+  let Et=0,A1=0;                                           // energia total na banda e do fundamental ±4
   for(let k=0;k<half;k++){const f=k*fs/nfft; if(f<BAND_LO||f>BAND_HI)continue;
-    const e=re[k]*re[k]+im[k]*im[k]; Et+=e; if(Math.abs(k-fb)<=4)A1+=e;}
+    Et+=pow[k]; if(Math.abs(k-fb)<=4)A1+=pow[k];}
   const rest=Math.max(0,Et-A1);
   const thdn_pct=A1>0 ? 100*Math.sqrt(rest)/Math.sqrt(A1) : 0;
   const thdn_db=20*Math.log10(Math.max(thdn_pct/100,1e-12));
