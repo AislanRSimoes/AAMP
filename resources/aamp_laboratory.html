@@ -1068,6 +1068,55 @@ function computeMS13(inputs){
   }
   return out;
 }
+/* MS-14 (Behavioural Response) — SEGUNDA família composta e SEGUNDO consumidor de officialEnvelope/bestLag.
+   Método oficial (AnalysisEngine::behavioural): três sub-métodos —
+     attack tracking (ST-10 duro, obrigatório; ST-11 suave, opcional), consistency (hard vs soft) e overshoot (ST-10).
+   PURA, agnóstica. Entradas EXPLÍCITAS (D-ENTRADAS-CIENTÍFICAS): {hard,hardSource,soft,softSource}, cada
+   {samples,sampleRate}. As fontes emitidas (ST-10/ST-11) vêm do Evidence Package, NUNCA regeneradas.
+   Consome os helpers COMPARTILHADOS officialEnvelope e bestLag SEM ampliar suas interfaces (maxLag=0.050·fs
+   permanece na família). Condições científicas (guarda Pearson sx>0&&sy>0; overshoot: pk≤1e-12 e regime<pk·1e-3
+   -> LowConfidence; trim da cauda de zeros; janelas de 100/200 ms) reproduzidas como método (D-CONDIÇÃO-CIENTÍFICA).
+   Estados de qualidade oficiais: Normal, LowConfidence (overshoot) e NotApplicable (soft/consistency sem ST-11). */
+function computeMS14(inputs){
+  const hard=inputs.hard;
+  if(!hard||!hard.samples||!hard.samples.length) return {quality:'Error'};   // ST-10 obrigatório
+  const fs=hard.sampleRate, out={quality:'Normal'};
+  // tracking = 100·Pearson(env_in, env_out) ALINHADO por bestLag (compensa a latência estrutural)
+  const trackingPct=(cap, source)=>{
+    if(!cap||!cap.samples||!cap.samples.length||!source||!source.samples||!source.samples.length) return 0;
+    const outEnv=officialEnvelope(cap.samples, fs), inEnv=officialEnvelope(source.samples, fs);
+    if(!inEnv.length||!outEnv.length) return 0;
+    const maxLag=Math.trunc(0.050*fs);                        // política de latência: pertence à FAMÍLIA
+    const lag=bestLag(inEnv, outEnv, maxLag);
+    const avail=outEnv.length>lag ? outEnv.length-lag : 0, W=Math.min(inEnv.length, avail);
+    if(W===0) return 0;
+    let mx=0,my=0; for(let i=0;i<W;i++){mx+=inEnv[i]; my+=outEnv[i+lag];} mx/=W; my/=W;
+    let sxy=0,sx=0,sy=0; for(let i=0;i<W;i++){const dx=inEnv[i]-mx, dy=outEnv[i+lag]-my; sxy+=dx*dy; sx+=dx*dx; sy+=dy*dy;}
+    const p=(sx>0&&sy>0)? sxy/Math.sqrt(sx*sy):0;             // guarda Pearson
+    return 100*p;
+  };
+  const hardPct=trackingPct(hard, inputs.hardSource);
+  out.attackTracking_hard_pct=hardPct;
+  if(inputs.soft&&inputs.soft.samples&&inputs.soft.samples.length){   // Soft Attack + Consistency (ST-11)
+    const softPct=trackingPct(inputs.soft, inputs.softSource);
+    out.hasSoft=true; out.attackTracking_soft_pct=softPct;
+    out.attackConsistency_pct=Math.max(0, 100-Math.abs(hardPct-softPct));
+  } else out.hasSoft=false;
+  {   // Overshoot (ST-10): pico / regime, janela ancorada ao pico e limitada ao conteúdo real capturado
+    const outEnv=officialEnvelope(hard.samples, fs);
+    let realEnd=Math.min(outEnv.length, hard.samples.length);
+    while(realEnd>0 && Math.abs(hard.samples[realEnd-1])<1e-6) realEnd--;   // não medir sobre zeros de preenchimento
+    let pk=0, pkIdx=0; for(let i=0;i<realEnd;i++) if(outEnv[i]>pk){pk=outEnv[i]; pkIdx=i;}
+    const settle=Math.trunc(0.10*fs), wlen=Math.trunc(0.20*fs);
+    const rs=Math.min(pkIdx+settle, realEnd), re=Math.min(rs+wlen, realEnd);
+    let regime=0, c=0; for(let i=rs;i<re;i++){regime+=outEnv[i]; c++;} if(c>0) regime/=c;
+    const floorRel=pk*1e-3;                                   // regime mínimo = -60 dB do pico
+    if(pk<=1e-12){ out.overshoot_dB=0; out.overshoot_quality='LowConfidence'; }
+    else if(regime<floorRel){ out.overshoot_dB=20*Math.log10(pk/floorRel); out.overshoot_quality='LowConfidence'; }
+    else { out.overshoot_dB=20*Math.log10(pk/regime); out.overshoot_quality='Normal'; }
+  }
+  return out;
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1154,6 +1203,29 @@ const LabEngine={
         byId[mr13.id]=mr13; mr13.scalars.forEach(s=>{scalars[s.key]=s;});
       }
     }
+    const st10=(session.captures||[]).find(c=>c.stimulus==='ST-10');   // MS-14: família composta (ST-10 obrigatório)
+    if(st10&&st10.wav){
+      const sig=x=>(x&&x.wav)?{samples:x.wav.samples, sampleRate:x.wav.sampleRate}:null;
+      const cap=code=>(session.captures||[]).find(c=>c.stimulus===code);
+      const src=code=>(session.stimuli||[]).find(s=>s.stimulus===code);   // D-EVIDENCE-DOMÍNIO: fonte emitida
+      const m14=computeMS14({hard:sig(st10), hardSource:sig(src('ST-10')), soft:sig(cap('ST-11')), softSource:sig(src('ST-11'))});
+      if(m14.quality!=='Error'){
+        const scl=[{key:'AttackTracking_hard_pct',value:m14.attackTracking_hard_pct,unit:'%',quality:'Normal',valuePresent:true}];
+        if(m14.hasSoft){   // ST-11 presente -> Normal
+          scl.push({key:'AttackTracking_soft_pct',value:m14.attackTracking_soft_pct,unit:'%',quality:'Normal',valuePresent:true});
+          scl.push({key:'AttackConsistency_pct', value:m14.attackConsistency_pct, unit:'%',quality:'Normal',valuePresent:true});
+        } else {           // ST-11 ausente -> NotApplicable (traduz a semântica do Core)
+          scl.push({key:'AttackTracking_soft_pct',value:null,unit:'%',quality:'NotApplicable',valuePresent:false});
+          scl.push({key:'AttackConsistency_pct', value:null,unit:'%',quality:'NotApplicable',valuePresent:false});
+        }
+        scl.push({key:'Overshoot_dB',value:m14.overshoot_dB,unit:'dB',quality:m14.overshoot_quality,valuePresent:true});
+        const mr14={id:'MS-14',name:'Behavioural Response',quality:'Normal',scalars:scl,curves:[]};
+        byId[mr14.id]=mr14; mr14.scalars.forEach(s=>{scalars[s.key]=s;});
+      }
+    }
+    // Agrega os estados de qualidade dos escalares publicados ao contrato (mesma semântica de normalizeMetrics):
+    // LowConfidence e NotApplicable alimentam o indicador de confiança do frontend.
+    Object.keys(scalars).forEach(k=>{const s=scalars[k]; if(s.quality==='LowConfidence')lowConf++; if(s.quality==='NotApplicable'||s.valuePresent===false)na++;});
     return {byId,scalars,curves,lowConf,na};
   }
 };
