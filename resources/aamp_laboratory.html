@@ -970,12 +970,18 @@ function computeMS12(signal){
   const rt=Math.max(0, pk-emitted);               // round-trip; clamp científico de não-negatividade
   return {latency_samples: rt, latency_ms: rt/fs*1000};
 }
-/* --- Helpers PRIVADOS da MS-13 (D-PRIMEIRO-CONSUMIDOR / D-INFRAESTRUTURA-DERIVADA) ---
-   extractEnvelope e bestLag são conhecimento científico compartilhado por MS-13/14/15 no Core, MAS há
-   um único consumidor migrado (MS-13). Permanecem privados — NENHUMA promoção ao SCI, NENHUM helper
-   global. A IFFT necessária ao envelope de Hilbert é DERIVADA da FFT (SCI.fft) por conjugação e fica
-   encapsulada aqui: não nasce SCI.ifft. */
-function ms13_envelope(samples, fs){
+/* --- Observações/operações científicas COMPARTILHADAS (promovidas na Subetapa C) ---
+   officialEnvelope e bestLag reproduzem extractEnvelope/bestLag do AnalysisEngine. A auditoria demonstrou
+   que a MS-14 (próxima família) é um segundo consumidor com MÉTODO IDÊNTICO (D-PROMOÇÃO-POR-MÉTODO) e
+   interface pura e mínima (D-PUREZA-DA-ABSTRAÇÃO); autorizada a promoção de privados-da-MS-13 a
+   COMPARTILHADOS, SEM alterar nenhuma operação matemática nem assinatura (D-ABSTRAÇÃO-INVARIANTE).
+   Consumidores: MS-13 (MS-14 na próxima etapa).
+   officialEnvelope — observação de envoltória OFICIAL (Hilbert + suavização de 1 ms), paralela ao
+   officialSpectrum. Depende apenas de {samples, sampleRate}. A IFFT permanece DERIVADA da FFT (SCI.fft)
+   por conjugação, ENCAPSULADA aqui: NÃO existe SCI.ifft (D-INFRAESTRUTURA-DERIVADA).
+   bestLag — alinhamento por correlação cruzada (lag≥0). O limite maxLag pertence às FAMÍLIAS consumidoras
+   (política de latência de 50 ms), apenas RECEBIDO aqui. */
+function officialEnvelope(samples, fs){
   const L=samples.length; if(L===0) return [];
   let N=1; while(N<L) N<<=1; if(N<256) N=256;                    // nextPow2 com piso FFT_MIN
   const re=new Array(N).fill(0), im=new Array(N).fill(0);
@@ -994,7 +1000,7 @@ function ms13_envelope(samples, fs){
   for(let i=0;i<L;i++){let lo=i-hw, hi=i-hw+w; if(lo<0)lo=0; if(hi>L)hi=L; out[i]=(prefix[hi]-prefix[lo])/(hi-lo);}
   return out;
 }
-function ms13_bestLag(inEnv, outEnv, maxLag){
+function bestLag(inEnv, outEnv, maxLag){
   if(!inEnv.length || !outEnv.length) return 0;
   let best=0, bestC=-1e300;
   for(let lag=0; lag<=maxLag; lag++){
@@ -1019,7 +1025,7 @@ function computeMS13(inputs){
   const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
   // --- Settling (ST-07): tempo até a envoltória entrar na banda de 5% do valor final ---
   {
-    const env=ms13_envelope(burst.samples, fs);
+    const env=officialEnvelope(burst.samples, fs);
     const burstN=Math.round(0.100*fs);
     let finalVal=0, cnt=0;
     for(let i=Math.floor(burstN*7/10); i<burstN && i<env.length; i++){ finalVal+=env[i]; cnt++; }
@@ -1031,7 +1037,7 @@ function computeMS13(inputs){
   }
   // --- Consistency (ST-12): coeficiente de variação dos picos de 10 períodos de 100 ms ---
   if(inputs.train&&inputs.train.samples&&inputs.train.samples.length){
-    const te=ms13_envelope(inputs.train.samples, fs), period=Math.round(0.100*fs), peaks=[];
+    const te=officialEnvelope(inputs.train.samples, fs), period=Math.round(0.100*fs), peaks=[];
     for(let p=0;p<10;p++){let mx=0; for(let i=p*period;i<(p+1)*period && i<te.length;i++) if(te[i]>mx)mx=te[i]; peaks.push(mx);}
     let mean=0; for(const v of peaks) mean+=v; mean/=peaks.length;
     let varr=0; for(const v of peaks) varr+=(v-mean)*(v-mean); varr/=peaks.length;
@@ -1039,7 +1045,7 @@ function computeMS13(inputs){
   }
   // --- Drift (ST-13): variação de nível entre a janela de 1 s e a de 29 s ---
   if(inputs.sust&&inputs.sust.samples&&inputs.sust.samples.length){
-    const se=ms13_envelope(inputs.sust.samples, fs), oneSec=Math.round(fs);
+    const se=officialEnvelope(inputs.sust.samples, fs), oneSec=Math.round(fs);
     const avgAt=sec=>{let s=0,c=0; for(let i=sec*oneSec;i<sec*oneSec+oneSec && i<se.length;i++){s+=se[i];c++;} return c?s/c:0;};
     const e1=avgAt(1), e30=avgAt(29);
     out.drift_dB=20*Math.log10(Math.max(e30,1e-12)/Math.max(e1,1e-12));   // pisos 1e-12
@@ -1048,7 +1054,7 @@ function computeMS13(inputs){
   if(inputs.step&&inputs.step.samples&&inputs.step.samples.length&&inputs.stepSource&&inputs.stepSource.samples&&inputs.stepSource.samples.length){
     const inn=inputs.stepSource.samples, stp=inputs.step.samples;   // inn = fonte emitida (Evidence), NÃO regenerada
     const maxLag=Math.trunc(0.050*fs);
-    const lag=ms13_bestLag(ms13_envelope(inn,fs), ms13_envelope(stp,fs), maxLag);   // alinhamento por correlação
+    const lag=bestLag(officialEnvelope(inn,fs), officialEnvelope(stp,fs), maxLag);   // alinhamento por correlação
     const seg=Math.round(0.100*fs), lt=[];
     for(let s=0;s<8;s++){
       const oi=inn.slice(s*seg,(s+1)*seg), oo=stp.slice(s*seg+lag,(s+1)*seg+lag);
