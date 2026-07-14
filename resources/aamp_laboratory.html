@@ -1261,6 +1261,31 @@ function computeMS04(capture, source){
   }
   return {curve:{name:'Impulse Response', xUnit:'ms', yUnit:'norm', x, y}, peakIndex_samples:pkIdx};
 }
+/* MS-03 (Group Delay) — PRIMEIRA família DEPENDENTE DE OUTRA FAMÍLIA (não de observação compartilhada).
+   Método oficial (AnalysisEngine::groupDelay): derivada da fase — τ = −dφ/dω sobre a curva de fase,
+   convertida para ms. PURA.
+   CONTRATO CIENTÍFICO (D-CONTRATO-ENTRE-FAMÍLIAS / D-DEPENDÊNCIA-DE-REPRESENTAÇÃO / D-DEPENDÊNCIA-MÍNIMA):
+   a entrada `phaseCurve` é a REPRESENTAÇÃO OFICIAL publicada pela MS-02 ({x:Hz, y:graus, unwrapped, banda}).
+   A MS-03 depende do CONTRATO CIENTÍFICO da MS-02 — não de estado interno, observação intermediária ou
+   conveniência de implementação. NÃO retorna a officialTransfer; não acessa H/ir/FFT; não recalcula fase.
+   A banda já vem embutida na curva (representação da MS-02) — a MS-03 apenas a deriva (menor representação
+   suficiente).
+   AGNÓSTICA quanto à ORIGEM da curva: não sabe se foi produzida pelo Core, pelo Laboratory, carregada de um
+   Evidence Package ou de outra implementação compatível — seu contrato é EXCLUSIVAMENTE a curva oficial de
+   fase, uma representação científica, não um caminho de obtenção.
+   Saída: uma curva oficial "Group Delay"; nenhum escalar; nenhum DBG. */
+function computeMS03(phaseCurve){
+  const px=phaseCurve.x, py=phaseCurve.y, DEG2RAD=Math.PI/180;
+  const x=[], y=[];
+  for(let i=1;i+1<px.length;i++){
+    const dphi=(py[i+1]-py[i-1])*DEG2RAD;             // diferença central da fase (graus → rad)
+    const dw=2*Math.PI*(px[i+1]-px[i-1]);            // diferença central da frequência angular (Hz → rad/s)
+    if(Math.abs(dw)<1e-12) continue;                 // guarda DEFENSIVA (não exercitável pela curva oficial)
+    const tau_s=-dphi/dw;                            // group delay = −dφ/dω (s)
+    x.push(px[i]); y.push(tau_s*1000);              // s → ms
+  }
+  return {curve:{name:'Group Delay', xUnit:'Hz', yUnit:'ms', x, y}};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1391,6 +1416,9 @@ const LabEngine={
         const m02=computeMS02(capSig, srcSig);           // representação FASE (2º consumidor de essTransfer)
         const mr02={id:'MS-02',name:'Phase Response',quality:'Normal',scalars:[],curves:[m02.curve]};
         byId[mr02.id]=mr02; curves[mr02.id]=m02.curve;
+        const m03=computeMS03(m02.curve);                // DERIVADA da fase — consome a curva OFICIAL da MS-02
+        const mr03={id:'MS-03',name:'Group Delay',quality:'Normal',scalars:[],curves:[m03.curve]};   // (não recomputa a observação)
+        byId[mr03.id]=mr03; curves[mr03.id]=m03.curve;
         const m04=computeMS04(capSig, srcSig);           // representação IR temporal (3º consumidor — de ir)
         const mr04={id:'MS-04',name:'Impulse Response',quality:'Normal',scalars:[
           {key:'PeakIndex_samples',value:m04.peakIndex_samples,unit:'samples',quality:'Normal',valuePresent:true}],curves:[m04.curve]};
