@@ -1149,6 +1149,59 @@ function computeMS15(inputs){
      semântica pública. A decisão pertence ao CORE, não à migração do Laboratory. */
   return {quality:'Normal', aggregateLinearity_dB:aggr, reproducibility_pct:100.0};
 }
+/* essTransfer — OBSERVAÇÃO científica compartilhada do grupo de resposta em frequência (MS-01/02/04).
+   Reproduz AnalysisEngine::essTransfer: caracterização LINEAR (LTI) do dispositivo sob teste, extraída
+   por DECONVOLUÇÃO REGULARIZADA DE TIKHONOV do ESS (ST-01). Produz o conhecimento científico COMPLETO em
+   suas DUAS formas canônicas, par de Fourier: { ir (resposta ao impulso, tempo, Nfull), H (resposta em
+   frequência complexa, grid fixo FFT_ANALYSIS=65536) }.
+   FRONTEIRA CONGELADA (D-OBSERVAÇÃO-COMPLETA / D-FRONTEIRA-DA-OBSERVAÇÃO): a observação encerra em {ir,H};
+   deconvolução de Tikhonov, IFFT e FFT_ANALYSIS PERTENCEM à observação. ir e H são a observação — ambos
+   retornados SEMPRE, independentemente de consumidores atuais (a MS-01 usa só H; MS-02 usará arg(H); MS-04
+   usará ir). NASCE PRIVADA na MS-01 (D-SEQUENCIAMENTO / D-PRIMEIRO-CONSUMIDOR); MS-02 e MS-04 verificarão
+   a suficiência da interface antes de qualquer promoção A/B/C. Reutiliza SOMENTE SCI.fft; a IFFT é derivada
+   por conjugação, ENCAPSULADA aqui (D-INFRAESTRUTURA-DERIVADA — sem SCI.ifft). Entradas: captura e fonte
+   emitida do ST-01, ambas {samples, sampleRate}; a fonte vem de session.stimuli, NUNCA regenerada. */
+function ms01_essTransfer(capture, source){
+  const cap=capture.samples, src=source.samples;
+  let Nfull=1; while(Nfull<Math.max(cap.length, src.length)) Nfull<<=1;      // nextPow2Local (sem piso)
+  const Yre=new Array(Nfull).fill(0), Yim=new Array(Nfull).fill(0);
+  for(let i=0;i<cap.length && i<Nfull;i++) Yre[i]=cap[i];  SCI.fft(Yre,Yim); // Y = FFT(captura)
+  const Xre=new Array(Nfull).fill(0), Xim=new Array(Nfull).fill(0);
+  for(let i=0;i<src.length && i<Nfull;i++) Xre[i]=src[i];  SCI.fft(Xre,Xim); // X = FFT(fonte emitida)
+  const LAMBDA_BASE=1e-6, Hre=new Array(Nfull), Him=new Array(Nfull);        // deconvolução de Tikhonov
+  for(let i=0;i<Nfull;i++){
+    const S=Xre[i]*Xre[i]+Xim[i]*Xim[i];                                     // |X|² = energia de sinal no bin
+    const ratio = S>0 ? 0 : 1e12;                                           // noise vazio -> Nf=0
+    const denom = S + LAMBDA_BASE*(1+ratio);                                // sempre > 0 (regularização)
+    Hre[i]=(Yre[i]*Xre[i]+Yim[i]*Xim[i])/denom;                            // H = Y·conj(X)/denom
+    Him[i]=(Yim[i]*Xre[i]-Yre[i]*Xim[i])/denom;
+  }
+  const irRe=Hre.slice(), irIm=new Array(Nfull);                            // ir = IFFT(H) parte real
+  for(let i=0;i<Nfull;i++) irIm[i]=-Him[i];                                 // conjugação: ir=Re(FFT(conj(H)))/Nfull
+  SCI.fft(irRe, irIm);
+  const ir=new Array(Nfull); for(let i=0;i<Nfull;i++) ir[i]=irRe[i]/Nfull;
+  const NA=65536, Hre2=new Array(NA).fill(0), Him2=new Array(NA).fill(0);   // H = FFT(ir, FFT_ANALYSIS)
+  for(let i=0;i<ir.length && i<NA;i++) Hre2[i]=ir[i];  SCI.fft(Hre2,Him2);
+  return {ir, H:{re:Hre2, im:Him2, nfft:NA}};                               // observação COMPLETA {ir, H}
+}
+/* MS-01 (Frequency Response) — PRIMEIRA família do grupo espectral de resposta e PRIMEIRA a produzir CURVA.
+   Método oficial (AnalysisEngine::freqResponse): representação de MAGNITUDE da observação essTransfer —
+   |H| em dB na banda [20,20000]. PURA. Entradas EXPLÍCITAS: captura + fonte ST-01. Consome apenas H da
+   observação; a curva é a REPRESENTAÇÃO específica (não a observação). Saída oficial: uma curva; nenhum
+   escalar oficial (os DBG_FR do Core são diagnósticos — descartados por D-SAÍDA-OFICIAL). */
+function computeMS01(capture, source){
+  const fs=capture.sampleRate;
+  const obs=ms01_essTransfer(capture, source);          // observação científica compartilhada {ir, H}
+  const H=obs.H, N=H.nfft, half=N>>1, BAND_LO=20, BAND_HI=20000;
+  const x=[], y=[];
+  for(let i=0;i<half;i++){
+    const f=i*fs/N;                                     // binFreq(i, FFT_ANALYSIS, fs)
+    if(f<BAND_LO||f>BAND_HI) continue;
+    const mag=Math.hypot(H.re[i], H.im[i]);
+    x.push(f); y.push(20*Math.log10(Math.max(mag,1e-12)));   // piso 1e-12
+  }
+  return {curve:{name:'Magnitude', xUnit:'Hz', yUnit:'dB', x, y}};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1265,6 +1318,16 @@ const LabEngine={
           {key:'AggregateLinearity_dB',value:m15.aggregateLinearity_dB,unit:'dB',quality:'Normal',valuePresent:true},
           {key:'Reproducibility_pct',   value:m15.reproducibility_pct,   unit:'%', quality:'Normal',valuePresent:true}],curves:[]};
         byId[mr15.id]=mr15; mr15.scalars.forEach(s=>{scalars[s.key]=s;});
+      }
+    }
+    const st01=(session.captures||[]).find(c=>c.stimulus==='ST-01');   // MS-01: resposta em frequência (curva)
+    if(st01&&st01.wav){
+      const s01=(session.stimuli||[]).find(s=>s.stimulus==='ST-01');   // fonte emitida ST-01 (D-EVIDENCE-DOMÍNIO)
+      if(s01&&s01.wav){   // requer captura E fonte emitida (entradas científicas da observação essTransfer)
+        const m01=computeMS01({samples:st01.wav.samples, sampleRate:st01.wav.sampleRate},
+                              {samples:s01.wav.samples, sampleRate:s01.wav.sampleRate});
+        const mr01={id:'MS-01',name:'Frequency Response',quality:'Normal',scalars:[],curves:[m01.curve]};
+        byId[mr01.id]=mr01; curves[mr01.id]=m01.curve;   // PRIMEIRA curva produzida pelo Laboratory
       }
     }
     // Agrega os estados de qualidade dos escalares publicados ao contrato (mesma semântica de normalizeMetrics):
