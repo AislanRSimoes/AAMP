@@ -970,6 +970,98 @@ function computeMS12(signal){
   const rt=Math.max(0, pk-emitted);               // round-trip; clamp científico de não-negatividade
   return {latency_samples: rt, latency_ms: rt/fs*1000};
 }
+/* --- Helpers PRIVADOS da MS-13 (D-PRIMEIRO-CONSUMIDOR / D-INFRAESTRUTURA-DERIVADA) ---
+   extractEnvelope e bestLag são conhecimento científico compartilhado por MS-13/14/15 no Core, MAS há
+   um único consumidor migrado (MS-13). Permanecem privados — NENHUMA promoção ao SCI, NENHUM helper
+   global. A IFFT necessária ao envelope de Hilbert é DERIVADA da FFT (SCI.fft) por conjugação e fica
+   encapsulada aqui: não nasce SCI.ifft. */
+function ms13_envelope(samples, fs){
+  const L=samples.length; if(L===0) return [];
+  let N=1; while(N<L) N<<=1; if(N<256) N=256;                    // nextPow2 com piso FFT_MIN
+  const re=new Array(N).fill(0), im=new Array(N).fill(0);
+  for(let i=0;i<L;i++) re[i]=samples[i];
+  SCI.fft(re,im);                                                // FFT direta
+  const half=N>>1;
+  for(let i=0;i<N;i++){const h=(i===0||i===half)?1:(i<half?2:0); re[i]*=h; im[i]*=h;}   // filtro analítico
+  for(let i=0;i<N;i++) im[i]=-im[i];                             // IFFT por conjugação: |IFFT(X)| = |FFT(conj(X))|/N
+  SCI.fft(re,im);
+  const mag=new Array(L);
+  for(let i=0;i<L;i++) mag[i]=Math.hypot(re[i],im[i])/N;        // magnitude analítica de Hilbert
+  let w=Math.round(0.001*fs); if(w<1) w=1;                       // média móvel de 1 ms (box, causal-centrada)
+  const prefix=new Array(L+1); prefix[0]=0;
+  for(let i=0;i<L;i++) prefix[i+1]=prefix[i]+mag[i];
+  const hw=w>>1, out=new Array(L);
+  for(let i=0;i<L;i++){let lo=i-hw, hi=i-hw+w; if(lo<0)lo=0; if(hi>L)hi=L; out[i]=(prefix[hi]-prefix[lo])/(hi-lo);}
+  return out;
+}
+function ms13_bestLag(inEnv, outEnv, maxLag){
+  if(!inEnv.length || !outEnv.length) return 0;
+  let best=0, bestC=-1e300;
+  for(let lag=0; lag<=maxLag; lag++){
+    if(lag>=outEnv.length) break;
+    const W=Math.min(inEnv.length, outEnv.length-lag);
+    let c=0; for(let i=0;i<W;i++) c+=inEnv[i]*outEnv[i+lag];
+    if(c>bestC){bestC=c; best=lag;}
+  }
+  return best;
+}
+/* MS-13 (Dynamic Behaviour) — PRIMEIRA família COMPOSTA. Método oficial (AnalysisEngine::dynamicBehaviour):
+   quatro sub-métodos científicos independentes sobre estímulos distintos —
+     settling (ST-07, obrigatório), consistency (ST-12), drift (ST-13), level transfer (ST-08 + fonte emitida).
+   PURA, agnóstica. Entradas EXPLÍCITAS (D-ENTRADAS-CIENTÍFICAS): objeto nomeado {burst,train,sust,step,stepSource}.
+   A fonte emitida do ST-08 vem do Evidence Package (session.stimuli), NUNCA regenerada (D-INGESTÃO-≠-CONTRATO).
+   Todas as condições científicas (limiar 5% do settling; guarda mean>0; pisos 1e-12; alinhamento por bestLag)
+   pertencem ao método (D-CONDIÇÃO-CIENTÍFICA). Publica TODOS os escalares oficiais (D-ESCALAR-OFICIAL). */
+function computeMS13(inputs){
+  const burst=inputs.burst;
+  if(!burst||!burst.samples||!burst.samples.length) return {quality:'Error'};   // ST-07 obrigatório
+  const fs=burst.sampleRate, out={quality:'Normal'};
+  const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
+  // --- Settling (ST-07): tempo até a envoltória entrar na banda de 5% do valor final ---
+  {
+    const env=ms13_envelope(burst.samples, fs);
+    const burstN=Math.round(0.100*fs);
+    let finalVal=0, cnt=0;
+    for(let i=Math.floor(burstN*7/10); i<burstN && i<env.length; i++){ finalVal+=env[i]; cnt++; }
+    if(cnt>0) finalVal/=cnt;
+    let settleIdx=0;
+    for(let i=0; i<burstN && i<env.length; i++)
+      if(finalVal>0 && Math.abs(env[i]-finalVal)<=0.05*finalVal){ settleIdx=i; break; }   // limiar de 5%
+    out.settlingTime_ms=settleIdx/fs*1000;
+  }
+  // --- Consistency (ST-12): coeficiente de variação dos picos de 10 períodos de 100 ms ---
+  if(inputs.train&&inputs.train.samples&&inputs.train.samples.length){
+    const te=ms13_envelope(inputs.train.samples, fs), period=Math.round(0.100*fs), peaks=[];
+    for(let p=0;p<10;p++){let mx=0; for(let i=p*period;i<(p+1)*period && i<te.length;i++) if(te[i]>mx)mx=te[i]; peaks.push(mx);}
+    let mean=0; for(const v of peaks) mean+=v; mean/=peaks.length;
+    let varr=0; for(const v of peaks) varr+=(v-mean)*(v-mean); varr/=peaks.length;
+    out.repetitionConsistency_pct = mean>0 ? 100*Math.sqrt(varr)/mean : 0;   // guarda mean>0
+  }
+  // --- Drift (ST-13): variação de nível entre a janela de 1 s e a de 29 s ---
+  if(inputs.sust&&inputs.sust.samples&&inputs.sust.samples.length){
+    const se=ms13_envelope(inputs.sust.samples, fs), oneSec=Math.round(fs);
+    const avgAt=sec=>{let s=0,c=0; for(let i=sec*oneSec;i<sec*oneSec+oneSec && i<se.length;i++){s+=se[i];c++;} return c?s/c:0;};
+    const e1=avgAt(1), e30=avgAt(29);
+    out.drift_dB=20*Math.log10(Math.max(e30,1e-12)/Math.max(e1,1e-12));   // pisos 1e-12
+  }
+  // --- Level Transfer (ST-08 + fonte emitida): ganho RMS out/in por degrau (8 x 100 ms) + erro máx ---
+  if(inputs.step&&inputs.step.samples&&inputs.step.samples.length&&inputs.stepSource&&inputs.stepSource.samples&&inputs.stepSource.samples.length){
+    const inn=inputs.stepSource.samples, stp=inputs.step.samples;   // inn = fonte emitida (Evidence), NÃO regenerada
+    const maxLag=Math.trunc(0.050*fs);
+    const lag=ms13_bestLag(ms13_envelope(inn,fs), ms13_envelope(stp,fs), maxLag);   // alinhamento por correlação
+    const seg=Math.round(0.100*fs), lt=[];
+    for(let s=0;s<8;s++){
+      const oi=inn.slice(s*seg,(s+1)*seg), oo=stp.slice(s*seg+lag,(s+1)*seg+lag);
+      const ri=Math.sqrt(ms(oi)), ro=Math.sqrt(ms(oo));
+      const db=20*Math.log10(Math.max(ro,1e-12)/Math.max(ri,1e-12));   // pisos 1e-12
+      lt.push(db); out['levelTransfer_step'+(s+1)+'_dB']=db;
+    }
+    let mean=0; for(const v of lt) mean+=v; if(lt.length) mean/=lt.length;
+    let maxErr=0; for(const v of lt){const e=Math.abs(v-mean); if(e>maxErr)maxErr=e;}
+    out.levelTransfer_maxError_dB=maxErr;
+  }
+  return out;
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1038,6 +1130,24 @@ const LabEngine={
         {key:'Latency_samples',value:m12.latency_samples,unit:'samples',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr12.id]=mr12; mr12.scalars.forEach(s=>{scalars[s.key]=s;});
     }
+    const st07=(session.captures||[]).find(c=>c.stimulus==='ST-07');   // MS-13: família composta (ST-07 obrigatório)
+    if(st07&&st07.wav){
+      const sig=x=>(x&&x.wav)?{samples:x.wav.samples, sampleRate:x.wav.sampleRate}:null;
+      const cap=code=>(session.captures||[]).find(c=>c.stimulus===code);
+      const src=code=>(session.stimuli||[]).find(s=>s.stimulus===code);   // D-EVIDENCE-DOMÍNIO: fonte emitida
+      const m13=computeMS13({burst:sig(st07), train:sig(cap('ST-12')), sust:sig(cap('ST-13')),
+                             step:sig(cap('ST-08')), stepSource:sig(src('ST-08'))});
+      if(m13.quality!=='Error'){
+        const sc=[]; const push=(k,v,u)=>{if(v!=null)sc.push({key:k,value:v,unit:u,quality:'Normal',valuePresent:true});};
+        push('SettlingTime_ms',          m13.settlingTime_ms,          'ms');
+        push('RepetitionConsistency_pct',m13.repetitionConsistency_pct,'%');
+        push('Drift_dB',                 m13.drift_dB,                 'dB');
+        for(let s=1;s<=8;s++) push('LevelTransfer_step'+s+'_dB', m13['levelTransfer_step'+s+'_dB'], 'dB');
+        push('LevelTransfer_maxError_dB',m13.levelTransfer_maxError_dB,'dB');
+        const mr13={id:'MS-13',name:'Dynamic Behaviour',quality:'Normal',scalars:sc,curves:[]};
+        byId[mr13.id]=mr13; mr13.scalars.forEach(s=>{scalars[s.key]=s;});
+      }
+    }
     return {byId,scalars,curves,lowConf,na};
   }
 };
@@ -1055,9 +1165,12 @@ function fromEvidence(f,man,file){
   const readJson=name=>(man[name]&&f[man[name]])?JSON.parse(asText(f[man[name]])):{};
   const ses=readJson('session'),hw=readJson('hardware'),acq=readJson('acquisition');
   const caps=(man.captures||[]).map(c=>({stimulus:c.code,file:c.file,wav:f[c.file]?parseWAV(asAB(f[c.file])):null})).filter(c=>c.wav);
+  // D-EVIDENCE-DOMÍNIO: estímulos emitidos (fontes) pertencem ao MESMO domínio científico das capturas.
+  // A ingestão apenas DISPONIBILIZA as fontes (parse simétrico a captures) — não interpreta nem transforma.
+  const stims=(man.stimuli||[]).map(s=>({stimulus:s.code,file:s.file,wav:f[s.file]?parseWAV(asAB(f[s.file])):null})).filter(s=>s.wav);
   const session={provenance:'evidence',source:file.name,
     meta:{device:hw.deviceName,sampleRate:hw.sampleRate,mode:hw.channels,timestamp:ses.timestamp},
-    captures:caps,primary:0,hasAnalysis:false,acquisition:acq};
+    captures:caps,stimuli:stims,primary:0,hasAnalysis:false,acquisition:acq};
   session.metrics=LabEngine.run(session);   // pipeline Session -> LabEngine -> metrics (vazio nesta etapa)
   return session;
 }
