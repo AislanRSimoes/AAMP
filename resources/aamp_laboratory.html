@@ -1227,6 +1227,37 @@ function computeMS02(capture, source){
   }
   return {curve:{name:'Phase', xUnit:'Hz', yUnit:'deg', x, y}};
 }
+/* MS-04 (Impulse Response) — TERCEIRO consumidor de essTransfer e CONSUMIDOR FINAL (primeiro de ir).
+   Método oficial (AnalysisEngine::impulseResp): representação TEMPORAL da resposta ao impulso. Consome
+   APENAS ir da observação (não usa H), SEM ampliar a interface {ir,H} — a auditoria confirmou a suficiência.
+   Toda a lógica abaixo é REPRESENTAÇÃO da família (não observação): localizar o pico, normalizar por ele
+   (guarda pk>0), decimar min/max (~6000 pts, preservando picos/vales), eixo temporal em ms, curva oficial.
+   PeakIndex_samples é escalar OFICIAL (D-ESCALAR-OFICIAL — publicado mesmo sem consumidor); DBG_IR_* do Core
+   são diagnósticos e NÃO são reproduzidos (D-SAÍDA-OFICIAL). */
+function computeMS04(capture, source){
+  const fs=capture.sampleRate;
+  const obs=ms01_essTransfer(capture, source);         // MESMA observação, sem alteração; consome só ir
+  const h=obs.ir.slice();                              // cópia: a família NÃO muta a observação
+  let pk=0, pkIdx=0;                                   // pico da IR (referência de normalização) — REPRESENTAÇÃO
+  for(let i=0;i<h.length;i++){const a=Math.abs(h[i]); if(a>pk){pk=a; pkIdx=i;}}
+  if(pk>0){ for(let i=0;i<h.length;i++) h[i]/=pk; }    // normaliza pico=1 (guarda pk>0)
+  const x=[], y=[], M=h.length, target=6000;           // decimação min/max (USE_FULL_IR ativo no Core)
+  if(M<=target){
+    for(let i=0;i<M;i++){ x.push(i/fs*1000); y.push(h[i]); }
+  } else {
+    const buckets=target>>1;                           // 3000
+    for(let bk=0;bk<buckets;bk++){
+      const lo=Math.floor(bk*M/buckets), hi=Math.floor((bk+1)*M/buckets);
+      if(lo>=hi) continue;
+      let mnI=lo, mxI=lo;
+      for(let i=lo+1;i<hi;i++){ if(h[i]<h[mnI])mnI=i; if(h[i]>h[mxI])mxI=i; }
+      const f1=Math.min(mnI,mxI), f2=Math.max(mnI,mxI);
+      x.push(f1/fs*1000); y.push(h[f1]);
+      if(f2!==f1){ x.push(f2/fs*1000); y.push(h[f2]); }
+    }
+  }
+  return {curve:{name:'Impulse Response', xUnit:'ms', yUnit:'norm', x, y}, peakIndex_samples:pkIdx};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1357,6 +1388,10 @@ const LabEngine={
         const m02=computeMS02(capSig, srcSig);           // representação FASE (2º consumidor de essTransfer)
         const mr02={id:'MS-02',name:'Phase Response',quality:'Normal',scalars:[],curves:[m02.curve]};
         byId[mr02.id]=mr02; curves[mr02.id]=m02.curve;
+        const m04=computeMS04(capSig, srcSig);           // representação IR temporal (3º consumidor — de ir)
+        const mr04={id:'MS-04',name:'Impulse Response',quality:'Normal',scalars:[
+          {key:'PeakIndex_samples',value:m04.peakIndex_samples,unit:'samples',quality:'Normal',valuePresent:true}],curves:[m04.curve]};
+        byId[mr04.id]=mr04; curves[mr04.id]=m04.curve; mr04.scalars.forEach(s=>{scalars[s.key]=s;});
       }
     }
     // Agrega os estados de qualidade dos escalares publicados ao contrato (mesma semântica de normalizeMetrics):
