@@ -873,6 +873,37 @@ function computeMS07(signal){
   const imd_db=20*Math.log10(Math.max(imd_pct/100,1e-12));
   return {imd_pct, imd_db};
 }
+/* MS-08 (Piso de Ruído) — QUARTA família nativa e PRIMEIRA de uma CLASSE OBSERVACIONAL NOVA (Welch/PSD).
+   Método oficial (caminho ativo USE_FULL_OBSERVATION do AnalysisEngine::noiseFloor): periodograma de Welch
+   sobre a captura de SILÊNCIO (ST-09) — janela Hann N=4096, hop=2048 (50% overlap), potência |X|² por bin
+   normalizada por ganho coerente (|X|/cg·2), MÉDIA sobre TODOS os quadros, integração na banda [20,20000] Hz
+   e conversão para dBFS ABSOLUTO. PURA, agnóstica { samples, sampleRate }, sem estado.
+   OBSERVAÇÃO PRIVADA (D-PRIMEIRO-CONSUMIDOR): NÃO consome officialSpectrum — método científico distinto
+   (Welch/Hann/média vs single-shot/BH4). Diferente das razões MS-05/06/07, cg e o fator ×2 NÃO cancelam
+   (medida absoluta), por isso permanecem NA FAMÍLIA. Reutiliza SOMENTE SCI.fft; nenhuma abstração nova.
+   D-SAÍDA-OFICIAL: calcula apenas o escalar oficial (NoiseFloor_dBFS) — não reproduz a Curve "Noise Floor"
+   nem os diagnósticos do Core (sem consumidor); a integração de banda é acumulada por quadro (sem array
+   por-bin intermediário). */
+function computeMS08(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  const N=4096, hop=N>>1, half=N>>1, BAND_LO=20, BAND_HI=20000;
+  const win=new Array(N); let cg=0;                        // janela Hann + ganho coerente (privados à família)
+  for(let i=0;i<N;i++){const w=0.5-0.5*Math.cos(2*Math.PI*i/(N-1)); win[i]=w; cg+=w;}
+  const re=new Array(N), im=new Array(N);
+  let acc=0, frames=0;                                     // Σ_quadros (Σ_bins-na-banda mag²) ; nº de quadros
+  for(let start=0; start+N<=samples.length; start+=hop){
+    for(let i=0;i<N;i++){re[i]=samples[start+i]*win[i]; im[i]=0;}
+    SCI.fft(re,im);
+    let band=0;
+    for(let b=0;b<half;b++){const f=b*fs/N; if(f<BAND_LO||f>BAND_HI)continue;
+      const mag=Math.hypot(re[b],im[b])/cg*2;              // magnitude normalizada (método espectral do Core)
+      band+=mag*mag;}                                      // PSD por bin, integrada na banda
+    acc+=band; frames++;
+  }
+  const integFull=frames>0 ? acc/frames : 0;              // média Welch sobre todos os quadros
+  const noisefloor_dbfs=10*Math.log10(Math.max(integFull,1e-30));
+  return {noisefloor_dbfs};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -908,6 +939,14 @@ const LabEngine={
         {key:'IMD_pct',value:m07.imd_pct,unit:'%', quality:'Normal',valuePresent:true},
         {key:'IMD_dB', value:m07.imd_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr07.id]=mr07; mr07.scalars.forEach(s=>{scalars[s.key]=s;});
+    }
+    const st09=(session.captures||[]).find(c=>c.stimulus==='ST-09');   // localização = responsabilidade do LabEngine
+    if(st09&&st09.wav){
+      const sig={samples:st09.wav.samples, sampleRate:st09.wav.sampleRate};
+      const m08=computeMS08(sig);
+      const mr08={id:'MS-08',name:'Noise Floor',quality:'Normal',scalars:[
+        {key:'NoiseFloor_dBFS',value:m08.noisefloor_dbfs,unit:'dBFS',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr08.id]=mr08; mr08.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
