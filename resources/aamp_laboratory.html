@@ -1149,7 +1149,8 @@ function computeMS15(inputs){
      semântica pública. A decisão pertence ao CORE, não à migração do Laboratory. */
   return {quality:'Normal', aggregateLinearity_dB:aggr, reproducibility_pct:100.0};
 }
-/* essTransfer — OBSERVAÇÃO científica compartilhada do grupo de resposta em frequência (MS-01/02/04).
+/* officialTransfer — OBSERVAÇÃO científica COMPARTILHADA do grupo de resposta em frequência (MS-01/02/04),
+   promovida na Subetapa C (paralela a officialSpectrum/officialEnvelope).
    Reproduz AnalysisEngine::essTransfer: caracterização LINEAR (LTI) do dispositivo sob teste, extraída
    por DECONVOLUÇÃO REGULARIZADA DE TIKHONOV do ESS (ST-01). Produz o conhecimento científico COMPLETO em
    suas DUAS formas canônicas, par de Fourier: { ir (resposta ao impulso, tempo, Nfull), H (resposta em
@@ -1157,11 +1158,13 @@ function computeMS15(inputs){
    FRONTEIRA CONGELADA (D-OBSERVAÇÃO-COMPLETA / D-FRONTEIRA-DA-OBSERVAÇÃO): a observação encerra em {ir,H};
    deconvolução de Tikhonov, IFFT e FFT_ANALYSIS PERTENCEM à observação. ir e H são a observação — ambos
    retornados SEMPRE, independentemente de consumidores atuais (a MS-01 usa só H; MS-02 usará arg(H); MS-04
-   usará ir). NASCE PRIVADA na MS-01 (D-SEQUENCIAMENTO / D-PRIMEIRO-CONSUMIDOR); MS-02 e MS-04 verificarão
-   a suficiência da interface antes de qualquer promoção A/B/C. Reutiliza SOMENTE SCI.fft; a IFFT é derivada
-   por conjugação, ENCAPSULADA aqui (D-INFRAESTRUTURA-DERIVADA — sem SCI.ifft). Entradas: captura e fonte
-   emitida do ST-01, ambas {samples, sampleRate}; a fonte vem de session.stimuli, NUNCA regenerada. */
-function ms01_essTransfer(capture, source){
+   usa ir). PROMOVIDA na Subetapa C após MS-01/MS-02/MS-04 confirmarem, por implementação e regressão, a
+   suficiência da interface {ir,H} (D-OBSERVAÇÃO-VALIDADA) — movimentação PURAMENTE ESTRUTURAL, sem alterar
+   matemática, interface, parâmetros ou fronteiras (D-SEPARAÇÃO-ESTRUTURA-vs-OTIMIZAÇÃO). Reutiliza SOMENTE
+   SCI.fft; a IFFT é derivada por conjugação, ENCAPSULADA aqui (D-INFRAESTRUTURA-DERIVADA — sem SCI.ifft).
+   Entradas: captura e fonte emitida do ST-01, ambas {samples, sampleRate}; a fonte vem de session.stimuli,
+   NUNCA regenerada. */
+function officialTransfer(capture, source){
   const cap=capture.samples, src=source.samples;
   let Nfull=1; while(Nfull<Math.max(cap.length, src.length)) Nfull<<=1;      // nextPow2Local (sem piso)
   const Yre=new Array(Nfull).fill(0), Yim=new Array(Nfull).fill(0);
@@ -1191,7 +1194,7 @@ function ms01_essTransfer(capture, source){
    escalar oficial (os DBG_FR do Core são diagnósticos — descartados por D-SAÍDA-OFICIAL). */
 function computeMS01(capture, source){
   const fs=capture.sampleRate;
-  const obs=ms01_essTransfer(capture, source);          // observação científica compartilhada {ir, H}
+  const obs=officialTransfer(capture, source);          // observação científica compartilhada {ir, H}
   const H=obs.H, N=H.nfft, half=N>>1, BAND_LO=20, BAND_HI=20000;
   const x=[], y=[];
   for(let i=0;i<half;i++){
@@ -1212,7 +1215,7 @@ function computeMS01(capture, source){
    banda apenas decide quais pontos EMITIR. */
 function computeMS02(capture, source){
   const fs=capture.sampleRate;
-  const obs=ms01_essTransfer(capture, source);         // MESMA observação da MS-01, sem alteração
+  const obs=officialTransfer(capture, source);         // MESMA observação da MS-01, sem alteração
   const H=obs.H, N=H.nfft, half=N>>1, BAND_LO=20, BAND_HI=20000, PI=Math.PI;
   const x=[], y=[];
   let prev=0, unwrapped=0, first=true;
@@ -1236,7 +1239,7 @@ function computeMS02(capture, source){
    são diagnósticos e NÃO são reproduzidos (D-SAÍDA-OFICIAL). */
 function computeMS04(capture, source){
   const fs=capture.sampleRate;
-  const obs=ms01_essTransfer(capture, source);         // MESMA observação, sem alteração; consome só ir
+  const obs=officialTransfer(capture, source);         // MESMA observação, sem alteração; consome só ir
   const h=obs.ir.slice();                              // cópia: a família NÃO muta a observação
   let pk=0, pkIdx=0;                                   // pico da IR (referência de normalização) — REPRESENTAÇÃO
   for(let i=0;i<h.length;i++){const a=Math.abs(h[i]); if(a>pk){pk=a; pkIdx=i;}}
