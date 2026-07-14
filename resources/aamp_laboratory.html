@@ -952,6 +952,24 @@ function computeMS10(signal, noiseSignal){
   if(pn<=0) return {snr_db:200};
   return {snr_db:10*Math.log10(ps/pn)};            // fórmula oficial, sem proteção adicional (ps==0 -> -Infinity, idêntico ao Core)
 }
+/* MS-12 (Latency) — SÉTIMA família nativa. Método oficial (AnalysisEngine::latency): round-trip = posição
+   do PICO do impulso capturado (ST-06, cru) menos a posição do impulso EMITIDO. PURA, agnóstica.
+   Uma única captura (ST-06, canal principal); SEM dependência de família.
+   D-ESTÍMULO-DE-REFERÊNCIA: a posição do impulso emitido é reproduzida pela MESMA regra determinística do
+   Core — impulsePositionSamples(fs) = round(0.5·fs) — nunca inferida da captura.
+   D-CONDIÇÃO-CIENTÍFICA: o clamp max(0,·) (latência não-negativa) é parte do método, não tratamento de erro.
+   ST-06 é consumido CRU (o CaptureEngine o exclui do sync-alignment), preservando o pico/latência.
+   D-ESCALAR-OFICIAL: publica AMBOS os escalares oficiais do Core (Latency_samples e Latency_ms), mesmo que
+   a UI atual só exiba Latency_ms — paridade com o contrato científico do Core.
+   peak (max|x|, primeira ocorrência) é primitiva aritmética privada (D-PRIMITIVA-ARITMÉTICA), inline. */
+function computeMS12(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  let pk=0, pv=0;                                  // primeira ocorrência do pico |x| máx (como no Core)
+  for(let i=0;i<samples.length;i++){const a=Math.abs(samples[i]); if(a>pv){pv=a; pk=i;}}
+  const emitted=Math.round(0.5*fs);               // posição do impulso EMITIDO (regra determinística do Core)
+  const rt=Math.max(0, pk-emitted);               // round-trip; clamp científico de não-negatividade
+  return {latency_samples: rt, latency_ms: rt/fs*1000};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1011,6 +1029,14 @@ const LabEngine={
       const mr10={id:'MS-10',name:'SNR',quality:'Normal',scalars:[
         {key:'SNR_dB',value:m10.snr_db,unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr10.id]=mr10; mr10.scalars.forEach(s=>{scalars[s.key]=s;});
+    }
+    const st06=(session.captures||[]).find(c=>c.stimulus==='ST-06');   // localização = responsabilidade do LabEngine
+    if(st06&&st06.wav){
+      const m12=computeMS12({samples:st06.wav.samples, sampleRate:st06.wav.sampleRate});
+      const mr12={id:'MS-12',name:'Latency',quality:'Normal',scalars:[   // AMBOS os escalares oficiais (D-ESCALAR-OFICIAL)
+        {key:'Latency_ms',     value:m12.latency_ms,     unit:'ms',     quality:'Normal',valuePresent:true},
+        {key:'Latency_samples',value:m12.latency_samples,unit:'samples',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr12.id]=mr12; mr12.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
