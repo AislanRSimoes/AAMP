@@ -1202,6 +1202,31 @@ function computeMS01(capture, source){
   }
   return {curve:{name:'Magnitude', xUnit:'Hz', yUnit:'dB', x, y}};
 }
+/* MS-02 (Phase Response) — SEGUNDO consumidor da observação essTransfer e TESTE de sua suficiência
+   (D-CONSUMIDOR-DE-VALIDAÇÃO). Representação de FASE: arg(H) desdobrada, em graus, na banda [20,20000].
+   Consome APENAS H (não usa ir); NÃO amplia a interface {ir,H}, NÃO adiciona parâmetro/constante/
+   responsabilidade à observação — a auditoria confirmou a suficiência.
+   O DESDOBRAMENTO (unwrap) é transformação de REPRESENTAÇÃO, não observação: a fase embrulhada ([-π,π]) e a
+   contínua (unwrapped) representam EXATAMENTE o mesmo H — o unwrap só muda a forma de apresentação, não
+   produz conhecimento novo (D-OBSERVAÇÃO-vs-SAÍDA). O unwrap acumula desde o bin DC sobre TODOS os bins; a
+   banda apenas decide quais pontos EMITIR. */
+function computeMS02(capture, source){
+  const fs=capture.sampleRate;
+  const obs=ms01_essTransfer(capture, source);         // MESMA observação da MS-01, sem alteração
+  const H=obs.H, N=H.nfft, half=N>>1, BAND_LO=20, BAND_HI=20000, PI=Math.PI;
+  const x=[], y=[];
+  let prev=0, unwrapped=0, first=true;
+  for(let i=0;i<half;i++){
+    const ph=Math.atan2(H.im[i], H.re[i]);             // arg(H[i])
+    if(!first){ let d=ph-prev; while(d>PI)d-=2*PI; while(d<-PI)d+=2*PI; unwrapped+=d; }  // desdobra desde DC
+    else { unwrapped=ph; first=false; }
+    prev=ph;
+    const f=i*fs/N;                                     // binFreq(i, FFT_ANALYSIS, fs)
+    if(f<BAND_LO||f>BAND_HI) continue;                  // banda: só decide EMISSÃO (unwrap já acumulou)
+    x.push(f); y.push(unwrapped*180/PI);
+  }
+  return {curve:{name:'Phase', xUnit:'Hz', yUnit:'deg', x, y}};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1320,14 +1345,18 @@ const LabEngine={
         byId[mr15.id]=mr15; mr15.scalars.forEach(s=>{scalars[s.key]=s;});
       }
     }
-    const st01=(session.captures||[]).find(c=>c.stimulus==='ST-01');   // MS-01: resposta em frequência (curva)
+    const st01=(session.captures||[]).find(c=>c.stimulus==='ST-01');   // MS-01/MS-02: grupo de resposta em frequência (curvas)
     if(st01&&st01.wav){
       const s01=(session.stimuli||[]).find(s=>s.stimulus==='ST-01');   // fonte emitida ST-01 (D-EVIDENCE-DOMÍNIO)
       if(s01&&s01.wav){   // requer captura E fonte emitida (entradas científicas da observação essTransfer)
-        const m01=computeMS01({samples:st01.wav.samples, sampleRate:st01.wav.sampleRate},
-                              {samples:s01.wav.samples, sampleRate:s01.wav.sampleRate});
+        const capSig={samples:st01.wav.samples, sampleRate:st01.wav.sampleRate};
+        const srcSig={samples:s01.wav.samples,  sampleRate:s01.wav.sampleRate};
+        const m01=computeMS01(capSig, srcSig);           // representação MAGNITUDE
         const mr01={id:'MS-01',name:'Frequency Response',quality:'Normal',scalars:[],curves:[m01.curve]};
         byId[mr01.id]=mr01; curves[mr01.id]=m01.curve;   // PRIMEIRA curva produzida pelo Laboratory
+        const m02=computeMS02(capSig, srcSig);           // representação FASE (2º consumidor de essTransfer)
+        const mr02={id:'MS-02',name:'Phase Response',quality:'Normal',scalars:[],curves:[m02.curve]};
+        byId[mr02.id]=mr02; curves[mr02.id]=m02.curve;
       }
     }
     // Agrega os estados de qualidade dos escalares publicados ao contrato (mesma semântica de normalizeMetrics):
