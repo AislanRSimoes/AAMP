@@ -1117,6 +1117,38 @@ function computeMS14(inputs){
   }
   return out;
 }
+/* MS-15 (Musical Behaviour) — TERCEIRA família composta e TERCEIRO consumidor de officialEnvelope.
+   Método oficial (AnalysisEngine::musical): linearidade agregada da envoltória sobre a sequência de
+   performance dinâmica (ST-15). Envoltória da fonte emitida (in) e da captura (out); em 12 janelas de 1 s,
+   razão de energias Lk = Σout² / Σin² (guarda ein>0 -> senão 1.0); AggregateLinearity_dB = média de
+   |20·log10(max(Lk,1e-12))|. PURA, agnóstica. Entradas EXPLÍCITAS (D-ENTRADAS-CIENTÍFICAS): {seq, seqSource}.
+   Fonte emitida (ST-15) vem do Evidence Package, NUNCA regenerada. NÃO usa bestLag (sem alinhamento).
+   Energia por janela e razão-log são aritmética privada (D-PRIMITIVA-ARITMÉTICA). */
+function computeMS15(inputs){
+  const seq=inputs.seq;
+  if(!seq||!seq.samples||!seq.samples.length) return {quality:'Error'};   // ST-15 obrigatório
+  const fs=seq.sampleRate;
+  const srcSamples=(inputs.seqSource&&inputs.seqSource.samples)?inputs.seqSource.samples:[];   // fonte emitida (Evidence)
+  const inEnv=officialEnvelope(srcSamples, fs), outEnv=officialEnvelope(seq.samples, fs);
+  const oneSec=Math.round(fs); let aggr=0; const K=12;
+  for(let k=0;k<K;k++){
+    let ein=0, eout=0;
+    for(let i=k*oneSec;i<(k+1)*oneSec;i++){
+      if(i<inEnv.length) ein+=inEnv[i]*inEnv[i];
+      if(i<outEnv.length) eout+=outEnv[i]*outEnv[i];
+    }
+    const Lk = ein>0 ? eout/ein : 1.0;                         // guarda: janela de entrada silenciosa -> linearidade neutra
+    aggr += Math.abs(20*Math.log10(Math.max(Lk,1e-12)));       // piso 1e-12
+  }
+  aggr/=K;
+  /* STUB CIENTÍFICO — herdado do Core (AnalysisEngine::musical). Reproducibility_pct NÃO é uma medição
+     calculada: o Core publica o valor CONSTANTE 100.0, sem algoritmo associado. Aqui é reproduzido
+     EXCLUSIVAMENTE por fidelidade ao Core (D-STUB-CIENTÍFICO), não como resultado de qualquer inferência
+     da migração. Se o Core futuramente implementar um algoritmo de reprodutibilidade, apenas o ALGORITMO
+     será substituído — preservando o mesmo identificador (Reproducibility_pct), contrato, interface e
+     semântica pública. A decisão pertence ao CORE, não à migração do Laboratory. */
+  return {quality:'Normal', aggregateLinearity_dB:aggr, reproducibility_pct:100.0};
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -1221,6 +1253,18 @@ const LabEngine={
         scl.push({key:'Overshoot_dB',value:m14.overshoot_dB,unit:'dB',quality:m14.overshoot_quality,valuePresent:true});
         const mr14={id:'MS-14',name:'Behavioural Response',quality:'Normal',scalars:scl,curves:[]};
         byId[mr14.id]=mr14; mr14.scalars.forEach(s=>{scalars[s.key]=s;});
+      }
+    }
+    const st15=(session.captures||[]).find(c=>c.stimulus==='ST-15');   // MS-15: família composta (ST-15 obrigatório)
+    if(st15&&st15.wav){
+      const sig=x=>(x&&x.wav)?{samples:x.wav.samples, sampleRate:x.wav.sampleRate}:null;
+      const src=code=>(session.stimuli||[]).find(s=>s.stimulus===code);   // D-EVIDENCE-DOMÍNIO: fonte emitida
+      const m15=computeMS15({seq:sig(st15), seqSource:sig(src('ST-15'))});
+      if(m15.quality!=='Error'){
+        const mr15={id:'MS-15',name:'Musical Behaviour',quality:'Normal',scalars:[   // ordem do Core: linearidade, depois stub
+          {key:'AggregateLinearity_dB',value:m15.aggregateLinearity_dB,unit:'dB',quality:'Normal',valuePresent:true},
+          {key:'Reproducibility_pct',   value:m15.reproducibility_pct,   unit:'%', quality:'Normal',valuePresent:true}],curves:[]};
+        byId[mr15.id]=mr15; mr15.scalars.forEach(s=>{scalars[s.key]=s;});
       }
     }
     // Agrega os estados de qualidade dos escalares publicados ao contrato (mesma semântica de normalizeMetrics):
