@@ -904,6 +904,35 @@ function computeMS08(signal){
   const noisefloor_dbfs=10*Math.log10(Math.max(integFull,1e-30));
   return {noisefloor_dbfs};
 }
+/* MS-09 (Dynamic Range) — QUINTA família nativa. Primeira com DEPENDÊNCIA CIENTÍFICA entre famílias.
+   Método oficial (AnalysisEngine::dynamicRange): sobre a captura de degraus dinâmicos (ST-08), divide em
+   8 segmentos de 100 ms, calcula o RMS de cada um, DESCARTA os segmentos clipados (pico ≥ 1.0), seleciona
+   o MAIOR RMS válido, converte para dB e SUBTRAI o piso de ruído oficial da MS-08:
+       DynamicRange_dB = 20·log10(maiorRMSválido) − NoiseFloor_dBFS.
+   PURA, agnóstica. RMS/pico/segmentação são PRIMITIVAS aritméticas privadas da família (não abstração).
+   D-DEPENDÊNCIA-DE-FAMÍLIA: a segunda entrada é o RESULTADO CIENTÍFICO OFICIAL da MS-08 (objeto), não o
+   contrato/UI — a família não conhece apresentação. Reproduz internamente a semântica do Core
+   (Normal/NotApplicable/Error); a tradução para o contrato é feita pelo LabEngine. */
+function computeMS09(signal, officialNoiseFloor){
+  const samples=signal.samples, fs=signal.sampleRate;
+  const nf = officialNoiseFloor && officialNoiseFloor.noisefloor_dbfs;   // dependência: resultado oficial da MS-08
+  if(!samples || !samples.length || nf==null || !isFinite(nf))
+    return {quality:'Error', dynamicrange_db:null};                      // pré-condição científica ausente
+  const seg=Math.round(0.100*fs);
+  let lmaxRms=0;
+  for(let s=0;s<8;s++){
+    const a=s*seg; if(a>=samples.length) continue;                       // segmento vazio -> ignora (slice do Core)
+    const part=samples.slice(a, Math.min((s+1)*seg, samples.length));
+    if(part.length===0) continue;
+    let sq=0, pk=0;
+    for(let i=0;i<part.length;i++){const v=part[i]; sq+=v*v; const av=Math.abs(v); if(av>pk)pk=av;}
+    const rms=Math.sqrt(sq/part.length);                                 // RMS do segmento (primitiva aritmética)
+    if(pk<1.0 && rms>lmaxRms) lmaxRms=rms;                               // gate de clipping: descarta pico ≥ 1.0
+  }
+  if(lmaxRms<=0) return {quality:'NotApplicable', dynamicrange_db:null}; // todos os degraus clipados/vazios
+  const lmaxDb=20*Math.log10(lmaxRms);
+  return {quality:'Normal', dynamicrange_db: lmaxDb - nf};               // maior RMS válido − piso oficial da MS-08
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -940,13 +969,22 @@ const LabEngine={
         {key:'IMD_dB', value:m07.imd_db, unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr07.id]=mr07; mr07.scalars.forEach(s=>{scalars[s.key]=s;});
     }
+    let m08result=null;   // resultado científico oficial da MS-08 (repassado à MS-09 — D-DEPENDÊNCIA-DE-FAMÍLIA)
     const st09=(session.captures||[]).find(c=>c.stimulus==='ST-09');   // localização = responsabilidade do LabEngine
     if(st09&&st09.wav){
       const sig={samples:st09.wav.samples, sampleRate:st09.wav.sampleRate};
-      const m08=computeMS08(sig);
+      m08result=computeMS08(sig);
       const mr08={id:'MS-08',name:'Noise Floor',quality:'Normal',scalars:[
-        {key:'NoiseFloor_dBFS',value:m08.noisefloor_dbfs,unit:'dBFS',quality:'Normal',valuePresent:true}],curves:[]};
+        {key:'NoiseFloor_dBFS',value:m08result.noisefloor_dbfs,unit:'dBFS',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr08.id]=mr08; mr08.scalars.forEach(s=>{scalars[s.key]=s;});
+    }
+    const st08=(session.captures||[]).find(c=>c.stimulus==='ST-08');   // localização = responsabilidade do LabEngine
+    if(st08&&st08.wav){
+      const m09=computeMS09({samples:st08.wav.samples, sampleRate:st08.wav.sampleRate}, m08result);
+      const present=m09.quality==='Normal';                            // traduz Normal/NotApplicable/Error -> contrato
+      const mr09={id:'MS-09',name:'Dynamic Range',quality:m09.quality,scalars:[
+        {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,valuePresent:present}],curves:[]};
+      byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
