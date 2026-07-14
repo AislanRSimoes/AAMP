@@ -933,6 +933,25 @@ function computeMS09(signal, officialNoiseFloor){
   const lmaxDb=20*Math.log10(lmaxRms);
   return {quality:'Normal', dynamicrange_db: lmaxDb - nf};               // maior RMS válido − piso oficial da MS-08
 }
+/* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
+   razão de potências RMS temporais entre o tom de 1 kHz (ST-03) e o ruído (ST-09):
+       SNR_dB = 10·log10(ps/pn),  ps = meanSquare(tom),  pn = meanSquare(ruído).
+   PURA, agnóstica. Recebe DUAS CAPTURAS oficiais (D-ENTRADAS-CIENTÍFICAS): ST-03 (tom) e ST-09 (ruído) —
+   ambas entradas científicas EXPLÍCITAS na assinatura; NÃO há dependência de resultado de outra família
+   (o ruído aqui é RMS temporal de banda LARGA, não o piso PSD Welch da MS-08). Mesma classe observacional
+   temporal da MS-09; RMS é primitiva aritmética privada (D-PRIMITIVA-ARITMÉTICA) — inline, sem promoção. */
+function computeMS10(signal, noiseSignal){
+  const fs=signal.sampleRate, seg=Math.round(2.0*fs);
+  // Recorte [2 s, 4 s): região ESTACIONÁRIA do estímulo oficial (mesma convenção do Core e de MS-05/06).
+  // NÃO é otimização — é a definição científica do trecho analisável do ST-03.
+  const tone=signal.samples.slice(seg, 2*seg);
+  const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
+  const ps=ms(tone), pn=ms(noiseSignal.samples);   // potências RMS temporais (aritmética inline privada)
+  // REGRA CIENTÍFICA da métrica (NÃO tratamento de erro): ruído nulo satura o SNR em 200 dB. Produz
+  // normalmente o escalar oficial 200.0 — não altera quality nem valuePresent.
+  if(pn<=0) return {snr_db:200};
+  return {snr_db:10*Math.log10(ps/pn)};            // fórmula oficial, sem proteção adicional (ps==0 -> -Infinity, idêntico ao Core)
+}
 /* Laboratory Engine — executor do pipeline científico do Laboratory (sem DOM, sem estado).
    Pipeline: Session -> LabEngine.run(session) -> metrics -> LAB -> instrumentos.
    DIRETRIZ PERMANENTE — run(session) é PURA (arquiteturalmente): não mantém cache, não armazena
@@ -985,6 +1004,13 @@ const LabEngine={
       const mr09={id:'MS-09',name:'Dynamic Range',quality:m09.quality,scalars:[
         {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,valuePresent:present}],curves:[]};
       byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
+    }
+    if(st03&&st03.wav&&st09&&st09.wav){   // MS-10: duas capturas científicas (ST-03 tom + ST-09 ruído)
+      const m10=computeMS10({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate},
+                            {samples:st09.wav.samples, sampleRate:st09.wav.sampleRate});
+      const mr10={id:'MS-10',name:'SNR',quality:'Normal',scalars:[
+        {key:'SNR_dB',value:m10.snr_db,unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
+      byId[mr10.id]=mr10; mr10.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     return {byId,scalars,curves,lowConf,na};
   }
