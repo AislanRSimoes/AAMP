@@ -1435,9 +1435,10 @@ const LabEngine={
    isEvidenceFormat: reconhece o CONTRATO estrutural do pacote de evidência (arrays stimuli+captures,
    conforme o EvidenceSerializer) — reconhecimento positivo da estrutura esperada, sem heurísticas
    nem dependência de "ausência de analysis".
-   fromEvidence: reconstrói a Session INTEGRALMENTE a partir da evidência (WAVs + metadados). NUNCA
-   consulta analysis.json e NÃO calcula nenhuma família científica (metrics vazias; hasAnalysis:false),
-   reutilizando o caminho sem-ciência já suportado pela Session (degradação graciosa). */
+   fromEvidence: reconstrói a Session INTEGRALMENTE a partir da evidência (WAVs + metadados) e
+   COMPUTA toda a ciência no Laboratory via LabEngine.run (MS-01..15 a partir de captures+stimuli).
+   NUNCA consulta analysis.json — hasAnalysis:false indica ausência de análise de backend, não de
+   ciência: a derivação científica é responsabilidade do consumidor oficial (ADR-0003). */
 function isEvidenceFormat(man){
   return !!man && Array.isArray(man.stimuli) && Array.isArray(man.captures);
 }
@@ -1451,7 +1452,7 @@ function fromEvidence(f,man,file){
   const session={provenance:'evidence',source:file.name,
     meta:{device:hw.deviceName,sampleRate:hw.sampleRate,mode:hw.channels,timestamp:ses.timestamp},
     captures:caps,stimuli:stims,primary:0,hasAnalysis:false,acquisition:acq};
-  session.metrics=LabEngine.run(session);   // pipeline Session -> LabEngine -> metrics (vazio nesta etapa)
+  session.metrics=LabEngine.run(session);   // pipeline Session -> LabEngine -> MS-01..15 (ciência do consumidor oficial)
   return session;
 }
 async function fromAamp(file){
