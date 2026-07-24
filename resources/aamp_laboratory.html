@@ -2808,7 +2808,7 @@ const AAMP=(function(){
   transport=nativeTransport()||MockEngine;
 
   /* ---- Estado do produto: um ambiente, dois estados (sem/com Session) ---- */
-  let exported=false,acquiring=false,hardware=null,configuring=false,lastDevices=[],hwPendingThen=null,hwSel=null;
+  let exported=false,acquiring=false,configuring=false,lastDevices=[],hwPendingThen=null,hwSel=null;
   let prepared=false,preparedId=null;   // device aberto/validado (READY) — evita abrir duas vezes
   // ── Sprint 1 (arquitetura de hardware): PreparedConfiguration + política needsPrepare ──
   const REF_SR=48000;                          // DOC-03: fs operacional fixo
@@ -2818,9 +2818,20 @@ const AAMP=(function(){
   // PreparedConfiguration: descreve SÓ a config aplicada ao backend; sem requestId/callbacks/flags.
   const makePreparedConfig=a=>Object.freeze({deviceId:a.deviceId,mode:a.mode,outBase:a.outBase|0,inBase:a.inBase|0,
     sampleRate:a.sampleRate,outMask:a.outMask|0,inMask:a.inMask|0,bufferSize:a.bufferSize|0});
-  // Adaptador transitório (removido nas Sprints 3–4): traduz estado legado → entrada de needsPrepare. SEM lógica.
-  const desiredFromLegacy=()=>({deviceId:hardware&&hardware.id,mode:hardware&&hardware.mode,
-    outBase:(hardware&&hardware.outBase|0)||0,inBase:(hardware&&hardware.inBase|0)||0,sampleRate:REF_SR});
+  // ── Sprint 3: HardwareProfile — dono ÚNICO e gravável do estado Desired (persistido). Categoria: Desired.
+  // O ÚNICO local autorizado a escrever deviceId/mode/desiredOutBase/desiredInBase é HardwareProfile.set().
+  const HardwareProfile={
+    deviceId:null,mode:'Mono',desiredOutBase:0,desiredInBase:0,
+    set(f){ if('deviceId' in f)this.deviceId=f.deviceId;
+            if('mode' in f)this.mode=(f.mode==='Stereo'?'Stereo':'Mono');
+            if('desiredOutBase' in f)this.desiredOutBase=f.desiredOutBase|0;
+            if('desiredInBase' in f)this.desiredInBase=f.desiredInBase|0; },
+    has(){return !!this.deviceId;},
+    clear(){this.set({deviceId:null,mode:'Mono',desiredOutBase:0,desiredInBase:0});},
+    loadFromVar(v){if(v&&v.id)this.set({deviceId:v.id,mode:v.mode,desiredOutBase:(v.outBase|0)||0,desiredInBase:(v.inBase|0)||0});else this.clear();}, // tolerante ao formato antigo
+    toPersist(){return {id:this.deviceId,mode:this.mode,outBase:this.desiredOutBase,inBase:this.desiredInBase};},                                    // grava só as 4 preferências (formato novo)
+    snapshot(){return Object.freeze(this.toPersist());}                                                                                             // undo do diálogo (View); não é 2ª representação editável
+  };
   // needsPrepare(): ÚNICA autoridade para decidir se um novo prepare() é obrigatório (função pura).
   function needsPrepare(desired,applied){
     if(!applied)return true;
@@ -2834,8 +2845,10 @@ const AAMP=(function(){
   let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
   let acqT0=0,acqTimer=0,acqPct=0,acqStep=0;   // relógio do console: etapa · decorrido · ETA
   function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();prepared=false;preparedId=null;}
-  function hwInfoHTML(){return hardware
-    ?'<div class="lab-hw"><span>'+t('hw.label')+': <b style="color:var(--txt2)">'+hardware.name+'</b></span><button class="lab-hw-gear" title="'+t('hw.gear')+'">⚙</button></div>'
+  // Nome do device p/ exibição: resolvido das Capabilities (lastDevices) pelo deviceId — NÃO persiste no Profile.
+  function profileDeviceName(){const d=lastDevices.find(x=>x.id===HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
+  function hwInfoHTML(){return HardwareProfile.has()
+    ?'<div class="lab-hw"><span>'+t('hw.label')+': <b style="color:var(--txt2)">'+profileDeviceName()+'</b></span><button class="lab-hw-gear" title="'+t('hw.gear')+'">⚙</button></div>'
     :'<div class="lab-hw warn"><span>'+t('hw.none')+'</span></div>';}
   function renderEmpty(){const st=el('stage');if(!st)return;st.className='';
     st.innerHTML='<div class="lab-empty">'+hwInfoHTML()+'<div class="le-ic">⊞</div><h2>'+t('empty.title')+'</h2><p>'+t('empty.body')+'</p></div>';
@@ -2843,14 +2856,11 @@ const AAMP=(function(){
 
   /* Configuração de hardware — MIGRAÇÃO da lógica JUCE (Main.cpp: AudioConfig). Origem dos dados:
      DeviceInfo/DeviceCapabilities. Entrada<-nOut, Saída<-nIn (convenção do AAMP); pares estéreo i+=2.
-     hwOutBase = seleção de Entrada; hwInBase = seleção de Saída (idêntico ao diálogo do Gerador). */
-  let hwMode=false,hwOutBase=0,hwInBase=0;   // hwMode: false=Mono, true=Estéreo
-  let hwNIn=0,hwNOut=0;                       // canais REAIS do device aberto (via evento 'prepared')
+     Sprint 3: o estado Desired (mode/outBase/inBase) pertence a HardwareProfile — NÃO existe working copy. */
+  let hwNIn=0,hwNOut=0;                       // canais REAIS do device aberto (Capabilities; via evento 'prepared')
   function openHardwareConfig(then){configuring=true;hwPendingThen=then||null;hwSel=null;prepared=false;preparedId=null;
-    // Restaura o estado ATIVO ao reabrir (reproduz AudioConfig: modo/bases/dispositivo do config vigente).
-    hwMode   = !!(hardware && hardware.mode==='Stereo');
-    hwOutBase= (hardware && hardware.outBase|0) || 0;
-    hwInBase = (hardware && hardware.inBase|0)  || 0;
+    // Sprint 3: o Desired vive em HardwareProfile (sem working copy). Snapshot imutável para undo no Cancelar.
+    const hwUndo=HardwareProfile.snapshot();
     const st=el('stage');st.className='';
     st.innerHTML='<div class="hwc">'
       +'<div class="hwc-head"><div class="hwc-eyebrow">'+t('hwc.eyebrow')+'</div><div class="hwc-title">'+t('hwc.title')+'</div>'
@@ -2867,8 +2877,8 @@ const AAMP=(function(){
       +'</div>'
       +'<div class="hwc-actions"><button class="btn" id="hwcCancel">'+t('hwc.cancel')+'</button><button class="btn btn-primary" id="hwcOk" disabled>'+t('hwc.ok')+'</button></div></div>';
     syncModeButtons();
-    el('hwcCancel').onclick=()=>{configuring=false;hwPendingThen=null;prepared=false;preparedId=null;renderEmpty();};
-    el('hwcOk').onclick=()=>{if(!hwSel||!prepared)return;hardware=Object.assign({},hwSel,{mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase});persistHardware();configuring=false;const th=hwPendingThen;hwPendingThen=null;if(th)th();else renderEmpty();};
+    el('hwcCancel').onclick=()=>{HardwareProfile.loadFromVar(hwUndo);configuring=false;hwPendingThen=null;prepared=false;preparedId=null;renderEmpty();};
+    el('hwcOk').onclick=()=>{if(!hwSel||!prepared)return;HardwareProfile.set({deviceId:hwSel.id});persistHardware();configuring=false;const th=hwPendingThen;hwPendingThen=null;if(th)th();else renderEmpty();};
     el('hwMono').onclick=()=>setMode(false);
     el('hwStereo').onclick=()=>setMode(true);
     el('hwDevice').onchange=()=>applySelectedDevice();
@@ -2885,21 +2895,22 @@ const AAMP=(function(){
     sel.innerHTML=lastDevices.map((d,i)=>'<option value="'+i+'">'+d.name+(d.backend?' · '+d.backend:'')+'</option>').join('');
     // indexForDevice: restaura o dispositivo do config ATIVO; senão, primeiro da lista.
     let idx=0;
-    if(hardware&&hardware.id){const k=lastDevices.findIndex(d=>d.id===hardware.id);if(k>=0)idx=k;}
+    if(HardwareProfile.has()){const k=lastDevices.findIndex(d=>d.id===HardwareProfile.deviceId);if(k>=0)idx=k;}
     sel.selectedIndex=idx;
     applySelectedDevice();}
   function applySelectedDevice(){const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=lastDevices[i]||null;
+    if(hwSel)HardwareProfile.set({deviceId:hwSel.id});                  // device desejado (dono único)
     prepared=false;preparedId=null;const ok=el('hwcOk');if(ok)ok.disabled=true;
-    hwNIn=0;hwNOut=0;repopulateChannels();                              // limpa até o device abrir
+    hwNIn=0;hwNOut=0;repopulateChannels();                              // limpa até o device abrir (render puro)
     const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase,requestId:nextRequestId()});}
-  function setMode(stereo){hwMode=stereo;                                     // intenção do usuário (evento)
-    // Sprint 2: ajuste EXPLÍCITO do modelo às capacidades conhecidas (nunca via render).
-    const c=clampDesiredToCaps({outBase:hwOutBase,inBase:hwInBase,mode:hwMode?'Stereo':'Mono'},{nIn:hwNIn,nOut:hwNOut});
-    hwOutBase=c.outBase;hwInBase=c.inBase;hwMode=(c.mode==='Stereo');
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
+  function setMode(stereo){HardwareProfile.set({mode:stereo?'Stereo':'Mono'});    // intenção do usuário (evento)
+    // Sprint 2/3: ajuste EXPLÍCITO do modelo (HardwareProfile) às capacidades conhecidas (nunca via render).
+    const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:hwNIn,nOut:hwNOut});
+    HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});
     syncModeButtons();repopulateChannels();updateStatus();
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase,requestId:nextRequestId()});}
-  function syncModeButtons(){const mo=el('hwMono'),se=el('hwStereo');if(mo)mo.classList.toggle('on',!hwMode);if(se)se.classList.toggle('on',hwMode);}
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
+  function syncModeButtons(){const stereo=HardwareProfile.mode==='Stereo';const mo=el('hwMono'),se=el('hwStereo');if(mo)mo.classList.toggle('on',!stereo);if(se)se.classList.toggle('on',stereo);}
   // ── Sprint 2: ajuste desejado→capacidades como funções PURAS (Design by Contract) ──
   // Nenhuma lê/escreve estado global, DOM, rede ou tempo; nenhuma muta os argumentos recebidos.
 
@@ -2947,13 +2958,13 @@ const AAMP=(function(){
      Pós (contrato): nIn>0 && nOut>0 ⇒ validateAgainstCaps(resultado,caps)===true. */
   function clampDesiredToCaps(desired,caps){return adjustToCaps(desired,caps);}
   /* repopulateChannels — RENDER PURO (Sprint 2): reflete o modelo nas ComboBoxes.
-     NUNCA muta hwMode/hwOutBase/hwInBase/hwNIn/hwNOut. O ajuste do modelo é feito ANTES,
+     NUNCA muta o modelo (HardwareProfile) nem hwNIn/hwNOut. O ajuste do modelo é feito ANTES,
      explicitamente, por clampDesiredToCaps no fluxo (Controller-flow). Entrada a partir de nOut;
      Saída a partir de nIn; pares i+=2. */
   function repopulateChannels(){const ent=el('hwEntrada'),sai=el('hwSaida');if(!ent||!sai)return;
     const nIn=hwNIn||0,nOut=hwNOut||0;
     const se=el('hwStereo');if(se)se.disabled=!(nIn>=2&&nOut>=2);   // habilitação do botão (render)
-    const stereo=hwMode;                                            // LÊ o modelo; não muta
+    const stereo=HardwareProfile.mode==='Stereo';                   // LÊ o modelo (HardwareProfile); não muta
     let e='',s='';
     if(stereo){
       for(let i=0;i+1<nOut;i+=2)e+='<option value="'+(i+1)+'">'+(i+1)+'/'+(i+2)+'</option>';
@@ -2963,22 +2974,23 @@ const AAMP=(function(){
       for(let i=0;i<nIn;i++) s+='<option value="'+(i+1)+'">'+(i+1)+'</option>';
     }
     ent.innerHTML=e;sai.innerHTML=s;
-    selectOption(ent,hwOutBase);                                    // reflete o modelo (render)
-    selectOption(sai,hwInBase);
+    selectOption(ent,HardwareProfile.desiredOutBase);               // reflete o modelo (render)
+    selectOption(sai,HardwareProfile.desiredInBase);
     updateStatus();}
   /* selectOption — RENDER: seleciona no <select> a opção que reflete a base do modelo.
-     NÃO altera o modelo (não retorna base, não escreve hwOutBase/hwInBase). */
+     NÃO altera o modelo (não retorna base, não escreve HardwareProfile). */
   function selectOption(selEl,base){for(let i=0;i<selEl.options.length;i++){if(+selEl.options[i].value===base+1){selEl.selectedIndex=i;return;}}
     if(selEl.options.length>0)selEl.selectedIndex=0;}
   function onChannelChange(){const ent=el('hwEntrada'),sai=el('hwSaida');
-    hwOutBase=(ent&&+ent.value>0)?(+ent.value-1):0;
-    hwInBase =(sai&&+sai.value>0)?(+sai.value-1):0;
+    HardwareProfile.set({desiredOutBase:(ent&&+ent.value>0)?(+ent.value-1):0,
+                         desiredInBase :(sai&&+sai.value>0)?(+sai.value-1):0});
     updateStatus();}
   function updateStatus(){const stt=el('hwStatus');if(!stt||!hwSel)return;
-    const ch=hwMode
-      ?(t('hwc.in')+' '+(hwOutBase+1)+'/'+(hwOutBase+2)+'  '+t('hwc.out')+' '+(hwInBase+1)+'/'+(hwInBase+2))
-      :(t('hwc.in')+' '+(hwOutBase+1)+'  '+t('hwc.out')+' '+(hwInBase+1));
-    stt.textContent=hwSel.name+' | '+(hwMode?t('hwc.stereo'):t('hwc.mono'))+' | '+ch+' | 48000 Hz';}
+    const stereo=HardwareProfile.mode==='Stereo',ob=HardwareProfile.desiredOutBase,ib=HardwareProfile.desiredInBase;
+    const ch=stereo
+      ?(t('hwc.in')+' '+(ob+1)+'/'+(ob+2)+'  '+t('hwc.out')+' '+(ib+1)+'/'+(ib+2))
+      :(t('hwc.in')+' '+(ob+1)+'  '+t('hwc.out')+' '+(ib+1));
+    stt.textContent=hwSel.name+' | '+(stereo?t('hwc.stereo'):t('hwc.mono'))+' | '+ch+' | 48000 Hz';}
   /* Card de capacidades (read-only, DOC-05 §3.2): capacidades do hardware vs. modo operacional AAMP. */
   function renderHwCaps(d){const box=el('hwcCaps');if(!box||!configuring)return;
     const caps=d.caps||{},op=d.operating||{},v=d.validation||{};
@@ -3025,9 +3037,9 @@ const AAMP=(function(){
     el('acqCancel').onclick=()=>send('cancel');
     acqAdvance(t('acq.init'),true);
     // Se o device já foi aberto/validado (READY) na configuração, inicia direto — evita abrir 2x.
-    // Sprint 1: needsPrepare() é a ÚNICA autoridade — substitui o heurístico prepared&&preparedId.
-    if(!needsPrepare(desiredFromLegacy(),preparedConfig)){acqAdvance(t('acq.devready'),false);send('start');}
-    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:hardware&&hardware.id,mode:hardware&&hardware.mode,inBase:hardware&&hardware.inBase,outBase:hardware&&hardware.outBase,requestId:nextRequestId()});}}
+    // Sprint 1/3: needsPrepare() é a ÚNICA autoridade; desejado lido direto do HardwareProfile (sem adaptador).
+    if(!needsPrepare({deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,sampleRate:REF_SR},preparedConfig)){acqAdvance(t('acq.devready'),false);send('start');}
+    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}}
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
@@ -3040,12 +3052,12 @@ const AAMP=(function(){
     if(configuring){prepared=ready;preparedId=ready&&hwSel?hwSel.id:null;
       const caps=d.caps||{};hwNIn=caps.inputChannels||0;hwNOut=caps.outputChannels||0;  // canais do device ABERTO
       // Sprint 2: capacidades chegaram → clamp EXPLÍCITO do modelo (Controller-flow), ANTES do render.
-      const c=clampDesiredToCaps({outBase:hwOutBase,inBase:hwInBase,mode:hwMode?'Stereo':'Mono'},{nIn:hwNIn,nOut:hwNOut});
-      hwOutBase=c.outBase;hwInBase=c.inBase;hwMode=(c.mode==='Stereo');syncModeButtons();
+      const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:hwNIn,nOut:hwNOut});
+      HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});syncModeButtons();
       repopulateChannels();                                                              // render puro (reflete o modelo)
       renderHwCaps(d);
       const ok=el('hwcOk');if(ok)ok.disabled=!ready;return;}
-    if(acquiring){if(ready){prepared=true;preparedId=hardware&&hardware.id;acqAdvance(t('acq.devready'),false);send('start');}
+    if(acquiring){if(ready){prepared=true;preparedId=HardwareProfile.deviceId;acqAdvance(t('acq.devready'),false);send('start');}
       else{acquiring=false;prepared=false;preparedId=null;stopAcqClock();acqLog(t('acq.prepfail'),false);
         const vmsg=d.validation&&d.validation.message;if(vmsg)acqLog(vmsg,false);setTimeout(()=>renderEmpty(),1200);}}});
   on('state',d=>{
@@ -3078,7 +3090,7 @@ const AAMP=(function(){
   function newCharacterization(){
     const proceed=()=>{if(M)showModal({title:t('modal.new.title'),body:t('modal.new.body'),
       actions:[{label:t('btn.cancel')},{label:t('btn.continue'),kind:'primary',onClick:()=>{teardown();startAcquisition();}}]});else startAcquisition();};
-    if(!hardware)openHardwareConfig(proceed);else proceed();
+    if(!HardwareProfile.has())openHardwareConfig(proceed);else proceed();
   }
   function importCharacterization(){const fi=document.getElementById('fi');
     if(M)showModal({title:t('modal.import.title'),body:t('modal.import.body'),
@@ -3100,13 +3112,14 @@ const AAMP=(function(){
      configuração, listas e seleção já estão prontas (zero espera, mínimo de cliques). */
   on('settings',d=>{if(!d)return;
     if(d.language&&I18N[d.language]&&d.language!==LANG){LANG=d.language;try{localStorage.setItem('aamp.lang',LANG);}catch(e){}applyLanguage();}
-    if(d.hardware&&d.hardware.id){hardware=d.hardware;                 // restaura config anterior
-      if(lastDevices.length&&!lastDevices.some(x=>x.id===hardware.id))hardware=null;  // device sumiu -> padrão
+    HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
+    if(HardwareProfile.has()){
+      if(lastDevices.length&&!lastDevices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
       if(!M&&!configuring&&!acquiring)renderEmpty();}});
-  on('devices',d0=>{/* validação do hardware persistido contra a lista REAL de conectados */
-    if(hardware&&hardware.id&&lastDevices.length&&!lastDevices.some(x=>x.id===hardware.id)){
-      hardware=null;if(!M&&!configuring&&!acquiring)renderEmpty();}});
-  function persistHardware(){if(hardware)send('saveSettings',{hardware:hardware});}
+  on('devices',d0=>{/* validação do Desired persistido contra a lista REAL de conectados */
+    if(HardwareProfile.has()&&lastDevices.length&&!lastDevices.some(x=>x.id===HardwareProfile.deviceId)){
+      HardwareProfile.clear();if(!M&&!configuring&&!acquiring)renderEmpty();}});
+  function persistHardware(){if(HardwareProfile.has())send('saveSettings',{hardware:HardwareProfile.toPersist()});}
   function setLanguage(l){if(!I18N[l]||l===LANG)return;LANG=l;
     try{localStorage.setItem('aamp.lang',l);}catch(e){}
     send('setLanguage',{lang:l});applyLanguage();}
@@ -3130,7 +3143,7 @@ const AAMP=(function(){
 
   return {bridge:{on,emit,send,get mode(){return transport&&transport.name;}},mock:MockEngine,
     newCharacterization,importCharacterization,openHardwareConfig,requestClose,initShell,showModal,setLanguage,
-    isExported:()=>exported,hasSession:()=>!!M,isAcquiring:()=>acquiring,hardware:()=>hardware};
+    isExported:()=>exported,hasSession:()=>!!M,isAcquiring:()=>acquiring,hardware:()=>HardwareProfile.has()?HardwareProfile.toPersist():null};
 })();
 
 window.addEventListener('beforeunload',e=>{if(AAMP.hasSession()&&!AAMP.isExported()){e.preventDefault();e.returnValue='';}});
