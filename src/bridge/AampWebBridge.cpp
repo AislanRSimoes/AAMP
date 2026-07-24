@@ -285,6 +285,7 @@ void AampWebBridge::doPrepare(juce::var args) {
         val->setProperty("message", juce::String(msg));
         auto* o = new juce::DynamicObject();
         o->setProperty("state", "Error"); o->setProperty("validation", juce::var(val));
+        o->setProperty("requestId", args.getProperty("requestId", juce::var()));  // Sprint 1: correlação
         emitEvent("prepared", juce::var(o));
     };
     if (chosen == nullptr) { emitError("Nenhum dispositivo de aquisicao conectado."); return; }
@@ -368,6 +369,21 @@ void AampWebBridge::doPrepare(juce::var args) {
     o->setProperty("caps",       capsVar(full));
     o->setProperty("operating",  juce::var(op));
     o->setProperty("validation", juce::var(val));
+    // Sprint 1: PreparedConfiguration — descreve exclusivamente a config aplicada ao m_dm (aditivo ao
+    // protocolo). Sem requestId/callbacks/flags. Emitida só quando a configuração foi de fato aplicada.
+    if (m_deviceReady && dev2 != nullptr) {
+        auto* applied = new juce::DynamicObject();
+        applied->setProperty("deviceId",   juce::String(chosen->id.c_str()));
+        applied->setProperty("mode",       stereo ? "Stereo" : "Mono");
+        applied->setProperty("outBase",    outBase);
+        applied->setProperty("inBase",     inBase);
+        applied->setProperty("sampleRate", m_prepFs);
+        applied->setProperty("outMask",    dev2->getActiveOutputChannels().toInteger());
+        applied->setProperty("inMask",     dev2->getActiveInputChannels().toInteger());
+        applied->setProperty("bufferSize", dev2->getCurrentBufferSizeSamples());
+        o->setProperty("applied", juce::var(applied));
+    }
+    o->setProperty("requestId", args.getProperty("requestId", juce::var()));   // Sprint 1: correlação (HardwareSession na Sprint 5)
     emitEvent("prepared", juce::var(o));
 
     // Persistência dos parâmetros EFETIVOS do device aberto (fs/buffer atuais) junto à última

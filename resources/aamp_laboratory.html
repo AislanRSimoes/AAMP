@@ -2810,6 +2810,27 @@ const AAMP=(function(){
   /* ---- Estado do produto: um ambiente, dois estados (sem/com Session) ---- */
   let exported=false,acquiring=false,hardware=null,configuring=false,lastDevices=[],hwPendingThen=null,hwSel=null;
   let prepared=false,preparedId=null;   // device aberto/validado (READY) — evita abrir duas vezes
+  // ── Sprint 1 (arquitetura de hardware): PreparedConfiguration + política needsPrepare ──
+  const REF_SR=48000;                          // DOC-03: fs operacional fixo
+  let preparedConfig=null;                     // PreparedConfiguration (Value Object imutável): o "aplicado"
+  let curRequestId=0;                          // requestId corrente (migra p/ HardwareSession na Sprint 5)
+  const nextRequestId=()=>++curRequestId;
+  // PreparedConfiguration: descreve SÓ a config aplicada ao backend; sem requestId/callbacks/flags.
+  const makePreparedConfig=a=>Object.freeze({deviceId:a.deviceId,mode:a.mode,outBase:a.outBase|0,inBase:a.inBase|0,
+    sampleRate:a.sampleRate,outMask:a.outMask|0,inMask:a.inMask|0,bufferSize:a.bufferSize|0});
+  // Adaptador transitório (removido nas Sprints 3–4): traduz estado legado → entrada de needsPrepare. SEM lógica.
+  const desiredFromLegacy=()=>({deviceId:hardware&&hardware.id,mode:hardware&&hardware.mode,
+    outBase:(hardware&&hardware.outBase|0)||0,inBase:(hardware&&hardware.inBase|0)||0,sampleRate:REF_SR});
+  // needsPrepare(): ÚNICA autoridade para decidir se um novo prepare() é obrigatório (função pura).
+  function needsPrepare(desired,applied){
+    if(!applied)return true;
+    if(applied.deviceId!==desired.deviceId)return true;
+    if(applied.mode!==desired.mode)return true;
+    if(applied.outBase!==desired.outBase)return true;
+    if(applied.inBase!==desired.inBase)return true;
+    if(applied.sampleRate!==desired.sampleRate)return true;
+    return false;
+  }
   let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
   let acqT0=0,acqTimer=0,acqPct=0,acqStep=0;   // relógio do console: etapa · decorrido · ETA
   function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();prepared=false;preparedId=null;}
@@ -2871,9 +2892,9 @@ const AAMP=(function(){
     prepared=false;preparedId=null;const ok=el('hwcOk');if(ok)ok.disabled=true;
     hwNIn=0;hwNOut=0;repopulateChannels();                              // limpa até o device abrir
     const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase});}
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase,requestId:nextRequestId()});}
   function setMode(stereo){hwMode=stereo;syncModeButtons();repopulateChannels();updateStatus();
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase});}
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:hwMode?'Stereo':'Mono',inBase:hwInBase,outBase:hwOutBase,requestId:nextRequestId()});}
   function syncModeButtons(){const mo=el('hwMono'),se=el('hwStereo');if(mo)mo.classList.toggle('on',!hwMode);if(se)se.classList.toggle('on',hwMode);}
   /* selectClosest (JUCE): preserva a base selecionada ao repopular; devolve a base ajustada. */
   function selectClosest(selEl,base){let found=false;
@@ -2954,14 +2975,17 @@ const AAMP=(function(){
     el('acqCancel').onclick=()=>send('cancel');
     acqAdvance(t('acq.init'),true);
     // Se o device já foi aberto/validado (READY) na configuração, inicia direto — evita abrir 2x.
-    if(prepared&&hardware&&preparedId===hardware.id){acqAdvance(t('acq.devready'),false);send('start');}
-    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:hardware&&hardware.id,mode:hardware&&hardware.mode,inBase:hardware&&hardware.inBase,outBase:hardware&&hardware.outBase});}}
+    // Sprint 1: needsPrepare() é a ÚNICA autoridade — substitui o heurístico prepared&&preparedId.
+    if(!needsPrepare(desiredFromLegacy(),preparedConfig)){acqAdvance(t('acq.devready'),false);send('start');}
+    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:hardware&&hardware.id,mode:hardware&&hardware.mode,inBase:hardware&&hardware.inBase,outBase:hardware&&hardware.outBase,requestId:nextRequestId()});}}
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
   on('devices',d=>{lastDevices=d.devices||[];if(configuring)renderHwDevices();});
   // prepare() concluído: UM evento com capacidades + estado + validação + modo operacional.
   on('prepared',d=>{
+    // Sprint 1: registra a PreparedConfiguration aplicada (correlação por requestId; gating pleno na Sprint 5).
+    if(d.applied&&(d.requestId==null||d.requestId===curRequestId))preparedConfig=makePreparedConfig(d.applied);
     const ready=d.state==='Ready';
     if(configuring){prepared=ready;preparedId=ready&&hwSel?hwSel.id:null;
       const caps=d.caps||{};hwNIn=caps.inputChannels||0;hwNOut=caps.outputChannels||0;  // canais do device ABERTO
@@ -2986,7 +3010,7 @@ const AAMP=(function(){
   // Cada métrica oficial concluída entra no console com nome compreensível + identificador técnico.
   on('metricReady',d=>{if(!acquiring||!d||!d.id)return;acqLog(t('acq.metric',{name:msName(d.id,d.name),id:d.id}),false);});
   on('exported',()=>{exported=true;});
-  on('runFinished',async d=>{if(!acquiring)return;acquiring=false;prepared=false;preparedId=null;stopAcqClock();
+  on('runFinished',async d=>{if(!acquiring)return;acquiring=false;prepared=false;preparedId=null;preparedConfig=null;stopAcqClock();
     if(d.outcome==='Completed'){acqBar(100);acqLog(t('acq.done'),false);
       try{
         // ARCH-01: a caracterização entrega um .aamp; reabrimos pelo MESMO caminho do arquivo (ingest→fromAamp→bootSession).
