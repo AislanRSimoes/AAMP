@@ -2808,7 +2808,7 @@ const AAMP=(function(){
   transport=nativeTransport()||MockEngine;
 
   /* ---- Estado do produto: um ambiente, dois estados (sem/com Session) ---- */
-  let exported=false,acquiring=false,configuring=false,lastDevices=[],hwPendingThen=null,hwSel=null;
+  let exported=false,acquiring=false,configuring=false,hwPendingThen=null,hwSel=null;
   let prepared=false,preparedId=null;   // device aberto/validado (READY) — evita abrir duas vezes
   // ── Sprint 1 (arquitetura de hardware): PreparedConfiguration + política needsPrepare ──
   const REF_SR=48000;                          // DOC-03: fs operacional fixo
@@ -2832,6 +2832,15 @@ const AAMP=(function(){
     toPersist(){return {id:this.deviceId,mode:this.mode,outBase:this.desiredOutBase,inBase:this.desiredInBase};},                                    // grava só as 4 preferências (formato novo)
     snapshot(){return Object.freeze(this.toPersist());}                                                                                             // undo do diálogo (View); não é 2ª representação editável
   };
+  // ── Sprint 4: DeviceCapabilities — snapshot COERENTE das capacidades conhecidas do hardware neste instante.
+  // Categoria: Capabilities. Ciclo de vida: VOLÁTIL/descartável (device muda/fecha, enumerate falha) — NUNCA
+  // persistido. set() é a ÚNICA API autorizada a alterar devices/nIn/nOut; nIn/nOut entram SEMPRE em par.
+  const DeviceCapabilities={
+    devices:[], nIn:0, nOut:0,
+    set(f){ if('devices' in f)this.devices=f.devices||[]; if('nIn' in f)this.nIn=f.nIn|0; if('nOut' in f)this.nOut=f.nOut|0; },
+    find(id){return this.devices.find(d=>d.id===id)||null;},
+    has(){return this.devices.length>0;}
+  };
   // needsPrepare(): ÚNICA autoridade para decidir se um novo prepare() é obrigatório (função pura).
   function needsPrepare(desired,applied){
     if(!applied)return true;
@@ -2845,8 +2854,8 @@ const AAMP=(function(){
   let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
   let acqT0=0,acqTimer=0,acqPct=0,acqStep=0;   // relógio do console: etapa · decorrido · ETA
   function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();prepared=false;preparedId=null;}
-  // Nome do device p/ exibição: resolvido das Capabilities (lastDevices) pelo deviceId — NÃO persiste no Profile.
-  function profileDeviceName(){const d=lastDevices.find(x=>x.id===HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
+  // Nome do device p/ exibição: resolvido das Capabilities (DeviceCapabilities) pelo deviceId — NÃO persiste no Profile.
+  function profileDeviceName(){const d=DeviceCapabilities.find(HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
   function hwInfoHTML(){return HardwareProfile.has()
     ?'<div class="lab-hw"><span>'+t('hw.label')+': <b style="color:var(--txt2)">'+profileDeviceName()+'</b></span><button class="lab-hw-gear" title="'+t('hw.gear')+'">⚙</button></div>'
     :'<div class="lab-hw warn"><span>'+t('hw.none')+'</span></div>';}
@@ -2857,7 +2866,7 @@ const AAMP=(function(){
   /* Configuração de hardware — MIGRAÇÃO da lógica JUCE (Main.cpp: AudioConfig). Origem dos dados:
      DeviceInfo/DeviceCapabilities. Entrada<-nOut, Saída<-nIn (convenção do AAMP); pares estéreo i+=2.
      Sprint 3: o estado Desired (mode/outBase/inBase) pertence a HardwareProfile — NÃO existe working copy. */
-  let hwNIn=0,hwNOut=0;                       // canais REAIS do device aberto (Capabilities; via evento 'prepared')
+  // canais REAIS do device aberto vivem em DeviceCapabilities.nIn/nOut (Capabilities; via evento 'prepared')
   function openHardwareConfig(then){configuring=true;hwPendingThen=then||null;hwSel=null;prepared=false;preparedId=null;
     // Sprint 3: o Desired vive em HardwareProfile (sem working copy). Snapshot imutável para undo no Cancelar.
     const hwUndo=HardwareProfile.snapshot();
@@ -2884,29 +2893,29 @@ const AAMP=(function(){
     el('hwDevice').onchange=()=>applySelectedDevice();
     el('hwEntrada').onchange=()=>onChannelChange();
     el('hwSaida').onchange=()=>onChannelChange();
-    if(lastDevices.length)renderHwDevices();   // lista aquecida no boot: combobox pronta sem espera
+    if(DeviceCapabilities.has())renderHwDevices();   // lista aquecida no boot: combobox pronta sem espera
     send('enumerate');}                        // e revalida contra o estado atual do OS
   /* Preenche o dropdown "Dispositivo" (somente conectados, já filtrados na fonte DeviceInfo). */
   function renderHwDevices(){const sel=el('hwDevice');if(!sel)return;
-    if(!lastDevices.length){sel.innerHTML='<option>'+t('hwc.nodev')+'</option>';sel.disabled=true;hwSel=null;
+    if(!DeviceCapabilities.has()){sel.innerHTML='<option>'+t('hwc.nodev')+'</option>';sel.disabled=true;hwSel=null;
       const stt=el('hwStatus');if(stt)stt.textContent=t('hwc.nodev.status');
       const ent=el('hwEntrada'),sai=el('hwSaida');if(ent)ent.innerHTML='';if(sai)sai.innerHTML='';return;}
     sel.disabled=false;
-    sel.innerHTML=lastDevices.map((d,i)=>'<option value="'+i+'">'+d.name+(d.backend?' · '+d.backend:'')+'</option>').join('');
+    sel.innerHTML=DeviceCapabilities.devices.map((d,i)=>'<option value="'+i+'">'+d.name+(d.backend?' · '+d.backend:'')+'</option>').join('');
     // indexForDevice: restaura o dispositivo do config ATIVO; senão, primeiro da lista.
     let idx=0;
-    if(HardwareProfile.has()){const k=lastDevices.findIndex(d=>d.id===HardwareProfile.deviceId);if(k>=0)idx=k;}
+    if(HardwareProfile.has()){const k=DeviceCapabilities.devices.findIndex(d=>d.id===HardwareProfile.deviceId);if(k>=0)idx=k;}
     sel.selectedIndex=idx;
     applySelectedDevice();}
-  function applySelectedDevice(){const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=lastDevices[i]||null;
+  function applySelectedDevice(){const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=DeviceCapabilities.devices[i]||null;
     if(hwSel)HardwareProfile.set({deviceId:hwSel.id});                  // device desejado (dono único)
     prepared=false;preparedId=null;const ok=el('hwcOk');if(ok)ok.disabled=true;
-    hwNIn=0;hwNOut=0;repopulateChannels();                              // limpa até o device abrir (render puro)
+    DeviceCapabilities.set({nIn:0,nOut:0});repopulateChannels();        // canais desconhecidos até abrir (snapshot coerente); render puro
     const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
     if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
   function setMode(stereo){HardwareProfile.set({mode:stereo?'Stereo':'Mono'});    // intenção do usuário (evento)
     // Sprint 2/3: ajuste EXPLÍCITO do modelo (HardwareProfile) às capacidades conhecidas (nunca via render).
-    const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:hwNIn,nOut:hwNOut});
+    const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
     HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});
     syncModeButtons();repopulateChannels();updateStatus();
     if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
@@ -2958,11 +2967,11 @@ const AAMP=(function(){
      Pós (contrato): nIn>0 && nOut>0 ⇒ validateAgainstCaps(resultado,caps)===true. */
   function clampDesiredToCaps(desired,caps){return adjustToCaps(desired,caps);}
   /* repopulateChannels — RENDER PURO (Sprint 2): reflete o modelo nas ComboBoxes.
-     NUNCA muta o modelo (HardwareProfile) nem hwNIn/hwNOut. O ajuste do modelo é feito ANTES,
+     NUNCA muta o modelo (HardwareProfile) nem as Capabilities. O ajuste do modelo é feito ANTES,
      explicitamente, por clampDesiredToCaps no fluxo (Controller-flow). Entrada a partir de nOut;
      Saída a partir de nIn; pares i+=2. */
   function repopulateChannels(){const ent=el('hwEntrada'),sai=el('hwSaida');if(!ent||!sai)return;
-    const nIn=hwNIn||0,nOut=hwNOut||0;
+    const nIn=DeviceCapabilities.nIn,nOut=DeviceCapabilities.nOut;
     const se=el('hwStereo');if(se)se.disabled=!(nIn>=2&&nOut>=2);   // habilitação do botão (render)
     const stereo=HardwareProfile.mode==='Stereo';                   // LÊ o modelo (HardwareProfile); não muta
     let e='',s='';
@@ -3043,16 +3052,16 @@ const AAMP=(function(){
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
-  on('devices',d=>{lastDevices=d.devices||[];if(configuring)renderHwDevices();});
+  on('devices',d=>{DeviceCapabilities.set({devices:d.devices||[]});if(configuring)renderHwDevices();});   // enumerate → set(devices)
   // prepare() concluído: UM evento com capacidades + estado + validação + modo operacional.
   on('prepared',d=>{
     // Sprint 1: registra a PreparedConfiguration aplicada (correlação por requestId; gating pleno na Sprint 5).
     if(d.applied&&(d.requestId==null||d.requestId===curRequestId))preparedConfig=makePreparedConfig(d.applied);
     const ready=d.state==='Ready';
     if(configuring){prepared=ready;preparedId=ready&&hwSel?hwSel.id:null;
-      const caps=d.caps||{};hwNIn=caps.inputChannels||0;hwNOut=caps.outputChannels||0;  // canais do device ABERTO
+      const caps=d.caps||{};DeviceCapabilities.set({nIn:caps.inputChannels||0,nOut:caps.outputChannels||0});  // prepare → set(nIn,nOut) em par
       // Sprint 2: capacidades chegaram → clamp EXPLÍCITO do modelo (Controller-flow), ANTES do render.
-      const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:hwNIn,nOut:hwNOut});
+      const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
       HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});syncModeButtons();
       repopulateChannels();                                                              // render puro (reflete o modelo)
       renderHwCaps(d);
@@ -3114,10 +3123,10 @@ const AAMP=(function(){
     if(d.language&&I18N[d.language]&&d.language!==LANG){LANG=d.language;try{localStorage.setItem('aamp.lang',LANG);}catch(e){}applyLanguage();}
     HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
     if(HardwareProfile.has()){
-      if(lastDevices.length&&!lastDevices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
+      if(DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
       if(!M&&!configuring&&!acquiring)renderEmpty();}});
   on('devices',d0=>{/* validação do Desired persistido contra a lista REAL de conectados */
-    if(HardwareProfile.has()&&lastDevices.length&&!lastDevices.some(x=>x.id===HardwareProfile.deviceId)){
+    if(HardwareProfile.has()&&DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId)){
       HardwareProfile.clear();if(!M&&!configuring&&!acquiring)renderEmpty();}});
   function persistHardware(){if(HardwareProfile.has())send('saveSettings',{hardware:HardwareProfile.toPersist()});}
   function setLanguage(l){if(!I18N[l]||l===LANG)return;LANG=l;
