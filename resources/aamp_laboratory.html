@@ -2808,13 +2808,22 @@ const AAMP=(function(){
   transport=nativeTransport()||MockEngine;
 
   /* ---- Estado do produto: um ambiente, dois estados (sem/com Session) ---- */
-  let exported=false,acquiring=false,configuring=false,hwPendingThen=null,hwSel=null;
+  let exported=false,configuring=false,hwSel=null;
   let prepared=false,preparedId=null;   // device aberto/validado (READY) — evita abrir duas vezes
   // ── Sprint 1 (arquitetura de hardware): PreparedConfiguration + política needsPrepare ──
   const REF_SR=48000;                          // DOC-03: fs operacional fixo
   let preparedConfig=null;                     // PreparedConfiguration (Value Object imutável): o "aplicado"
-  let curRequestId=0;                          // requestId corrente (migra p/ HardwareSession na Sprint 5)
-  const nextRequestId=()=>++curRequestId;
+  // ── Sprint 5: HardwareSession — CONTEXTO OPERACIONAL da sessão corrente (NÃO representa o hardware).
+  // Categoria: Session. Ciclo de vida: SESSÃO — nada aqui sobrevive ao encerramento; nada é configuração
+  // do usuário nem capacidade de hardware. set() é o ÚNICO escritor.
+  //   requestId       = identificador de CORRELAÇÃO pedido↔resposta (não depender de ser incremental).
+  //   pendingCallback = mecanismo de coordenação assíncrona (NÃO é estado de domínio).
+  //   acquiring       = aquisição em curso.
+  const HardwareSession={
+    requestId:0, pendingCallback:null, acquiring:false,
+    set(f){ if('requestId' in f)this.requestId=f.requestId|0; if('pendingCallback' in f)this.pendingCallback=f.pendingCallback||null; if('acquiring' in f)this.acquiring=!!f.acquiring; },
+    nextRequest(){ this.set({requestId:this.requestId+1}); return this.requestId; }   // nova correlação (incremental é só o detalhe atual)
+  };
   // PreparedConfiguration: descreve SÓ a config aplicada ao backend; sem requestId/callbacks/flags.
   const makePreparedConfig=a=>Object.freeze({deviceId:a.deviceId,mode:a.mode,outBase:a.outBase|0,inBase:a.inBase|0,
     sampleRate:a.sampleRate,outMask:a.outMask|0,inMask:a.inMask|0,bufferSize:a.bufferSize|0});
@@ -2867,7 +2876,7 @@ const AAMP=(function(){
      DeviceInfo/DeviceCapabilities. Entrada<-nOut, Saída<-nIn (convenção do AAMP); pares estéreo i+=2.
      Sprint 3: o estado Desired (mode/outBase/inBase) pertence a HardwareProfile — NÃO existe working copy. */
   // canais REAIS do device aberto vivem em DeviceCapabilities.nIn/nOut (Capabilities; via evento 'prepared')
-  function openHardwareConfig(then){configuring=true;hwPendingThen=then||null;hwSel=null;prepared=false;preparedId=null;
+  function openHardwareConfig(then){configuring=true;HardwareSession.set({pendingCallback:then||null});hwSel=null;prepared=false;preparedId=null;
     // Sprint 3: o Desired vive em HardwareProfile (sem working copy). Snapshot imutável para undo no Cancelar.
     const hwUndo=HardwareProfile.snapshot();
     const st=el('stage');st.className='';
@@ -2886,8 +2895,8 @@ const AAMP=(function(){
       +'</div>'
       +'<div class="hwc-actions"><button class="btn" id="hwcCancel">'+t('hwc.cancel')+'</button><button class="btn btn-primary" id="hwcOk" disabled>'+t('hwc.ok')+'</button></div></div>';
     syncModeButtons();
-    el('hwcCancel').onclick=()=>{HardwareProfile.loadFromVar(hwUndo);configuring=false;hwPendingThen=null;prepared=false;preparedId=null;renderEmpty();};
-    el('hwcOk').onclick=()=>{if(!hwSel||!prepared)return;HardwareProfile.set({deviceId:hwSel.id});persistHardware();configuring=false;const th=hwPendingThen;hwPendingThen=null;if(th)th();else renderEmpty();};
+    el('hwcCancel').onclick=()=>{HardwareProfile.loadFromVar(hwUndo);configuring=false;HardwareSession.set({pendingCallback:null});prepared=false;preparedId=null;renderEmpty();};
+    el('hwcOk').onclick=()=>{if(!hwSel||!prepared)return;HardwareProfile.set({deviceId:hwSel.id});persistHardware();configuring=false;const th=HardwareSession.pendingCallback;HardwareSession.set({pendingCallback:null});if(th)th();else renderEmpty();};
     el('hwMono').onclick=()=>setMode(false);
     el('hwStereo').onclick=()=>setMode(true);
     el('hwDevice').onchange=()=>applySelectedDevice();
@@ -2912,13 +2921,13 @@ const AAMP=(function(){
     prepared=false;preparedId=null;const ok=el('hwcOk');if(ok)ok.disabled=true;
     DeviceCapabilities.set({nIn:0,nOut:0});repopulateChannels();        // canais desconhecidos até abrir (snapshot coerente); render puro
     const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}
   function setMode(stereo){HardwareProfile.set({mode:stereo?'Stereo':'Mono'});    // intenção do usuário (evento)
     // Sprint 2/3: ajuste EXPLÍCITO do modelo (HardwareProfile) às capacidades conhecidas (nunca via render).
     const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
     HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});
     syncModeButtons();repopulateChannels();updateStatus();
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}
+    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}
   function syncModeButtons(){const stereo=HardwareProfile.mode==='Stereo';const mo=el('hwMono'),se=el('hwStereo');if(mo)mo.classList.toggle('on',!stereo);if(se)se.classList.toggle('on',stereo);}
   // ── Sprint 2: ajuste desejado→capacidades como funções PURAS (Design by Contract) ──
   // Nenhuma lê/escreve estado global, DOM, rede ou tempo; nenhuma muta os argumentos recebidos.
@@ -3037,7 +3046,7 @@ const AAMP=(function(){
     if(acqPct>3&&acqPct<100)s+=' · '+t('acq.eta',{t:fmtClock(ms*(100-acqPct)/acqPct)});
     c.textContent=s;}
   function acqAdvance(text,run){acqStep++;acqLog(text,run);acqClock();}
-  function startAcquisition(){acquiring=true;exported=false;acqRunLine=null;acqBuildLogged=false;acqState='';acqBarPending=null;if(acqBarRAF){cancelAnimationFrame(acqBarRAF);acqBarRAF=0;}
+  function startAcquisition(){HardwareSession.set({acquiring:true});exported=false;acqRunLine=null;acqBuildLogged=false;acqState='';acqBarPending=null;if(acqBarRAF){cancelAnimationFrame(acqBarRAF);acqBarRAF=0;}
     acqT0=Date.now();acqPct=0;acqStep=0;clearInterval(acqTimer);acqTimer=setInterval(acqClock,1000);
     const st=el('stage');st.className='';
     st.innerHTML='<div class="acq"><div class="acq-eyebrow">'+t('acq.eyebrow')+'</div><div class="acq-title">'+t('acq.title')+'</div>'
@@ -3048,7 +3057,7 @@ const AAMP=(function(){
     // Se o device já foi aberto/validado (READY) na configuração, inicia direto — evita abrir 2x.
     // Sprint 1/3: needsPrepare() é a ÚNICA autoridade; desejado lido direto do HardwareProfile (sem adaptador).
     if(!needsPrepare({deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,sampleRate:REF_SR},preparedConfig)){acqAdvance(t('acq.devready'),false);send('start');}
-    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:nextRequestId()});}}
+    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}}
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
@@ -3056,7 +3065,7 @@ const AAMP=(function(){
   // prepare() concluído: UM evento com capacidades + estado + validação + modo operacional.
   on('prepared',d=>{
     // Sprint 1: registra a PreparedConfiguration aplicada (correlação por requestId; gating pleno na Sprint 5).
-    if(d.applied&&(d.requestId==null||d.requestId===curRequestId))preparedConfig=makePreparedConfig(d.applied);
+    if(d.applied&&(d.requestId==null||d.requestId===HardwareSession.requestId))preparedConfig=makePreparedConfig(d.applied);
     const ready=d.state==='Ready';
     if(configuring){prepared=ready;preparedId=ready&&hwSel?hwSel.id:null;
       const caps=d.caps||{};DeviceCapabilities.set({nIn:caps.inputChannels||0,nOut:caps.outputChannels||0});  // prepare → set(nIn,nOut) em par
@@ -3066,25 +3075,25 @@ const AAMP=(function(){
       repopulateChannels();                                                              // render puro (reflete o modelo)
       renderHwCaps(d);
       const ok=el('hwcOk');if(ok)ok.disabled=!ready;return;}
-    if(acquiring){if(ready){prepared=true;preparedId=HardwareProfile.deviceId;acqAdvance(t('acq.devready'),false);send('start');}
-      else{acquiring=false;prepared=false;preparedId=null;stopAcqClock();acqLog(t('acq.prepfail'),false);
+    if(HardwareSession.acquiring){if(ready){prepared=true;preparedId=HardwareProfile.deviceId;acqAdvance(t('acq.devready'),false);send('start');}
+      else{HardwareSession.set({acquiring:false});prepared=false;preparedId=null;stopAcqClock();acqLog(t('acq.prepfail'),false);
         const vmsg=d.validation&&d.validation.message;if(vmsg)acqLog(vmsg,false);setTimeout(()=>renderEmpty(),1200);}}});
   on('state',d=>{
     if(d.state&&d.state===acqState)return;
     acqState=d.state||acqState;
-    if(d.state==='Measuring'){if(acquiring)acqAdvance(t('acq.capturing0'),true);}
-    else if(d.state==='Processing'){if(acquiring)acqAdvance(t('acq.processing'),true);}
-    else if(d.state==='Error'){if(acquiring){acquiring=false;prepared=false;preparedId=null;stopAcqClock();acqLog(t('acq.prepfail'),false);setTimeout(()=>renderEmpty(),1200);}}});
-  on('progress',d=>{if(!acquiring)return;if(d.percent!=null)acqBar(d.percent);
+    if(d.state==='Measuring'){if(HardwareSession.acquiring)acqAdvance(t('acq.capturing0'),true);}
+    else if(d.state==='Processing'){if(HardwareSession.acquiring)acqAdvance(t('acq.processing'),true);}
+    else if(d.state==='Error'){if(HardwareSession.acquiring){HardwareSession.set({acquiring:false});prepared=false;preparedId=null;stopAcqClock();acqLog(t('acq.prepfail'),false);setTimeout(()=>renderEmpty(),1200);}}});
+  on('progress',d=>{if(!HardwareSession.acquiring)return;if(d.percent!=null)acqBar(d.percent);
     // Etapa legível durante a captura: "Capturando estímulos (c/t)…" atualizada in-loco na linha ativa.
     if(d.completed!=null&&d.total>0&&acqRunLine){const s=acqRunLine.querySelector('span:last-child');
       if(s)s.textContent=t('acq.capturing',{c:Math.min(d.completed+1,d.total),t:d.total});}
     acqClock();
     if(d.percent!=null&&d.percent>=100&&!acqBuildLogged){acqBuildLogged=true;acqAdvance(t('acq.session'),true);}});
   // Cada métrica oficial concluída entra no console com nome compreensível + identificador técnico.
-  on('metricReady',d=>{if(!acquiring||!d||!d.id)return;acqLog(t('acq.metric',{name:msName(d.id,d.name),id:d.id}),false);});
+  on('metricReady',d=>{if(!HardwareSession.acquiring||!d||!d.id)return;acqLog(t('acq.metric',{name:msName(d.id,d.name),id:d.id}),false);});
   on('exported',()=>{exported=true;});
-  on('runFinished',async d=>{if(!acquiring)return;acquiring=false;prepared=false;preparedId=null;preparedConfig=null;stopAcqClock();
+  on('runFinished',async d=>{if(!HardwareSession.acquiring)return;HardwareSession.set({acquiring:false});prepared=false;preparedId=null;preparedConfig=null;stopAcqClock();
     if(d.outcome==='Completed'){acqBar(100);acqLog(t('acq.done'),false);
       try{
         // ARCH-01: a caracterização entrega um .aamp; reabrimos pelo MESMO caminho do arquivo (ingest→fromAamp→bootSession).
@@ -3124,10 +3133,10 @@ const AAMP=(function(){
     HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
     if(HardwareProfile.has()){
       if(DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
-      if(!M&&!configuring&&!acquiring)renderEmpty();}});
+      if(!M&&!configuring&&!HardwareSession.acquiring)renderEmpty();}});
   on('devices',d0=>{/* validação do Desired persistido contra a lista REAL de conectados */
     if(HardwareProfile.has()&&DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId)){
-      HardwareProfile.clear();if(!M&&!configuring&&!acquiring)renderEmpty();}});
+      HardwareProfile.clear();if(!M&&!configuring&&!HardwareSession.acquiring)renderEmpty();}});
   function persistHardware(){if(HardwareProfile.has())send('saveSettings',{hardware:HardwareProfile.toPersist()});}
   function setLanguage(l){if(!I18N[l]||l===LANG)return;LANG=l;
     try{localStorage.setItem('aamp.lang',l);}catch(e){}
@@ -3136,7 +3145,7 @@ const AAMP=(function(){
   function applyLanguage(){syncLangKeys();
     try{SESSION._anomalies=null;}catch(e){}          // rótulos de anomalia são gerados no idioma ativo
     buildRail();
-    if(!configuring&&!acquiring){if(M&&CURRENT)showDomain(CURRENT);else if(!M)renderEmpty();}
+    if(!configuring&&!HardwareSession.acquiring){if(M&&CURRENT)showDomain(CURRENT);else if(!M)renderEmpty();}
     renderGuide&&renderGuide();}
   function syncLangKeys(){const p=el('lang-pt'),e=el('lang-en');
     if(p)p.classList.toggle('on',LANG==='pt-BR');if(e)e.classList.toggle('on',LANG==='en');
@@ -3152,7 +3161,7 @@ const AAMP=(function(){
 
   return {bridge:{on,emit,send,get mode(){return transport&&transport.name;}},mock:MockEngine,
     newCharacterization,importCharacterization,openHardwareConfig,requestClose,initShell,showModal,setLanguage,
-    isExported:()=>exported,hasSession:()=>!!M,isAcquiring:()=>acquiring,hardware:()=>HardwareProfile.has()?HardwareProfile.toPersist():null};
+    isExported:()=>exported,hasSession:()=>!!M,isAcquiring:()=>HardwareSession.acquiring,hardware:()=>HardwareProfile.has()?HardwareProfile.toPersist():null};
 })();
 
 window.addEventListener('beforeunload',e=>{if(AAMP.hasSession()&&!AAMP.isExported()){e.preventDefault();e.returnValue='';}});
