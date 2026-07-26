@@ -2829,18 +2829,94 @@ const AAMP=(function(){
     get dialogOpen(){ return this.state==='Configuring'||this.state==='CfgPreparing'||this.state==='CfgReady'; },
     get okReady(){ return this.state==='CfgReady'; }
   };
-  // ── Sprint 6: HardwareController — orquestrador STATELESS dirigido por INTENÇÕES. NÃO possui estado próprio
-  // (sem campos, sem cache, sem flags, sem memória entre chamadas). Interpreta a intenção → guardas puras →
-  // transição da FSM (HardwareSession.state) → efeitos via os set() dos 4 modelos → encerra. Todo estado
-  // pertence a HardwareProfile / DeviceCapabilities / PreparedConfiguration / HardwareSession. As intents de
-  // backend (prepared/state/runFinished/devices/settings) são interpretadas pelos on(...) — cada evento só
-  // atualiza o proprietário da sua categoria (Event Ownership).
+  // ── Sprint 6 + P2-01 (Behavior Consolidation): HardwareController — orquestrador STATELESS e ÚNICO
+  // INTÉRPRETE das intenções. NÃO possui estado próprio (sem campos, sem cache, sem flags, sem memória
+  // entre chamadas). P2-01: TODA transição da FSM (HardwareSession.state) é iniciada exclusivamente aqui —
+  // nenhum outro componente altera diretamente o estado (Behavior Ownership). Intenções de USUÁRIO
+  // (openConfig/selectDevice/setMode/setChannel/confirmConfig/cancelConfig/start), de BACKEND
+  // (onDevices/onPrepared/onDeviceState/onRunFinished/onSettings) e INTERNAS (reset) passam por aqui. Cada
+  // método: decide (guardas puras) → transiciona a FSM → aplica efeitos via os set() dos 4 modelos/backend →
+  // chama helpers de View (render*) → encerra. Os on(...) e handlers de DOM são adaptadores finos.
   const HardwareController={
-    openConfig:then=>openHardwareConfig(then),   // intent (usuário): abrir config
-    selectDevice:()=>applySelectedDevice(),      // intent (usuário): escolher device
-    setMode:stereo=>setMode(stereo),             // intent (usuário): Mono/Stereo
-    setChannel:()=>onChannelChange(),            // intent (usuário): canal
-    start:()=>newCharacterization()              // intent (usuário): iniciar caracterização
+    // ── Intenção interna ──
+    reset(){ HardwareSession.set({state:'Idle'}); },                       // teardown do documento: FSM → Idle
+    // ── Intenções de usuário ──
+    openConfig(then){ HardwareSession.set({state:'Configuring',pendingCallback:then||null}); hwSel=null;
+      const hwUndo=HardwareProfile.snapshot();                             // undo imutável do Cancelar (escopo do diálogo)
+      renderHwDialog(hwUndo);                                              // View: monta DOM + fia handlers
+      if(DeviceCapabilities.has())renderHwDevices();                       // lista aquecida: combobox pronta sem espera
+      send('enumerate'); },                                               // e revalida contra o estado atual do OS
+    cancelConfig(hwUndo){ HardwareProfile.loadFromVar(hwUndo);            // restaura Desired
+      HardwareSession.set({state:'Idle',pendingCallback:null}); renderEmpty(); },
+    confirmConfig(){ if(!hwSel||!HardwareSession.okReady)return;           // guarda pura: só confirma se pronto
+      HardwareProfile.set({deviceId:hwSel.id}); persistHardware();
+      const th=HardwareSession.pendingCallback; HardwareSession.set({state:'Idle',pendingCallback:null});
+      if(th)th();else renderEmpty(); },
+    selectDevice(){ const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=DeviceCapabilities.devices[i]||null;
+      if(hwSel)HardwareProfile.set({deviceId:hwSel.id});                   // device desejado (dono único)
+      HardwareSession.set({state:'CfgPreparing'});const ok=el('hwcOk');if(ok)ok.disabled=true;
+      DeviceCapabilities.set({nIn:0,nOut:0});repopulateChannels();        // canais desconhecidos até abrir (snapshot coerente); render puro
+      const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
+      if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()}); },
+    setMode(stereo){ HardwareProfile.set({mode:stereo?'Stereo':'Mono'});   // intenção do usuário (evento)
+      // Sprint 2/3: ajuste EXPLÍCITO do modelo (HardwareProfile) às capacidades conhecidas (nunca via render).
+      const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
+      HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});
+      syncModeButtons();repopulateChannels();updateStatus();
+      if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()}); },
+    setChannel(){ const ent=el('hwEntrada'),sai=el('hwSaida');
+      HardwareProfile.set({desiredOutBase:(ent&&+ent.value>0)?(+ent.value-1):0,desiredInBase:(sai&&+sai.value>0)?(+sai.value-1):0});
+      updateStatus(); },
+    start(){ const beginAcq=()=>this.beginAcquisition();                   // intenção: iniciar caracterização
+      const proceed=()=>{if(M)showModal({title:t('modal.new.title'),body:t('modal.new.body'),
+        actions:[{label:t('btn.cancel')},{label:t('btn.continue'),kind:'primary',onClick:()=>{teardown();beginAcq();}}]});else beginAcq();};
+      if(!HardwareProfile.has())this.openConfig(proceed);else proceed(); },
+    beginAcquisition(){ HardwareSession.set({state:'AcqPreparing'}); renderAcqConsole(); acqAdvance(t('acq.init'),true);
+      // Sprint 1/3: needsPrepare() é a ÚNICA autoridade; desejado lido direto do HardwareProfile (sem adaptador).
+      if(!needsPrepare({deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,sampleRate:REF_SR},preparedConfig)){acqAdvance(t('acq.devready'),false);HardwareSession.set({state:'Running'});send('start');}
+      else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});} },
+    // ── Intenções de backend (interpretadas a partir dos eventos da ponte) ──
+    onDevices(d){ DeviceCapabilities.set({devices:d.devices||[]});         // enumerate → set(devices)
+      if(HardwareSession.dialogOpen)renderHwDevices();
+      if(HardwareProfile.has()&&DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId)){  // Desired persistido sumiu da lista real
+        HardwareProfile.clear();if(!M&&!HardwareSession.dialogOpen&&!HardwareSession.acquiring)renderEmpty();} },
+    onPrepared(d){
+      // Sprint 1: registra a PreparedConfiguration aplicada (correlação por requestId; gating pleno na Sprint 5).
+      if(d.applied&&(d.requestId==null||d.requestId===HardwareSession.requestId))preparedConfig=makePreparedConfig(d.applied);
+      const ready=d.state==='Ready';
+      if(HardwareSession.dialogOpen){HardwareSession.set({state:ready?'CfgReady':'Configuring'});
+        const caps=d.caps||{};DeviceCapabilities.set({nIn:caps.inputChannels||0,nOut:caps.outputChannels||0});  // prepare → set(nIn,nOut) em par
+        // Sprint 2: capacidades chegaram → clamp EXPLÍCITO do modelo (Controller-flow), ANTES do render.
+        const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
+        HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});syncModeButtons();
+        repopulateChannels();                                                              // render puro (reflete o modelo)
+        renderHwCaps(d);
+        const ok=el('hwcOk');if(ok)ok.disabled=!HardwareSession.okReady;return;}
+      if(HardwareSession.acquiring){if(ready){HardwareSession.set({state:'Running'});acqAdvance(t('acq.devready'),false);send('start');}
+        else{HardwareSession.set({state:'Error'});stopAcqClock();acqLog(t('acq.prepfail'),false);
+          const vmsg=d.validation&&d.validation.message;if(vmsg)acqLog(vmsg,false);setTimeout(()=>renderEmpty(),1200);}} },
+    onDeviceState(d){
+      if(d.state&&d.state===acqState)return;
+      acqState=d.state||acqState;
+      if(d.state==='Measuring'){if(HardwareSession.acquiring)acqAdvance(t('acq.capturing0'),true);}
+      else if(d.state==='Processing'){if(HardwareSession.acquiring)acqAdvance(t('acq.processing'),true);}
+      else if(d.state==='Error'){if(HardwareSession.acquiring){HardwareSession.set({state:'Error'});stopAcqClock();acqLog(t('acq.prepfail'),false);setTimeout(()=>renderEmpty(),1200);}} },
+    async onRunFinished(d){ if(!HardwareSession.acquiring)return;HardwareSession.set({state:'Idle'});preparedConfig=null;stopAcqClock();
+      if(d.outcome==='Completed'){acqBar(100);acqLog(t('acq.done'),false);
+        try{
+          // ARCH-01: a caracterização entrega um .aamp; reabrimos pelo MESMO caminho do arquivo (ingest→fromAamp→bootSession).
+          const bin=atob(d.aamp||'');const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+          const nm=(d.aampPath&&String(d.aampPath).split(/[\\/]/).pop())||'characterization.aamp';
+          exported=false;
+          await ingest(new File([bytes],nm));
+        }catch(e){console.error('boot falhou',e);renderEmpty();}}
+      else{if(d.message)showModal({title:t('acq.eyebrow'),body:d.message,actions:[{label:t('btn.close'),kind:'primary'}]});renderEmpty();} },
+    onSettings(d){ if(!d)return;
+      if(d.language&&I18N[d.language]&&d.language!==LANG){LANG=d.language;try{localStorage.setItem('aamp.lang',LANG);}catch(e){}applyLanguage();}
+      HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
+      if(HardwareProfile.has()){
+        if(DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
+        if(!M&&!HardwareSession.dialogOpen&&!HardwareSession.acquiring)renderEmpty();} }
   };
   // PreparedConfiguration: descreve SÓ a config aplicada ao backend; sem requestId/callbacks/flags.
   const makePreparedConfig=a=>Object.freeze({deviceId:a.deviceId,mode:a.mode,outBase:a.outBase|0,inBase:a.inBase|0,
@@ -2880,7 +2956,7 @@ const AAMP=(function(){
   }
   let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
   let acqT0=0,acqTimer=0,acqPct=0,acqStep=0;   // relógio do console: etapa · decorrido · ETA
-  function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();HardwareSession.set({state:'Idle'});}
+  function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();HardwareController.reset();}
   // Nome do device p/ exibição: resolvido das Capabilities (DeviceCapabilities) pelo deviceId — NÃO persiste no Profile.
   function profileDeviceName(){const d=DeviceCapabilities.find(HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
   function hwInfoHTML(){return HardwareProfile.has()
@@ -2894,9 +2970,11 @@ const AAMP=(function(){
      DeviceInfo/DeviceCapabilities. Entrada<-nOut, Saída<-nIn (convenção do AAMP); pares estéreo i+=2.
      Sprint 3: o estado Desired (mode/outBase/inBase) pertence a HardwareProfile — NÃO existe working copy. */
   // canais REAIS do device aberto vivem em DeviceCapabilities.nIn/nOut (Capabilities; via evento 'prepared')
-  function openHardwareConfig(then){HardwareSession.set({state:'Configuring',pendingCallback:then||null});hwSel=null;
-    // Sprint 3: o Desired vive em HardwareProfile (sem working copy). Snapshot imutável para undo no Cancelar.
-    const hwUndo=HardwareProfile.snapshot();
+  // API pública / gatilho de UI: delega a intenção ao HardwareController (P2-01).
+  function openHardwareConfig(then){HardwareController.openConfig(then);}
+  // renderHwDialog — VIEW: monta o DOM do diálogo e fia os handlers (que só disparam intenções no Controller).
+  // NÃO transiciona a FSM (isso é do Controller). Recebe o snapshot imutável para o undo do Cancelar.
+  function renderHwDialog(hwUndo){
     const st=el('stage');st.className='';
     st.innerHTML='<div class="hwc">'
       +'<div class="hwc-head"><div class="hwc-eyebrow">'+t('hwc.eyebrow')+'</div><div class="hwc-title">'+t('hwc.title')+'</div>'
@@ -2913,15 +2991,13 @@ const AAMP=(function(){
       +'</div>'
       +'<div class="hwc-actions"><button class="btn" id="hwcCancel">'+t('hwc.cancel')+'</button><button class="btn btn-primary" id="hwcOk" disabled>'+t('hwc.ok')+'</button></div></div>';
     syncModeButtons();
-    el('hwcCancel').onclick=()=>{HardwareProfile.loadFromVar(hwUndo);HardwareSession.set({state:'Idle',pendingCallback:null});renderEmpty();};
-    el('hwcOk').onclick=()=>{if(!hwSel||!HardwareSession.okReady)return;HardwareProfile.set({deviceId:hwSel.id});persistHardware();const th=HardwareSession.pendingCallback;HardwareSession.set({state:'Idle',pendingCallback:null});if(th)th();else renderEmpty();};
+    el('hwcCancel').onclick=()=>HardwareController.cancelConfig(hwUndo);
+    el('hwcOk').onclick=()=>HardwareController.confirmConfig();
     el('hwMono').onclick=()=>HardwareController.setMode(false);
     el('hwStereo').onclick=()=>HardwareController.setMode(true);
     el('hwDevice').onchange=()=>HardwareController.selectDevice();
     el('hwEntrada').onchange=()=>HardwareController.setChannel();
-    el('hwSaida').onchange=()=>HardwareController.setChannel();
-    if(DeviceCapabilities.has())renderHwDevices();   // lista aquecida no boot: combobox pronta sem espera
-    send('enumerate');}                        // e revalida contra o estado atual do OS
+    el('hwSaida').onchange=()=>HardwareController.setChannel();}
   /* Preenche o dropdown "Dispositivo" (somente conectados, já filtrados na fonte DeviceInfo). */
   function renderHwDevices(){const sel=el('hwDevice');if(!sel)return;
     if(!DeviceCapabilities.has()){sel.innerHTML='<option>'+t('hwc.nodev')+'</option>';sel.disabled=true;hwSel=null;
@@ -2933,19 +3009,7 @@ const AAMP=(function(){
     let idx=0;
     if(HardwareProfile.has()){const k=DeviceCapabilities.devices.findIndex(d=>d.id===HardwareProfile.deviceId);if(k>=0)idx=k;}
     sel.selectedIndex=idx;
-    applySelectedDevice();}
-  function applySelectedDevice(){const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=DeviceCapabilities.devices[i]||null;
-    if(hwSel)HardwareProfile.set({deviceId:hwSel.id});                  // device desejado (dono único)
-    HardwareSession.set({state:'CfgPreparing'});const ok=el('hwcOk');if(ok)ok.disabled=true;
-    DeviceCapabilities.set({nIn:0,nOut:0});repopulateChannels();        // canais desconhecidos até abrir (snapshot coerente); render puro
-    const cap=el('hwcCaps');if(cap)cap.innerHTML='<div class="hwc-caps"><div class="hc-analyzing">'+t('hwc.analyzing')+'</div></div>';
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}
-  function setMode(stereo){HardwareProfile.set({mode:stereo?'Stereo':'Mono'});    // intenção do usuário (evento)
-    // Sprint 2/3: ajuste EXPLÍCITO do modelo (HardwareProfile) às capacidades conhecidas (nunca via render).
-    const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
-    HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});
-    syncModeButtons();repopulateChannels();updateStatus();
-    if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}
+    HardwareController.selectDevice();}   // auto-seleção = intenção selectDevice (P2-01)
   function syncModeButtons(){const stereo=HardwareProfile.mode==='Stereo';const mo=el('hwMono'),se=el('hwStereo');if(mo)mo.classList.toggle('on',!stereo);if(se)se.classList.toggle('on',stereo);}
   // ── Sprint 2: ajuste desejado→capacidades como funções PURAS (Design by Contract) ──
   // Nenhuma lê/escreve estado global, DOM, rede ou tempo; nenhuma muta os argumentos recebidos.
@@ -3017,10 +3081,6 @@ const AAMP=(function(){
      NÃO altera o modelo (não retorna base, não escreve HardwareProfile). */
   function selectOption(selEl,base){for(let i=0;i<selEl.options.length;i++){if(+selEl.options[i].value===base+1){selEl.selectedIndex=i;return;}}
     if(selEl.options.length>0)selEl.selectedIndex=0;}
-  function onChannelChange(){const ent=el('hwEntrada'),sai=el('hwSaida');
-    HardwareProfile.set({desiredOutBase:(ent&&+ent.value>0)?(+ent.value-1):0,
-                         desiredInBase :(sai&&+sai.value>0)?(+sai.value-1):0});
-    updateStatus();}
   function updateStatus(){const stt=el('hwStatus');if(!stt||!hwSel)return;
     const stereo=HardwareProfile.mode==='Stereo',ob=HardwareProfile.desiredOutBase,ib=HardwareProfile.desiredInBase;
     const ch=stereo
@@ -3064,44 +3124,22 @@ const AAMP=(function(){
     if(acqPct>3&&acqPct<100)s+=' · '+t('acq.eta',{t:fmtClock(ms*(100-acqPct)/acqPct)});
     c.textContent=s;}
   function acqAdvance(text,run){acqStep++;acqLog(text,run);acqClock();}
-  function startAcquisition(){HardwareSession.set({state:'AcqPreparing'});exported=false;acqRunLine=null;acqBuildLogged=false;acqState='';acqBarPending=null;if(acqBarRAF){cancelAnimationFrame(acqBarRAF);acqBarRAF=0;}
+  // renderAcqConsole — VIEW: monta o console de aquisição no palco e zera o relógio. NÃO transiciona a FSM
+  // nem decide prepare (isso é do HardwareController.beginAcquisition). O botão Cancelar apenas pede ao backend.
+  function renderAcqConsole(){exported=false;acqRunLine=null;acqBuildLogged=false;acqState='';acqBarPending=null;if(acqBarRAF){cancelAnimationFrame(acqBarRAF);acqBarRAF=0;}
     acqT0=Date.now();acqPct=0;acqStep=0;clearInterval(acqTimer);acqTimer=setInterval(acqClock,1000);
     const st=el('stage');st.className='';
     st.innerHTML='<div class="acq"><div class="acq-eyebrow">'+t('acq.eyebrow')+'</div><div class="acq-title">'+t('acq.title')+'</div>'
       +'<div class="acq-console" id="acqLog"></div><div class="acq-track"><div class="acq-fill" id="acqFill"></div></div>'
       +'<div class="acq-foot"><button class="btn" id="acqCancel">'+t('acq.cancel')+'</button><span class="acq-pct" id="acqClock"></span><span class="acq-pct" id="acqPct">0%</span></div></div>';
-    el('acqCancel').onclick=()=>send('cancel');
-    acqAdvance(t('acq.init'),true);
-    // Se o device já foi aberto/validado (READY) na configuração, inicia direto — evita abrir 2x.
-    // Sprint 1/3: needsPrepare() é a ÚNICA autoridade; desejado lido direto do HardwareProfile (sem adaptador).
-    if(!needsPrepare({deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,sampleRate:REF_SR},preparedConfig)){acqAdvance(t('acq.devready'),false);HardwareSession.set({state:'Running'});send('start');}
-    else{acqAdvance(t('acq.preparing'),true);send('prepare',{deviceId:HardwareProfile.deviceId,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()});}}
+    el('acqCancel').onclick=()=>send('cancel');}
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
-  on('devices',d=>{DeviceCapabilities.set({devices:d.devices||[]});if(HardwareSession.dialogOpen)renderHwDevices();});   // enumerate → set(devices)
-  // prepare() concluído: UM evento com capacidades + estado + validação + modo operacional.
-  on('prepared',d=>{
-    // Sprint 1: registra a PreparedConfiguration aplicada (correlação por requestId; gating pleno na Sprint 5).
-    if(d.applied&&(d.requestId==null||d.requestId===HardwareSession.requestId))preparedConfig=makePreparedConfig(d.applied);
-    const ready=d.state==='Ready';
-    if(HardwareSession.dialogOpen){HardwareSession.set({state:ready?'CfgReady':'Configuring'});
-      const caps=d.caps||{};DeviceCapabilities.set({nIn:caps.inputChannels||0,nOut:caps.outputChannels||0});  // prepare → set(nIn,nOut) em par
-      // Sprint 2: capacidades chegaram → clamp EXPLÍCITO do modelo (Controller-flow), ANTES do render.
-      const c=clampDesiredToCaps({outBase:HardwareProfile.desiredOutBase,inBase:HardwareProfile.desiredInBase,mode:HardwareProfile.mode},{nIn:DeviceCapabilities.nIn,nOut:DeviceCapabilities.nOut});
-      HardwareProfile.set({desiredOutBase:c.outBase,desiredInBase:c.inBase,mode:c.mode});syncModeButtons();
-      repopulateChannels();                                                              // render puro (reflete o modelo)
-      renderHwCaps(d);
-      const ok=el('hwcOk');if(ok)ok.disabled=!HardwareSession.okReady;return;}
-    if(HardwareSession.acquiring){if(ready){HardwareSession.set({state:'Running'});acqAdvance(t('acq.devready'),false);send('start');}
-      else{HardwareSession.set({state:'Error'});stopAcqClock();acqLog(t('acq.prepfail'),false);
-        const vmsg=d.validation&&d.validation.message;if(vmsg)acqLog(vmsg,false);setTimeout(()=>renderEmpty(),1200);}}});
-  on('state',d=>{
-    if(d.state&&d.state===acqState)return;
-    acqState=d.state||acqState;
-    if(d.state==='Measuring'){if(HardwareSession.acquiring)acqAdvance(t('acq.capturing0'),true);}
-    else if(d.state==='Processing'){if(HardwareSession.acquiring)acqAdvance(t('acq.processing'),true);}
-    else if(d.state==='Error'){if(HardwareSession.acquiring){HardwareSession.set({state:'Error'});stopAcqClock();acqLog(t('acq.prepfail'),false);setTimeout(()=>renderEmpty(),1200);}}});
+  // P2-01: adaptadores finos — cada evento de backend é uma intenção interpretada pelo HardwareController.
+  on('devices',d=>HardwareController.onDevices(d));       // enumerate/validação do Desired persistido
+  on('prepared',d=>HardwareController.onPrepared(d));     // prepare() concluído: caps + estado + validação
+  on('state',d=>HardwareController.onDeviceState(d));     // estado do backend durante a aquisição
   on('progress',d=>{if(!HardwareSession.acquiring)return;if(d.percent!=null)acqBar(d.percent);
     // Etapa legível durante a captura: "Capturando estímulos (c/t)…" atualizada in-loco na linha ativa.
     if(d.completed!=null&&d.total>0&&acqRunLine){const s=acqRunLine.querySelector('span:last-child');
@@ -3111,23 +3149,11 @@ const AAMP=(function(){
   // Cada métrica oficial concluída entra no console com nome compreensível + identificador técnico.
   on('metricReady',d=>{if(!HardwareSession.acquiring||!d||!d.id)return;acqLog(t('acq.metric',{name:msName(d.id,d.name),id:d.id}),false);});
   on('exported',()=>{exported=true;});
-  on('runFinished',async d=>{if(!HardwareSession.acquiring)return;HardwareSession.set({state:'Idle'});preparedConfig=null;stopAcqClock();
-    if(d.outcome==='Completed'){acqBar(100);acqLog(t('acq.done'),false);
-      try{
-        // ARCH-01: a caracterização entrega um .aamp; reabrimos pelo MESMO caminho do arquivo (ingest→fromAamp→bootSession).
-        const bin=atob(d.aamp||'');const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-        const nm=(d.aampPath&&String(d.aampPath).split(/[\\/]/).pop())||'characterization.aamp';
-        exported=false;
-        await ingest(new File([bytes],nm));
-      }catch(e){console.error('boot falhou',e);renderEmpty();}}
-    else{if(d.message)showModal({title:t('acq.eyebrow'),body:d.message,actions:[{label:t('btn.close'),kind:'primary'}]});renderEmpty();}});
+  on('runFinished',d=>HardwareController.onRunFinished(d));   // fim da aquisição: FSM → Idle + ingest do .aamp
 
   /* ---- Ações de produto (grupo Caracterização) ---- */
-  function newCharacterization(){
-    const proceed=()=>{if(M)showModal({title:t('modal.new.title'),body:t('modal.new.body'),
-      actions:[{label:t('btn.cancel')},{label:t('btn.continue'),kind:'primary',onClick:()=>{teardown();startAcquisition();}}]});else startAcquisition();};
-    if(!HardwareProfile.has())openHardwareConfig(proceed);else proceed();
-  }
+  // API pública / gatilho de UI: delega a intenção "iniciar caracterização" ao HardwareController (P2-01).
+  function newCharacterization(){HardwareController.start();}
   function importCharacterization(){const fi=document.getElementById('fi');
     if(M)showModal({title:t('modal.import.title'),body:t('modal.import.body'),
       actions:[{label:t('btn.cancel')},{label:t('btn.continue'),kind:'primary',onClick:()=>{teardown();renderEmpty();fi.value='';fi.click();}}]});
@@ -3146,15 +3172,9 @@ const AAMP=(function(){
   /* ---- Persistência (ponte): idioma + última configuração de hardware ----
      Boot: getSettings + enumerate ANTES de qualquer painel — quando o usuário abrir a
      configuração, listas e seleção já estão prontas (zero espera, mínimo de cliques). */
-  on('settings',d=>{if(!d)return;
-    if(d.language&&I18N[d.language]&&d.language!==LANG){LANG=d.language;try{localStorage.setItem('aamp.lang',LANG);}catch(e){}applyLanguage();}
-    HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
-    if(HardwareProfile.has()){
-      if(DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId))HardwareProfile.clear();  // device sumiu -> padrão
-      if(!M&&!HardwareSession.dialogOpen&&!HardwareSession.acquiring)renderEmpty();}});
-  on('devices',d0=>{/* validação do Desired persistido contra a lista REAL de conectados */
-    if(HardwareProfile.has()&&DeviceCapabilities.has()&&!DeviceCapabilities.devices.some(x=>x.id===HardwareProfile.deviceId)){
-      HardwareProfile.clear();if(!M&&!HardwareSession.dialogOpen&&!HardwareSession.acquiring)renderEmpty();}});
+  // P2-01: settings (idioma + Desired persistido) → intenção interpretada pelo HardwareController.
+  // A validação do Desired contra a lista REAL de devices foi consolidada em HardwareController.onDevices.
+  on('settings',d=>HardwareController.onSettings(d));
   function persistHardware(){if(HardwareProfile.has())send('saveSettings',{hardware:HardwareProfile.toPersist()});}
   function setLanguage(l){if(!I18N[l]||l===LANG)return;LANG=l;
     try{localStorage.setItem('aamp.lang',l);}catch(e){}
