@@ -2866,7 +2866,11 @@ const AAMP=(function(){
       if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()}); },
     setChannel(){ const ent=el('hwEntrada'),sai=el('hwSaida');
       HardwareProfile.set({desiredOutBase:(ent&&+ent.value>0)?(+ent.value-1):0,desiredInBase:(sai&&+sai.value>0)?(+sai.value-1):0});
-      updateStatus(); },
+      updateStatus();
+      // B1: canal alterado deve reprovisionar imediatamente — igual a setMode. Assim o diálogo revalida contra
+      // o hardware e o card de capacidades / o estado do OK refletem o canal CORRENTE (não o anterior). A
+      // transição da FSM permanece em onPrepared (CfgPreparing→CfgReady/Configuring); nenhum estado novo aqui.
+      if(hwSel)send('prepare',{deviceId:hwSel.id,mode:HardwareProfile.mode,inBase:HardwareProfile.desiredInBase,outBase:HardwareProfile.desiredOutBase,requestId:HardwareSession.nextRequest()}); },
     start(){ const beginAcq=()=>this.beginAcquisition();                   // intenção: iniciar caracterização
       const proceed=()=>{if(M)showModal({title:t('modal.new.title'),body:t('modal.new.body'),
         actions:[{label:t('btn.cancel')},{label:t('btn.continue'),kind:'primary',onClick:()=>{teardown();beginAcq();}}]});else beginAcq();};
