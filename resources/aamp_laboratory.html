@@ -520,6 +520,14 @@ input[type=file]{display:none}
 .md h4{font-family:var(--fident);font-weight:600;font-size:17px;color:var(--txt);margin-bottom:10px}
 .md p{font-family:var(--fbody);font-size:13.5px;color:var(--txt2);line-height:1.6}
 .md-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:20px}
+/* F1 — painel de exportação (Evidence Delivery & Derivation) */
+.exp-sec{font-family:var(--fmono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3);margin:16px 0 7px}
+.exp-row{display:flex;align-items:center;gap:10px}
+.exp-path{font-family:var(--fmono);font-size:11.5px;color:var(--txt2);word-break:break-all;flex:1 1 auto}
+.exp-note{font-family:var(--fbody);font-size:12px;color:var(--txt3);margin-top:6px;line-height:1.5}
+.exp-note.warn{color:var(--warn)}
+.exp-derivs{display:flex;flex-wrap:wrap;gap:8px}
+.exp-status{font-family:var(--fbody);font-size:12.5px;color:var(--txt2);margin-top:12px;min-height:1em;line-height:1.6}
 
 /* ── palco vazio · console de aquisição · hardware ────────────────── */
 .lab-empty{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:13px;padding:40px}
@@ -626,9 +634,16 @@ input[type=file]{display:none}
    Persistência: localStorage (imediata) + comando setLanguage à ponte (settings.xml do AAMP). */
 const I18N={
 'pt-BR':{
- 'rail.char':'Caracterização','rail.new':'Nova caracterização','rail.import':'Importar caracterização',
+ 'rail.char':'Caracterização','rail.new':'Nova caracterização','rail.import':'Importar caracterização','rail.export':'Exportar',
  'rail.trust':'Confiança da medição','rail.investigation':'Investigação',
  'rail.instruments':'Instrumentos · consequência da investigação',
+ 'exp.title':'Exportar medição','exp.evidence':'Evidência (pacote .aamp)','exp.derivations':'Derivações',
+ 'exp.copy':'Copiar caminho','exp.copied':'Copiado ✓',
+ 'exp.evidence.saved':'Registro canônico e portátil desta medição, salvo neste caminho.',
+ 'exp.evidence.imported':'Medição importada — o próprio arquivo .aamp é a evidência.',
+ 'exp.pdf':'Relatório (PDF)','exp.csv':'Dados (CSV)','exp.wav':'Resposta ao impulso (WAV)','exp.png':'Gráfico (PNG)',
+ 'exp.deriv.unavailable':'Derivações oficiais disponíveis apenas para medições caracterizadas nesta sessão. Use o export por gráfico ou recaracterize.',
+ 'exp.working':'Gerando {f}…','exp.done':'{f} exportado:','exp.fail':'Falha na exportação.',
  'meta.source':'Origem','meta.device':'Device','meta.samplerate':'Sample rate','meta.mode':'Modo','meta.captures':'Capturas',
  'trust.none':'Sem caracterização','trust.bad':'Comprometida','trust.warn':'Atenção','trust.ext':'Externa','trust.ok':'Confiável',
  'empty.title':'Nenhuma caracterização carregada',
@@ -661,9 +676,16 @@ const I18N={
  'ms.MS-05':'THD','ms.MS-06':'THD+N','ms.MS-07':'IMD','ms.MS-08':'Piso de ruído'
 },
 'en':{
- 'rail.char':'Characterization','rail.new':'New characterization','rail.import':'Import characterization',
+ 'rail.char':'Characterization','rail.new':'New characterization','rail.import':'Import characterization','rail.export':'Export',
  'rail.trust':'Measurement confidence','rail.investigation':'Investigation',
  'rail.instruments':'Instruments · consequence of the investigation',
+ 'exp.title':'Export measurement','exp.evidence':'Evidence (.aamp package)','exp.derivations':'Derivations',
+ 'exp.copy':'Copy path','exp.copied':'Copied ✓',
+ 'exp.evidence.saved':'Canonical, portable record of this measurement, saved at this path.',
+ 'exp.evidence.imported':'Imported measurement — the .aamp file itself is the evidence.',
+ 'exp.pdf':'Report (PDF)','exp.csv':'Data (CSV)','exp.wav':'Impulse response (WAV)','exp.png':'Plot (PNG)',
+ 'exp.deriv.unavailable':'Official derivations are available only for measurements characterized in this session. Use per-chart export or re-characterize.',
+ 'exp.working':'Generating {f}…','exp.done':'{f} exported:','exp.fail':'Export failed.',
  'meta.source':'Source','meta.device':'Device','meta.samplerate':'Sample rate','meta.mode':'Mode','meta.captures':'Captures',
  'trust.none':'No characterization','trust.bad':'Compromised','trust.warn':'Attention','trust.ext':'External','trust.ok':'Trusted',
  'empty.title':'No characterization loaded',
@@ -711,6 +733,10 @@ function T(s){if(LANG!=='en'||s==null)return s;const k=String(s);const hit=GT[k]
 function msName(id,fb){return tOr('ms.'+id,fb||id);}
 function fmtClock(ms){const s=Math.max(0,Math.round(ms/1000));const m=(s/60)|0;return m+':'+String(s%60).padStart(2,'0');}
 let M=null;
+// F1: proveniência da evidência da sessão corrente (metadado de UI, não estado de domínio).
+//   evidencePath   = caminho do Evidence Package (.aamp): caminho absoluto (medição recém-caracterizada) ou nome do arquivo (importada)
+//   evidenceOfficial = a sessão exibida corresponde ao bundle retido no backend (só medições deste run) → derivações oficiais disponíveis
+let evidencePath=null, evidenceOfficial=false;
 
 /* ===== ZIP store ===== */
 function readZipStore(buf){
@@ -2622,7 +2648,9 @@ function buildRail(){const rail=document.getElementById('rail');
   const has=!!M;const locked=has?'':' rail-locked';
   const charGrp=`<div class="rail-grp rail-char open" style="--c:var(--d-frequency)"><div class="rg-head"><span class="rg-ic">✦</span>${t('rail.char')}</div><div class="rg-body">`
     +`<div class="rdom" data-act="new" style="--c:var(--d-frequency)"><span class="rd-nm">${t('rail.new')}</span></div>`
-    +`<div class="rdom" data-act="import" style="--c:var(--d-frequency)"><span class="rd-nm">${t('rail.import')}</span></div></div></div>`;
+    +`<div class="rdom" data-act="import" style="--c:var(--d-frequency)"><span class="rd-nm">${t('rail.import')}</span></div>`
+    +(has?`<div class="rdom" data-act="export" style="--c:var(--d-frequency)"><span class="rd-nm">${t('rail.export')}</span></div>`:'')  // F1: exportar só com sessão
+    +`</div></div>`;
   const meta=has?[[t('meta.source'),shorten(M.source)],[t('meta.device'),M.meta.device||'—'],[t('meta.samplerate'),(M.meta.sampleRate||'—')+' Hz'],[t('meta.mode'),M.meta.mode||'—'],[t('meta.captures'),M.captures.length]]:[];
   const tcls=has?(M._trust==='idle'?'warn':M._trust):'idle';
   const tlab=!has?t('trust.none'):(M._trust==='bad'?t('trust.bad'):M._trust==='warn'?t('trust.warn'):M._trust==='idle'?t('trust.ext'):t('trust.ok'));
@@ -2643,7 +2671,7 @@ function buildRail(){const rail=document.getElementById('rail');
     +(has?`<div class="rdom rail-entry" data-go="investigation" style="--c:var(--d-frequency)"><span class="rd-nm">⌖ ${t('rail.investigation')}</span><span class="rd-dot ok"></span></div>`:'')
     +`<div class="rail-sec">${t('rail.instruments')}</div><div class="rail-doms">${groups}</div>`
     +(meta.length?`<div class="rail-meta">`+meta.map(([k,v])=>`<div class="rm"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')+`</div>`:'');
-  rail.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>{if(el.dataset.act==='new')AAMP.newCharacterization();else AAMP.importCharacterization();});
+  rail.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>{const a=el.dataset.act;if(a==='new')AAMP.newCharacterization();else if(a==='export')AAMP.exportMeasurement();else AAMP.importCharacterization();});
   rail.querySelectorAll('[data-go]').forEach(el=>el.onclick=()=>{if(el.closest('.rail-locked'))return;showDomain(el.dataset.go);});
   rail.querySelectorAll('.rg-head').forEach(h=>h.onclick=()=>{const g=h.parentElement;if(g.classList.contains('rail-locked'))return;const was=g.classList.contains('open');rail.querySelectorAll('.rail-grp:not(.rail-char)').forEach(x=>x.classList.remove('open'));if(!was)g.classList.add('open');});
   const og=[...rail.querySelectorAll('.rail-grp:not(.rail-char)')].find(g=>g.querySelector('.rdom[data-go="'+CURRENT+'"]'))||rail.querySelector('.rail-grp:not(.rail-char)');if(og&&has)og.classList.add('open');}
@@ -2707,7 +2735,11 @@ async function ingest(file){
     bootSession(session);window.scrollTo({top:0});
   }catch(e){AAMP.showModal({title:t('modal.open.title'),body:e.message,actions:[{label:t('btn.close'),kind:'primary'}]});}}
 const fi=document.getElementById('fi');
-fi.addEventListener('change',e=>{if(e.target.files.length)ingest(e.target.files[0]);});
+fi.addEventListener('change',e=>{if(e.target.files.length){
+  // F1: import do usuário → evidência é o próprio arquivo aberto; backend NÃO tem o bundle (derivações oficiais indisponíveis).
+  evidencePath=e.target.files[0].name; evidenceOfficial=false;
+  ingest(e.target.files[0]);
+}});
 let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(scheduleChartResize,120);});
 
 /* =========================================================================
@@ -2918,6 +2950,9 @@ const AAMP=(function(){
           const bin=atob(d.aamp||'');const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
           const nm=(d.aampPath&&String(d.aampPath).split(/[\\/]/).pop())||'characterization.aamp';
           exported=false;
+          // F1: medição caracterizada NESTE run → o backend retém o bundle (derivações oficiais disponíveis);
+          // o Evidence Package já foi gravado em d.aampPath.
+          evidencePath=d.aampPath||null; evidenceOfficial=true;
           await ingest(new File([bytes],nm));
         }catch(e){console.error('boot falhou',e);renderEmpty();}}
       else{if(d.message)showModal({title:t('acq.eyebrow'),body:d.message,actions:[{label:t('btn.close'),kind:'primary'}]});renderEmpty();}
@@ -2967,7 +3002,7 @@ const AAMP=(function(){
   }
   let acqRunLine=null,acqBarRAF=0,acqBarPending=null,acqBuildLogged=false,acqState='';
   let acqT0=0,acqTimer=0,acqPct=0,acqStep=0;   // relógio do console: etapa · decorrido · ETA
-  function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();HardwareController.reset();}
+  function teardown(){M=null;evidencePath=null;evidenceOfficial=false;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();HardwareController.reset();}
   // Nome do device p/ exibição: resolvido das Capabilities (DeviceCapabilities) pelo deviceId — NÃO persiste no Profile.
   function profileDeviceName(){const d=DeviceCapabilities.find(HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
   // U1: o acesso à configuração passou para o ⚙ persistente da barra superior; o palco vazio mantém apenas
@@ -3166,7 +3201,7 @@ const AAMP=(function(){
     if(d.percent!=null&&d.percent>=100&&!acqBuildLogged){acqBuildLogged=true;acqAdvance(t('acq.session'),true);}});
   // Cada métrica oficial concluída entra no console com nome compreensível + identificador técnico.
   on('metricReady',d=>{if(!HardwareSession.acquiring||!d||!d.id)return;acqLog(t('acq.metric',{name:msName(d.id,d.name),id:d.id}),false);});
-  on('exported',()=>{exported=true;});
+  on('exported',d=>{exported=true;if(exportUi)exportUi.onResult(d);});   // F1: um mecanismo, múltiplos gatilhos (painel + modal de saída)
   on('runFinished',d=>HardwareController.onRunFinished(d));   // fim da aquisição: FSM → Idle + ingest do .aamp
 
   /* ---- Ações de produto (grupo Caracterização) ---- */
@@ -3186,6 +3221,44 @@ const AAMP=(function(){
   function showModal(o){const m=el('md');m.innerHTML='<h4>'+o.title+'</h4><p>'+o.body+'</p><div class="md-actions"></div>';
     const a=m.querySelector('.md-actions');(o.actions||[]).forEach(ac=>{const btn=document.createElement('button');btn.className='btn'+(ac.kind==='primary'?' btn-primary':'');btn.textContent=ac.label;btn.onclick=()=>{el('modal').classList.remove('on');if(ac.onClick)ac.onClick();};a.appendChild(btn);});
     el('modal').classList.add('on');}
+
+  /* ---- F1: Evidence Delivery & Derivation ----
+     DR-01: o artefato primário é o Evidence Package (.aamp); PDF/CSV/WAV/PNG são DERIVAÇÕES, geradas pelo backend
+     (ExportEngine) a partir do bundle retido. Nenhuma lógica de exportação vive aqui — o painel só dispara o comando
+     'export' existente e apresenta o resultado ('exported'). Reusa o overlay do modal. */
+  let exportUi=null;   // ref ativa enquanto o painel está aberto (on('exported') atualiza o status)
+  function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function copyPath(p,btn){if(!p)return;try{navigator.clipboard.writeText(p).then(()=>{if(btn){const o=btn.textContent;btn.textContent=t('exp.copied');setTimeout(()=>{if(btn&&btn.isConnected)btn.textContent=o;},1500);}}).catch(()=>{});}catch(e){}}
+  function openExport(){
+    if(!M)return;
+    const official=evidenceOfficial;
+    const evLabel=evidencePath||(M&&M.source)||'—';
+    let html='<h4>'+t('exp.title')+'</h4>'
+      +'<div class="exp-sec">'+t('exp.evidence')+'</div>'
+      +'<div class="exp-row"><span class="exp-path" id="exp-ev-path">'+escHtml(evLabel)+'</span>'
+      +(official&&evidencePath?'<button class="btn" id="exp-ev-copy">'+t('exp.copy')+'</button>':'')+'</div>'
+      +'<div class="exp-note">'+(official?t('exp.evidence.saved'):t('exp.evidence.imported'))+'</div>'
+      +'<div class="exp-sec">'+t('exp.derivations')+'</div>';
+    if(official){
+      html+='<div class="exp-derivs">'
+        +'<button class="btn" data-fmt="pdf">'+t('exp.pdf')+'</button>'
+        +'<button class="btn" data-fmt="csv">'+t('exp.csv')+'</button>'
+        +'<button class="btn" data-fmt="wav">'+t('exp.wav')+'</button>'
+        +'<button class="btn" data-fmt="png">'+t('exp.png')+'</button></div>';
+    }else{
+      html+='<div class="exp-note warn">'+t('exp.deriv.unavailable')+'</div>';
+    }
+    html+='<div class="exp-status" id="exp-status"></div>'
+      +'<div class="md-actions"><button class="btn" id="exp-close">'+t('btn.close')+'</button></div>';
+    const m=el('md');m.innerHTML=html;el('modal').classList.add('on');
+    const cp=el('exp-ev-copy');if(cp)cp.onclick=()=>copyPath(evidencePath,cp);
+    m.querySelectorAll('[data-fmt]').forEach(b=>b.onclick=()=>{const st=el('exp-status');if(st)st.textContent=t('exp.working',{f:b.dataset.fmt.toUpperCase()});send('export',{format:b.dataset.fmt});});
+    el('exp-close').onclick=()=>{exportUi=null;el('modal').classList.remove('on');};
+    exportUi={onResult:d=>{const st=el('exp-status');if(!st)return;
+      if(d&&d.ok){st.innerHTML=t('exp.done',{f:String(d.format||'').toUpperCase()})+' <span class="exp-path">'+escHtml(d.path||'')+'</span>';
+        if(d.path){const b=document.createElement('button');b.className='btn';b.textContent=t('exp.copy');b.onclick=()=>copyPath(d.path,b);st.appendChild(document.createTextNode(' '));st.appendChild(b);}}
+      else{st.textContent=(d&&d.message)||t('exp.fail');}}};
+  }
 
   /* ---- Persistência (ponte): idioma + última configuração de hardware ----
      Boot: getSettings + enumerate ANTES de qualquer painel — quando o usuário abrir a
@@ -3220,7 +3293,7 @@ const AAMP=(function(){
   }
 
   return {bridge:{on,emit,send,get mode(){return transport&&transport.name;}},mock:MockEngine,
-    newCharacterization,importCharacterization,openHardwareConfig,requestClose,initShell,showModal,setLanguage,
+    newCharacterization,importCharacterization,openHardwareConfig,exportMeasurement:openExport,requestClose,initShell,showModal,setLanguage,
     isExported:()=>exported,hasSession:()=>!!M,isAcquiring:()=>HardwareSession.acquiring,hardware:()=>HardwareProfile.has()?HardwareProfile.toPersist():null,fsmState:()=>HardwareSession.state};
 })();
 
