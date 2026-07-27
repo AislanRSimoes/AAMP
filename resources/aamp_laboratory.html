@@ -545,6 +545,8 @@ input[type=file]{display:none}
 .lab-hw.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,var(--inset))}
 .lab-hw-gear{margin-left:auto;background:none;border:none;color:var(--txt2);cursor:pointer;font-size:15px;flex:none;padding:2px 4px;transition:color var(--t)}
 .lab-hw-gear:hover{color:var(--txt)}
+#hw-gear{font-size:14px;line-height:1}
+.btn-sm:disabled{opacity:.38;cursor:default}
 
 .hwc{max-width:580px;height:100%;margin:0 auto;padding:44px 24px 0;display:flex;flex-direction:column}
 .hwc-head{flex:0 0 auto}
@@ -598,7 +600,10 @@ input[type=file]{display:none}
 <body>
 <div class="bar">
   <div class="brand"><svg class="mark" viewBox="0 0 44 44" width="30" height="30" aria-hidden="true"><defs><linearGradient id="aampg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4DA3FF"/><stop offset="1" stop-color="#0F52C4"/></linearGradient></defs><path d="M22 3.5 L40.5 40.5 L31 40.5 L22 21 L13 40.5 L3.5 40.5 Z" fill="url(#aampg)"/><rect x="20.5" y="12.5" width="3" height="10.5" rx="1.5" fill="#DCEBFF" opacity=".9"/><circle cx="22" cy="26.5" r="4" fill="#EAF3FF"/></svg><div><div class="nm">AAMP Laboratory</div><div class="sub">GEN-3 · INVESTIGATION SUITE</div></div></div>
-  <div class="bar-r"><button class="btn-sm" id="lang-pt" title="Português (Brasil)">PT</button><button class="btn-sm" id="lang-en" title="English">EN</button></div>
+  <!-- bar-r: ações globais persistentes (sobrevivem à troca de instrumento e ao estado da sessão).
+       Hoje: idioma + configuração de hardware (⚙). Área preparada para evoluir para uma seção geral de
+       configurações — o ⚙ é o ponto de entrada extensível; nenhuma outra configuração é introduzida agora. -->
+  <div class="bar-r"><button class="btn-sm" id="lang-pt" title="Português (Brasil)">PT</button><button class="btn-sm" id="lang-en" title="English">EN</button><button class="btn-sm" id="hw-gear">⚙</button></div>
 </div>
 
 <div id="view" class="hide">
@@ -2655,7 +2660,8 @@ function renderGuide(){let g=document.getElementById('guide');const steps=guideS
     +'<button class="guide-x" id="guide-x" title="'+T('fechar')+'">×</button>';
   g.querySelector('#guide-next').onclick=()=>{if(last){SESSION.guideOn=false;SESSION.wfStep=0;showDomain('investigation');}else{const n=cur+1;SESSION.wfStep=n;const st=steps[n];showDomain(st.dom,st.focus);}};
   g.querySelector('#guide-x').onclick=()=>{SESSION.guideOn=false;renderGuide();};}
-function showDomain(id,focus){const d=DOMS.find(x=>x.id===id);if(!d)return;FPERF.begin(id);CURRENT=id;stopLive();logHistory(id,d.label);
+function showDomain(id,focus){if(AAMP.fsmState()!=='Idle')return;   // U1: navegação de instrumentos só em Idle — bloqueada enquanto a config de hardware está aberta (coerência da FSM). Usa o acessor PÚBLICO (showDomain vive fora da IIFE que encapsula a HardwareSession).
+  const d=DOMS.find(x=>x.id===id);if(!d)return;FPERF.begin(id);CURRENT=id;stopLive();logHistory(id,d.label);
   clearCharts();
   const stage=document.getElementById('stage');stage.className='';stage.innerHTML='';stage.style.setProperty('--c','var('+(COLORMAP[id]||DOMAINS[id]||'--d-frequency')+')');
   const rail=document.getElementById('rail');
@@ -2847,11 +2853,11 @@ const AAMP=(function(){
       if(DeviceCapabilities.has())renderHwDevices();                       // lista aquecida: combobox pronta sem espera
       send('enumerate'); },                                               // e revalida contra o estado atual do OS
     cancelConfig(hwUndo){ HardwareProfile.loadFromVar(hwUndo);            // restaura Desired
-      HardwareSession.set({state:'Idle',pendingCallback:null}); renderEmpty(); },
+      HardwareSession.set({state:'Idle',pendingCallback:null}); restoreMainView(); },   // U1: volta ao contexto
     confirmConfig(){ if(!hwSel||!HardwareSession.okReady)return;           // guarda pura: só confirma se pronto
       HardwareProfile.set({deviceId:hwSel.id}); persistHardware();
       const th=HardwareSession.pendingCallback; HardwareSession.set({state:'Idle',pendingCallback:null});
-      if(th)th();else renderEmpty(); },
+      if(th)th();else restoreMainView(); },                               // U1: sem callback → restaura o contexto
     selectDevice(){ const sel=el('hwDevice');if(!sel)return;const i=+sel.value||0;hwSel=DeviceCapabilities.devices[i]||null;
       if(hwSel)HardwareProfile.set({deviceId:hwSel.id});                   // device desejado (dono único)
       HardwareSession.set({state:'CfgPreparing'});const ok=el('hwcOk');if(ok)ok.disabled=true;
@@ -2914,7 +2920,8 @@ const AAMP=(function(){
           exported=false;
           await ingest(new File([bytes],nm));
         }catch(e){console.error('boot falhou',e);renderEmpty();}}
-      else{if(d.message)showModal({title:t('acq.eyebrow'),body:d.message,actions:[{label:t('btn.close'),kind:'primary'}]});renderEmpty();} },
+      else{if(d.message)showModal({title:t('acq.eyebrow'),body:d.message,actions:[{label:t('btn.close'),kind:'primary'}]});renderEmpty();}
+      syncHwGear(); },   // U1: reabilita o ⚙ ao sair da aquisição (sessão carregada via showDomain não sincroniza o gear sozinho)
     onSettings(d){ if(!d)return;
       if(d.language&&I18N[d.language]&&d.language!==LANG){LANG=d.language;try{localStorage.setItem('aamp.lang',LANG);}catch(e){}applyLanguage();}
       HardwareProfile.loadFromVar(d.hardware);                            // restaura Desired (tolerante ao formato antigo)
@@ -2963,12 +2970,19 @@ const AAMP=(function(){
   function teardown(){M=null;clearCharts();const g=el('guide');if(g)g.remove();CURRENT=null;buildRail();HardwareController.reset();}
   // Nome do device p/ exibição: resolvido das Capabilities (DeviceCapabilities) pelo deviceId — NÃO persiste no Profile.
   function profileDeviceName(){const d=DeviceCapabilities.find(HardwareProfile.deviceId);return d?d.name:(HardwareProfile.deviceId||'');}
+  // U1: o acesso à configuração passou para o ⚙ persistente da barra superior; o palco vazio mantém apenas
+  // a linha de STATUS do hardware (device configurado ou aviso de "nenhum hardware").
   function hwInfoHTML(){return HardwareProfile.has()
-    ?'<div class="lab-hw"><span>'+t('hw.label')+': <b style="color:var(--txt2)">'+profileDeviceName()+'</b></span><button class="lab-hw-gear" title="'+t('hw.gear')+'">⚙</button></div>'
+    ?'<div class="lab-hw"><span>'+t('hw.label')+': <b style="color:var(--txt2)">'+profileDeviceName()+'</b></span></div>'
     :'<div class="lab-hw warn"><span>'+t('hw.none')+'</span></div>';}
   function renderEmpty(){const st=el('stage');if(!st)return;st.className='';
     st.innerHTML='<div class="lab-empty">'+hwInfoHTML()+'<div class="le-ic">⊞</div><h2>'+t('empty.title')+'</h2><p>'+t('empty.body')+'</p></div>';
-    const gear=st.querySelector('.lab-hw-gear');if(gear)gear.onclick=()=>HardwareController.openConfig();}
+    syncHwGear();}
+  // U1: restauração ÚNICA da view principal ao fechar a configuração (reusada por confirmConfig/cancelConfig).
+  // Com sessão carregada volta ao instrumento corrente; sem sessão, ao palco vazio. NÃO altera M/CURRENT/FSM.
+  function restoreMainView(){if(M&&CURRENT)showDomain(CURRENT);else renderEmpty();syncHwGear();}
+  // U1: reflete no ⚙ persistente a guarda de segurança — inerte durante a aquisição.
+  function syncHwGear(){const g=el('hw-gear');if(g)g.disabled=HardwareSession.acquiring;}
 
   /* Configuração de hardware — MIGRAÇÃO da lógica JUCE (Main.cpp: AudioConfig). Origem dos dados:
      DeviceInfo/DeviceCapabilities. Entrada<-nOut, Saída<-nIn (convenção do AAMP); pares estéreo i+=2.
@@ -3136,7 +3150,7 @@ const AAMP=(function(){
     st.innerHTML='<div class="acq"><div class="acq-eyebrow">'+t('acq.eyebrow')+'</div><div class="acq-title">'+t('acq.title')+'</div>'
       +'<div class="acq-console" id="acqLog"></div><div class="acq-track"><div class="acq-fill" id="acqFill"></div></div>'
       +'<div class="acq-foot"><button class="btn" id="acqCancel">'+t('acq.cancel')+'</button><span class="acq-pct" id="acqClock"></span><span class="acq-pct" id="acqPct">0%</span></div></div>';
-    el('acqCancel').onclick=()=>send('cancel');}
+    el('acqCancel').onclick=()=>send('cancel');syncHwGear();}   // U1: ⚙ inerte durante a aquisição
   function stopAcqClock(){clearInterval(acqTimer);acqTimer=0;}
 
   /* ---- Fiação dos eventos da ponte (mesmos para mock e binding nativo) ---- */
@@ -3191,12 +3205,16 @@ const AAMP=(function(){
     renderGuide&&renderGuide();}
   function syncLangKeys(){const p=el('lang-pt'),e=el('lang-en');
     if(p)p.classList.toggle('on',LANG==='pt-BR');if(e)e.classList.toggle('on',LANG==='en');
-    const rt=document.getElementById('rail-toggle');if(rt)rt.title=T('recolher / expandir menu');}
+    const rt=document.getElementById('rail-toggle');if(rt)rt.title=T('recolher / expandir menu');
+    const hg=el('hw-gear');if(hg)hg.title=t('hw.gear');}   // U1: título do ⚙ acompanha o idioma
 
   /* ---- Boot: entra direto no Laboratório, sem Session (só Caracterização ativa) ---- */
   function initShell(){el('view').classList.remove('hide');
     const p=el('lang-pt'),e=el('lang-en');
     if(p)p.onclick=()=>setLanguage('pt-BR');if(e)e.onclick=()=>setLanguage('en');
+    // U1: ⚙ persistente — abre a configuração de hardware SEM descartar a sessão. Inerte durante a aquisição
+    // e quando o diálogo já está aberto. (Ponto de entrada preparado para uma futura seção de configurações.)
+    const g=el('hw-gear');if(g)g.onclick=()=>{if(HardwareSession.acquiring||HardwareSession.dialogOpen)return;HardwareController.openConfig();};
     syncLangKeys();buildRail();renderEmpty();
     send('getSettings');send('enumerate');   // aquecimento: listas prontas antes do primeiro clique
   }
