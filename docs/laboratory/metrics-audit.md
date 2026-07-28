@@ -173,6 +173,61 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 ---
 
+## Registro de Decisão — MS-10 (SNR) — **NORMATIVO**
+
+> **Status: ESPECIFICAÇÃO APROVADA.** Este registro é normativo para o MS-10 e serve de referência
+> para qualquer implementação futura. Aprovado pelo responsável do projeto. Nenhuma implementação,
+> teste, constante ou limiar foi alterado nesta etapa — apenas a especificação foi consolidada.
+
+### Decisões aprovadas
+
+- **D1 — Definição de ruído.** A definição normativa de ruído do MS-10 passa a ser **band-limited,
+  alinhada ao MS-08** (mesma banda 20 Hz–20 kHz). Uma verificação **independente** de energia fora da
+  banda (DC, subsônicos, hum) permanece na **camada de Integridade** (não no `pn` do SNR). *Racional:
+  consistência interna entre SNR e Noise Floor + comparabilidade normativa, sem perder detecção de
+  anomalias fora de banda.*
+- **D2 / V8 — Numerador.** O MS-10 é formalizado como **S/N estrito** (numerador = energia do tom de
+  referência isolada, não o bloco inteiro). **THD, THD+N e IMD** continuam responsáveis pela distorção.
+  O rótulo **"SNR" deve corresponder ao comportamento da métrica**. *Isto encerra a decisão pendente do
+  V8 na direção (a): alinhado ao que o TC-033 já verifica.*
+- **D3 — Referência.** Mantida a referência **output-referred** (nível em que o tom retornou). Decisão
+  **registrada explicitamente** na especificação. **Nenhuma alteração de implementação** necessária.
+- **D4 — Estados de qualidade.** Aprovado o **princípio** de propagação de estados de qualidade ao
+  MS-10 e que **SNR insuficiente possa reduzir a confiança** da caracterização. **Item em aberto:** qual
+  estado representa `pn≈0` (saturação em 200 dB) **não** está decidido — será resolvido durante a
+  **implementação do Pilar 1** ou, no máximo, **antes do Pilar 2**. Os limiares numéricos de "SNR
+  insuficiente" pertencem ao **Pilar 2**.
+- **D5 — Apresentação.** Aprovado o **conceito**. As **faixas normativas / valores** e a **apresentação
+  da saturação** permanecem responsabilidade do **Pilar 2**.
+
+### Tabela de decisão (com Impacto da Implementação)
+
+| ID | Decisão aprovada | Recomendação origem | **Impacto da Implementação** | Aberto? |
+|----|------------------|---------------------|------------------------------|:------:|
+| **D1** | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **Altera algoritmo** · **Altera testes** · **Altera UI** · **Altera documentação** | — |
+| **D2/V8** | S/N estrito; distorção fica com MS-05/06/07 | A | **Altera algoritmo** · **Altera testes** · **Altera documentação** | — |
+| **D3** | Manter output-referred | A | **Sem impacto de código** · **Altera documentação** | — |
+| **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — estado de `pn≈0` (→ P1, no máx. antes do P2); limiares → P2 |
+| **D5** | Conceito de apresentação aprovado | B | **Altera UI** · **Altera documentação** (concretização → P2) | Faixas/saturação → P2 |
+
+### Matriz de Rastreabilidade — MS-10
+
+| Decisão | Arquivos afetados | Testes afetados | Achados relacionados | Pilar |
+|---------|-------------------|-----------------|----------------------|-------|
+| **D1** | `src/analysis/AnalysisEngine.cpp` (`snr`/`snrDb`); `resources/aamp_laboratory.html` (checagem fora-de-banda na Integridade) | `tests/test_analysis.cpp` (TC-033) | V8, V1, V6 | Pilar 1 |
+| **D2/V8** | `src/analysis/AnalysisEngine.cpp` (`snr`); `src/analysis/AnalysisEngine.h` (contrato) | `tests/test_analysis.cpp` (TC-033 + novo caso S/N estrito) | V8, V2 | Pilar 1 |
+| **D3** | `docs/laboratory/metrics-audit.md` (somente documentação) | — | — | Pilar 1 (doc) |
+| **D4** | `src/analysis/AnalysisEngine.cpp` (qualidade do `snr`); `resources/aamp_laboratory.html` (porta inferior da confiança `:2226`, `normalizeMetrics`) | `tests/test_analysis.cpp` (novos casos de estado) | V1, V2 | Pilar 1 (princípio) / Pilar 2 (limiares) |
+| **D5** | `resources/aamp_laboratory.html` (gauge/chip `:2713,:2721`) | — | V5 | Pilar 2 |
+
+### Encerramento
+
+**MS-10 encerrado formalmente** como especificação aprovada, com **um único item em aberto**
+explicitamente rastreado: o estado de qualidade para `pn≈0` (D4). A implementação (Pilar 1) do MS-10
+deve seguir este registro como referência normativa.
+
+---
+
 ## Encadeamento com os pilares
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
