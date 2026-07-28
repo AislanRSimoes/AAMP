@@ -251,12 +251,29 @@ espectro, Dynamic Range e exportação.*
 
 ---
 
+## Restrições arquiteturais (AR)
+
+> Regras normativas de **arquitetura**, distintas de achados (V*) e de decisões (D*/N*). Vinculam
+> qualquer implementação ou métrica futura, independentemente do indicador.
+
+- **AR-01 — Normalização energética antes de reúso espectral de banda larga.** Nenhuma métrica normativa
+  poderá **reutilizar resultados espectrais de banda larga** (potência/densidade oriunda do pipeline FFT)
+  enquanto a **normalização energética do pipeline FFT (ENBW / Parseval) não estiver validada** (ver
+  **N1-R1** e **Apêndice B**). *Motivação:* o pipeline atual é calibrado para **tons** (ganho coerente);
+  reutilizar seu resultado de **ruído** propaga o viés ENBW. *Consequência imediata — ordem de
+  implementação obrigatória:* **(1) corrigir MS-08 → (2) validar MS-08 → (3) só então implementar D1 no
+  MS-10**. A ordem deixa de ser arbitrária. *(Se, no futuro, alguém criar outra métrica baseada em
+  potência espectral, esta regra já a alcança.)*
+
+---
+
 ## Encadeamento com os pilares
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
    (propagação de `Quality`), **V3** (semântica da Consistência), **V4** (Reproducibility), **V7** (DBG).
    Pré-decisão de especificação a resolver antes de tocar código/teste: **V8** (numerador do MS-10:
-   `S/N` vs `(S+D+N)/N`).
+   `S/N` vs `(S+D+N)/N`). Restrição de ordem: **AR-01** — corrigir e validar a normalização do MS-08
+   antes de implementar D1 no MS-10.
 2. **Pilar 2 (apresentação normativa):** define e expõe as faixas da **Seção C** (V5) de forma uniforme.
 3. **Pilar 3 (exportação):** congela o formato só depois que Seções A–C estiverem estáveis.
 
@@ -364,3 +381,50 @@ SNR). Ele **cancela em razões estritamente de banda estreita computadas com a m
 THD = harmônicos/fundamental, ambos tom-like). Métricas que incluem energia de banda larga no numerador
 (THD+N, ruído) merecem a mesma verificação **quando forem revisadas** — fora do escopo desta investigação,
 que se limitou ao MS-08. Consolidado em **N1-R1**.
+
+### B.5 — Matriz de impacto arquitetural da correção ENBW
+
+Impacto esperado de uma futura correção ENBW, por métrica. A coluna **Confiança** indica quão demonstrada
+está a *classificação* (não a magnitude do impacto): **Alta** = praticamente demonstrada pelo código /
+Parseval; **Média** = expectativa arquitetural a confirmar na revisão específica da métrica.
+
+| Métrica | Usa `magSpectrum`? | Natureza | Classe | **Confiança** | Justificativa (código) |
+|---|---|---|:--:|:--:|---|
+| **MS-08** Noise Floor | Sim | Ruído banda larga, nível absoluto | **(2)** offset constante | **Alta** | Derivação Parseval direta; fator ENBW único (Hann=1.5 ⇒ ~1.76 dB), N-independente (`cpp:735`) |
+| **MS-09** Dynamic Range | Não (herda MS-08) | Nível − nível | **(2)** offset constante | **Alta** | `lmaxDb` é domínio do tempo (`cpp:764`, intacto); herda o offset do MS-08 |
+| **MS-10** SNR *(atual)* | **Não** | Potência tempo / tempo | **(1)** nenhum | **Alta** | `ps`,`pn` = `meanSquare` no tempo (`cpp:72-73, 785-786`); não toca `magSpectrum` |
+| **THD** (MS-05) | Sim | Razão linha/linha | **(1)** nenhum | **Média** | Ver observação conservadora abaixo |
+| **THD+N** (MS-06) | Sim | Razão banda-larga/linha | **(4)** investigar | **Alta** | Numerador `E_band − A1` mistura ruído (escalável) e harmônicos (não); efeito conteúdo-dependente (`cpp:354-366`) |
+| **IMD** (MS-07) | Sim | Razão linha/linha | **(1)** nenhum | **Média** | Ver observação conservadora abaixo |
+
+**Observação conservadora (THD / IMD).** A **expectativa arquitetural é de cancelamento do fator de
+normalização em razões entre componentes discretas** (linha/linha). Essa **hipótese** será **confirmada
+durante a revisão específica do MS-05** (THD) e do **MS-07** (IMD) — por isso a confiança é **Média**, não
+Alta. Não se afirma "imunidade" antes dessa verificação.
+
+**Observação normativa — ordem de implementação (MS-08 → D1/MS-10).** O MS-10 mede hoje a potência de
+ruído no **domínio do tempo** e, portanto, **não herda** o viés espectral do MS-08 (é, hoje,
+energeticamente correto para ruído). Após **D1**, o SNR passará a **reutilizar** a definição do MS-08.
+Logo a ordem de implementação **deixa de ser arbitrária** e passa a ser obrigatória (formalizada em
+**AR-01**):
+1. **corrigir** a normalização do MS-08;
+2. **validar** o MS-08;
+3. **só então** implementar D1 no MS-10.
+
+**Diagrama de dependência (duas famílias de impacto):**
+```
+Normalização FFT (ENBW)
+        │
+        ▼
+      MS-08  ──►  MS-09  ──►  D1 (MS-10)        [família COM impacto: offset constante ~1.76 dB]
+
+Normalização FFT (ENBW)
+        ├── THD    (hipótese: sem efeito → confirmar no MS-05)
+        ├── IMD    (hipótese: sem efeito → confirmar no MS-07)
+        └── THD+N  (investigar — efeito conteúdo-dependente)
+```
+
+**Síntese.** Impacto **contido**: offset constante (~1.76 dB) em MS-08→MS-09 (e no MS-10 apenas **após**
+D1), cancelamento **esperado** (a confirmar) nas razões de linha, e **um único ponto** (THD+N) a
+investigar. Nenhuma métrica sofre alteração proporcional imprevisível. Regra geral consolidada em
+**AR-01**.
