@@ -468,3 +468,113 @@ Normalização FFT (ENBW)
 D1), cancelamento **esperado** (a confirmar) nas razões de linha, e **um único ponto** (THD+N) a
 investigar. Nenhuma métrica sofre alteração proporcional imprevisível. Regra geral consolidada em
 **AR-01**.
+
+---
+
+# Apêndice C — Auditoria de Implementação do MS-09 (Dynamic Range)
+
+> **Passo 2** do fluxo do MS-09 — **exclusivamente descritivo**. Verifica qual definição operacional a
+> implementação atual usa e a compara com a proposta normativa
+> [`dynamic-range-definition.md`](./dynamic-range-definition.md). **Sem** decisões, **sem** recomendações
+> de correção, **sem** alteração de código/documentação normativa. Evidência por `arquivo:linha`.
+
+### C.1 Pergunta central — resposta
+
+**Qual é o critério operacional de "teto"?** → O teto é o **maior nível RMS entre os oito degraus de
+100 ms do ST-08 cujo pico permaneceu estritamente abaixo do fundo de escala digital** (`|amostra| < 1.0`
+= 0 dBFS). O evento que delimita o teto é o **clipping por pico em plena escala (saturação numérica)** —
+**não** um limiar de distorção nem de THD. Determinável com **alta confiança** (lógica explícita em ambas
+as implementações).
+
+### C.2 Como o teto é determinado
+- **Rotina:** `AnalysisEngine::dynamicRange` (`cpp:749-776`); reimplementação paralela `computeMS09`
+  (`html:947-966`).
+- **Variável do teto:** `lmaxRms` → `lmaxDb = 20·log10(lmaxRms)` (`cpp:760,772`; `html:953,964`).
+- **Origem:** ST-08 (`ST08_DynamicStep`), fatiado em **8 segmentos de 100 ms** (`seg = 0.100·fs`;
+  `s = 0..7`) (`cpp:759-762`; `html:952-956`).
+- **Condição que encerra a busca:** **não há término antecipado.** Varre os 8 segmentos e toma o
+  **máximo RMS** entre os aceitos. O teto é "o maior degrau que não clipou", **não** "o nível exato de
+  início da saturação" (`cpp:761-766`; `html:954-962`).
+
+### C.3 Qual evento define o teto
+- Aceitação de um degrau: `peak(part) < 1.0` (`cpp:765`; `html:961`), com `peak(x) = max|v|`
+  (`StimulusGenerator.cpp:14-18`) e `1.0 = FULL_SCALE` (`Constants.h:13`).
+- Portanto o evento é o **pico atingir o fundo de escala digital (clipping / saturação numérica)**: um
+  degrau é **descartado** se `max|amostra| ≥ 1.0`.
+- **Não** é: limiar de distorção; **não** é limiar de THD; **não** é limiar de linearidade.
+
+### C.4 Dependências
+**Reais:**
+- **ST-08** (fonte do teto) — `cpp:751`.
+- **MS-08 Noise Floor** (piso), lido pela chave `NoiseFloor_dBFS` — `cpp:752,756-757`; `html:949`.
+  MS-08 depende de **ST-09**.
+- Primitivas: `peak()` (`StimulusGenerator.cpp:14`), `meanSquare()` (`cpp:30-35`), `slice()`.
+- Constantes: `fs`; `FULL_SCALE = 1.0` (`Constants.h:13`).
+
+**Não-dependências (registradas por relevância):**
+- **Headroom** — **não** participa do cálculo do DR (é métrica de Integridade, separada).
+- **FFT / espectro** — o **teto** não usa FFT (é RMS no domínio do tempo). O **piso** usa, mas via MS-08.
+- **Flags de qualidade de outras métricas** — não consumidas; o DR produz `Quality` própria.
+- **Herança AR-01:** o DR consome `NoiseFloor_dBFS`, que carrega o viés ENBW (Apêndice B); impacto já
+  mapeado em **B.5 (classe (2), offset constante)**. Registrado, não reaberto.
+
+### C.5 Grandezas utilizadas
+
+| Variável | Significado físico | Unidade | Origem | Natureza |
+|---|---|---|---|---|
+| `lmaxRms` | RMS do maior degrau não-clipado (**domínio do tempo, banda larga**) | fração FS (linear) | ST-08 | nível (linear) |
+| `lmaxDb` | Nível do teto = `20·log10(lmaxRms)` | dBFS | derivado | **nível absoluto** |
+| `lnf` (`NoiseFloor_dBFS`) | Nível do piso (**banda 20–20 k**) | dBFS | MS-08 / ST-09 | **nível absoluto** |
+| `peak(part)` | Pico do degrau (gate de clipping) | fração FS | ST-08 | nível (gate) |
+| `seg` | Comprimento do degrau (100 ms) | amostras | fs | — |
+| `DynamicRange_dB` | `lmaxDb − lnf` | dB | derivado | **diferença de níveis** |
+
+Nota dimensional: `lmaxDb` (20·log10 RMS) e `lnf` (10·log10 potência = 20·log10 RMS) são **ambos
+referenciados a RMS** → subtração homogênea (dB). **Porém** `lmaxRms` é **banda larga / tempo** e `lnf` é
+**band-limited 20–20 k** → bandas distintas (ver C.7/C.8).
+
+### C.6 Fluxo operacional
+```
+ST-08 ──► 8 degraus de 100 ms
+             │  por degrau:  rms = √meanSquare(part) ;  pk = max|v|
+             ▼
+      gate de clipping:  aceita se  pk < 1.0  (fundo de escala)
+             ▼
+      lmaxRms = maior RMS entre degraus NÃO-clipados
+             ▼
+      lmaxDb = 20·log10(lmaxRms)          (teto — dBFS, banda larga/tempo)
+
+ST-09 ──► MS-08 ──► NoiseFloor_dBFS = lnf  (piso — dBFS, banda 20–20 k)
+             ▼
+      DynamicRange_dB = lmaxDb − lnf       (dB)
+
+  degeneração: nenhum degrau válido (todos clipados/vazios) → lmaxRms ≤ 0 → NotApplicable
+```
+
+### C.7 Conformidade com a proposta normativa (`dynamic-range-definition.md`)
+
+| Item normativo | Estado | Evidência |
+|---|---|---|
+| Grandeza = diferença de níveis (teto − piso) | **Conforme** | `lmaxDb − lnf` (`cpp:772-773`) |
+| Unidade = **dB** (não dBFS) | **Conforme** | escalar `"dB"` (`cpp:773`) |
+| Teto por **saturação/clipping** (não distorção) | **Conforme** | gate `peak<1.0` (`cpp:765`); nenhum THD |
+| Teto e piso na **mesma banda** (§4) | **Divergente** | teto = RMS tempo banda larga (`cpp:764`); piso = 20–20 k (MS-08) |
+| Exclusão de energia fora de banda **no teto** (§5) | **Divergente** | `meanSquare` de amostras cruas inclui DC/fora de banda (`cpp:764`) |
+| Piso medido em **silêncio** (§5) | **Conforme** | via ST-09 / MS-08 (`cpp:752`) |
+| Sem ponderação | **Conforme** | nenhuma ponderação aplicada |
+| MS-08 como **limite inferior** (§6) | **Conforme** | consome `NoiseFloor_dBFS` (`cpp:756-757`) |
+| Coerência dimensional (§7) | **Conforme** | ambos RMS-referenced dBFS |
+| Tratamento da **degeneração teto ≤ piso** (§7) | **Parcialmente conforme** | trata "sem degrau válido" → NotApplicable (`cpp:767-771`); DR **negativo** (teto<piso) é reportado como `Normal` (`cpp:772-773`) |
+| Relações Exportação / Trust Ladder (§6) | **Não avaliado** | camadas de exportação/UI — fora do escopo desta auditoria |
+
+### C.8 Achados (padrão MS-08)
+
+| ID | Descrição | Evidência | Impacto normativo | Confiança |
+|---|---|---|---|---|
+| **MS09-A1** | Teto = maior RMS entre degraus com `peak < 1.0`; evento = clipping por pico em plena escala | `cpp:761-765`; `html:954-961`; `StimulusGenerator.cpp:14`; `Constants.h:13` | **Conforme** ao critério de teto proposto (saturação) | Alta |
+| **MS09-A2** | Teto medido como RMS **banda larga no domínio do tempo** (sem band-limiting), enquanto o piso é 20–20 k | `cpp:764` vs `cpp:752` (MS-08) | **Divergente** de §4/§5 (teto e piso em bandas distintas) | Alta |
+| **MS09-A3** | Teto por **degraus de 100 ms** (máximo RMS válido); sem busca do "onset" de saturação | `cpp:759-766`; `html:952-962` | Descritivo — teto = "maior degrau não-clipado", granularidade de degrau; conceitualmente Conforme | Alta |
+| **MS09-A4** | Degeneração **teto ≤ piso** não sinalizada: DR negativo reportado como `Normal` (apenas "sem degrau válido" vira NotApplicable) | `cpp:767-773`; `html:963-965` | **Parcialmente conforme** a §7 (tratamento da degeneração) | Alta |
+| **MS09-A5** | DR herda `NoiseFloor_dBFS` do MS-08 e, com ele, o viés ENBW (offset constante) | `cpp:752-757`; Apêndice B.5 | Normativo — valor absoluto do DR carrega o offset do piso até AR-01 | Alta |
+| **MS09-A6** | Dupla implementação C++ (`dynamicRange`) × JS (`computeMS09`) — **convergentes** (mesmo critério e fórmula) | `cpp:749-776` × `html:947-966` | Consistentes entre si; risco estrutural V6 (duplicidade) | Alta |
+| **MS09-A7** | Estados de qualidade limitados a `Error` / `NotApplicable` / `Normal`; sem `LowConfidence` | `cpp:758,768-774` | Paralelo a V2 (propagação de qualidade) | Alta |
