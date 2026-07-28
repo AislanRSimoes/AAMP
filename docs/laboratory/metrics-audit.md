@@ -272,6 +272,98 @@ espectro, Dynamic Range e exportação.*
 
 ---
 
+## Registro de Decisão — MS-09 (Dynamic Range) — **NORMATIVO**
+
+> **Status: ESPECIFICAÇÃO APROVADA.** Documentação apenas — nenhum código, teste, constante, limiar ou
+> algoritmo alterado. Decisões na ordem lógica **D1 → D2 → D3** (dependência do estudo conceitual, Parte 4).
+> Base: `dynamic-range-definition.md`, `dynamic-range-conceptual-study.md`, `dynamic-range-impact-study.md`,
+> Apêndice C, e a normativa ratificada (`noise-floor-definition.md` + AR-01).
+
+### D1 — Critério de teto
+- **Questão:** Qual definição normativa de teto o AAMP adota?
+- **Alternativas consideradas:** Saturação (A início do clipping / D maior RMS sem clipping / E fundo de
+  escala fixo); Linearidade (B último nível linear / F compressão 1 dB); Distorção (C limiar THD/THD+N).
+- **Decisão adotada:** **Saturação** — o teto é o **nível RMS do maior sinal reproduzido sem saturação**
+  (maior nível cujo pico não atinge o fundo de escala digital). *(Variante A/D; não é o fundo de escala
+  fixo E, nem um critério por distorção.)*
+- **Justificativa:** a especificação proposta já adota "início da saturação" e o expressa como **nível**
+  (§1/§2/§5); o estudo de impacto mostra que a família Saturação **preserva a independência entre
+  métricas** (não acopla o DR a THD/THD+N) com compatibilidade normativa **sem impacto**, enquanto
+  Distorção acopla (alto) e Linearidade acopla (moderado); o critério RMS mantém a **coerência
+  dimensional** com o piso.
+- **Consequências arquiteturais:** sobreposição **conceitual** com o Headroom (mesmo evento de plena
+  escala), sem acoplamento computacional; DR permanece autocontido (sem dependência de THD/THD+N/IMD).
+- **Impactos aceitos:** sensibilidade ao **fator de crista** do sinal de teste; e a **renúncia** à
+  definição por limiar de distorção (padrão de facto de conversores), em favor da independência entre
+  métricas.
+- **Impacto sobre documentação existente:** confirma `dynamic-range-definition.md` §1/§2/§5; a "Nota de
+  ratificação" passa de "a confirmar" para "ratificado".
+- **Impacto sobre implementação futura:** **conforme** ao já auditado (Apêndice C, MS09-A1); nenhuma
+  mudança de critério necessária (a expressão do estimador é livre — Independência do Estimador).
+- **Rastreabilidade:** `dynamic-range-definition.md` §1/§2/§5; conceptual-study P1; impact-study P1/P4;
+  Apêndice C MS09-A1.
+
+### D2 — Banda do teto
+- **Questão:** O teto usa a mesma banda do Noise Floor (20–20 k) ou permanece em banda irrestrita?
+- **Alternativas consideradas:** banda irrestrita; banda 20 Hz–20 kHz.
+- **Decisão adotada:** **Mesma banda do Noise Floor — 20 Hz a 20 kHz, sem ponderação.**
+- **Justificativa:** a especificação proposta (§4) já exige teto e piso **na mesma banda**; o estudo
+  conceitual mostra que banda irrestrita produz uma **razão híbrida** (não uma grandeza física única) e
+  cria **tensão com o Noise Floor ratificado** (que exclui energia fora de banda); mesma banda restaura
+  **coerência dimensional, comparabilidade** e independência do conteúdo fora de banda.
+- **Consequências arquiteturais:** o DR passa a ser a diferença de dois níveis **na mesma banda** →
+  grandeza única e comparável; energia fora de banda permanece exclusivamente na camada de Integridade.
+- **Relação com AR-01:** a decisão **herda** AR-01 — estimar o teto **em banda** envolve energia de banda,
+  sujeita à **validação ENBW/Parseval**. A implementação do teto band-limited fica **condicionada** a
+  AR-01 (normalização energética validada antes do reúso). **Não viola** AR-01; fica governada por ela.
+- **Impacto sobre documentação existente:** confirma §4; acrescenta o registro da herança de AR-01.
+- **Impacto sobre implementação futura:** cria uma **divergência a resolver no Pilar 1** — a implementação
+  atual mede o teto em **banda larga no tempo** (Apêndice C, MS09-A2); alinhar à banda 20–20 k é tarefa do
+  Pilar 1, sob AR-01.
+- **Rastreabilidade:** `dynamic-range-definition.md` §4; conceptual-study P2; impact-study P2; AR-01;
+  Apêndice C MS09-A2; `noise-floor-definition.md` §4/§5.
+
+### D3 — Degeneração (`teto ≤ piso`)
+- **Questão:** Como o AAMP caracteriza formalmente o caso `teto ≤ piso`?
+- **Alternativas consideradas:** extensão nula (0); não caracterizável; valor negativo diagnóstico;
+  distinção `teto = piso` vs `teto < piso`.
+- **Decisão adotada:** **Não caracterizável** — quando o teto **não excede** o piso, o Dynamic Range é
+  reportado como **faixa não utilizável / não caracterizável**, nunca como valor positivo espúrio nem como
+  número negativo. *(Inclui o caso-limite `teto = piso`.)*
+- **Justificativa:** a especificação proposta (§7) já determina "sinalizada como não utilizável, nunca
+  como valor positivo espúrio"; o estudo conceitual estabelece que `teto ≤ piso` é a **ausência da
+  premissa física** (uma "faixa" não pode ser negativa); o estudo de impacto mostra que "não
+  caracterizável" **mapeia à taxonomia existente** (`NotApplicable`), é claro na interface e na
+  exportação, e evita a ambiguidade do 0 e a confusão do negativo.
+- **Implicações para exportação:** o DR é exportado como **ausente / não aplicável** (não um número), com
+  a condição declarada — consumidores tratam a ausência.
+- **Implicações para Trust Ladder:** sinaliza **ausência de faixa útil** → contribui para **reduzir a
+  confiança** (coerente com o papel do DR/SNR na porta inferior).
+- **Consequências arquiteturais:** reusa a taxonomia `NotApplicable`; a eventual **distinção**
+  `teto = piso` vs `teto < piso` fica como refinamento de **Pilar 2/UI**, fora do escopo normativo.
+- **Impacto sobre documentação existente:** confirma §7; wording ajustado para "não caracterizável".
+- **Impacto sobre implementação futura:** a implementação atual trata só "nenhum degrau válido" →
+  `NotApplicable`, mas **reporta DR negativo como `Normal`** (Apêndice C, MS09-A4) → alinhar ao "não
+  caracterizável" para `teto ≤ piso` é tarefa do Pilar 1.
+- **Rastreabilidade:** `dynamic-range-definition.md` §7; conceptual-study P3; impact-study P3;
+  Apêndice C MS09-A4; Legenda (`NotApplicable`).
+
+### Síntese
+
+| Decisão | Estado |
+|---|---|
+| **D1** — Critério de teto (saturação; nível RMS do maior sinal sem clipping) | **Aprovada** |
+| **D2** — Banda do teto (20–20 k, mesma do Noise Floor; herda AR-01) | **Aprovada** |
+| **D3** — Degeneração (`teto ≤ piso` → não caracterizável) | **Aprovada** |
+
+### Encerramento do MS-09
+
+**MS-09 encerrado** como especificação aprovada. Permanece **apenas a implementação (Pilar 1)** — com uma
+divergência conhecida de banda (MS09-A2, D2) e de degeneração (MS09-A4, D3) a alinhar, **condicionada a
+AR-01** (D2). **Nenhum item normativo em aberto.**
+
+---
+
 ## Restrições arquiteturais (AR)
 
 > Regras normativas de **arquitetura**, distintas de achados (V*) e de decisões (D*/N*). Vinculam
@@ -310,7 +402,7 @@ Fluxo metodológico por métrica (o mesmo empregado no MS-10 e no MS-08): **(1)*
 |---|---|
 | **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo; item aberto `pn≈0` rastreado) |
 | **MS-08 — Noise Floor** | ✅ **Encerrado** (definição normativa ratificada — N1; `noise-floor-definition.md`) |
-| **MS-09 — Dynamic Range** | ▶ **Próxima revisão conceitual** |
+| **MS-09 — Dynamic Range** | ✅ **Encerrado** (Registro de Decisão D1–D3; `dynamic-range-definition.md` APROVADA; alinhamento de implementação → Pilar 1, sob AR-01) |
 
 Nenhuma implementação (Pilar 1) inicia enquanto a arquitetura normativa não estiver consolidada; **AR-01**
 condiciona qualquer reutilização normativa do pipeline espectral.
@@ -578,3 +670,8 @@ ST-09 ──► MS-08 ──► NoiseFloor_dBFS = lnf  (piso — dBFS, banda 20�
 | **MS09-A5** | DR herda `NoiseFloor_dBFS` do MS-08 e, com ele, o viés ENBW (offset constante) | `cpp:752-757`; Apêndice B.5 | Normativo — valor absoluto do DR carrega o offset do piso até AR-01 | Alta |
 | **MS09-A6** | Dupla implementação C++ (`dynamicRange`) × JS (`computeMS09`) — **convergentes** (mesmo critério e fórmula) | `cpp:749-776` × `html:947-966` | Consistentes entre si; risco estrutural V6 (duplicidade) | Alta |
 | **MS09-A7** | Estados de qualidade limitados a `Error` / `NotApplicable` / `Normal`; sem `LowConfidence` | `cpp:758,768-774` | Paralelo a V2 (propagação de qualidade) | Alta |
+
+> **Estado pós-Registro de Decisão MS-09:** **MS09-A1 → resolvido por D1** (critério de teto confirmado);
+> **MS09-A2 → resolvido por D2** (banda normativa decidida; alinhamento de implementação → Pilar 1);
+> **MS09-A4 → resolvido por D3** (caracterização decidida; comportamento → Pilar 1). A3, A5, A6, A7
+> permanecem como registro descritivo (fora do escopo das decisões D1–D3).

@@ -1,6 +1,6 @@
 # Definição Normativa de Dynamic Range
 
-> **Status:** PROPOSTA NORMATIVA — pendente de ratificação (decisão do MS-09).
+> **Status:** ESPECIFICAÇÃO NORMATIVA APROVADA.
 > **Escopo:** define *o que* o AAMP mede e reporta como "Dynamic Range" (faixa dinâmica), em termos
 > físicos e normativos. Não descreve *como* a medida é obtida. Documento independente de qualquer método
 > de análise. **Passo 1** do fluxo metodológico (especificação normativa — *o que medir*).
@@ -106,15 +106,18 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 - **Neutralidade de escopo.** Deve representar **apenas** a extensão entre a saturação e o ruído — nunca
   a distorção, o nível absoluto de operação, ou energia fora da banda.
 - **Tratamento da degeneração.** Quando o teto **não excede** o piso (o sinal não se eleva acima do
-  ruído), a faixa dinâmica é **nula ou indefinida** — condição que deve ser **sinalizada** como
-  caracterização não utilizável, e nunca reportada como um valor positivo espúrio.
+  ruído), a faixa dinâmica é **não caracterizável** (faixa não utilizável) — condição que deve ser
+  **sinalizada** como não caracterizável, e **nunca** reportada como valor positivo espúrio **nem como
+  número negativo** (decisão **D3**). Inclui o caso-limite `teto = piso`.
 
 ---
 
-> **Nota de ratificação.** O único ponto substantivo desta definição a confirmar conscientemente é o
-> **critério de teto**: aqui adotado como **início da saturação (clipping)**, e não como um limiar de
-> distorção. A ratificação deste documento corresponde ao **Passo 4** (registro de decisão) do fluxo do
-> MS-09 e habilita o **Passo 2** (auditoria da implementação).
+> **Ratificação (Registro de Decisão MS-09 — D1/D2/D3).** Esta especificação está **APROVADA**:
+> **D1** — teto = **início da saturação (clipping)**, expresso como **nível RMS do maior sinal sem
+> clipping** (não por limiar de distorção); **D2** — teto na **mesma banda do Noise Floor (20–20 k)**, o
+> que **herda a precondição AR-01** (validação energética antes do reúso em banda); **D3** — `teto ≤ piso`
+> → **não caracterizável** (faixa não utilizável). Registro completo em
+> [`metrics-audit.md`](./metrics-audit.md) → "Registro de Decisão — MS-09".
 >
 > **Referência de embasamento:** [`noise-floor-definition.md`](./noise-floor-definition.md) — o piso do
 > Dynamic Range.
