@@ -1,6 +1,6 @@
 # Definição Normativa de Noise Floor
 
-> **Status:** PROPOSTA NORMATIVA — pendente de ratificação (decisão **N1** da auditoria de métricas).
+> **Status:** ESPECIFICAÇÃO NORMATIVA APROVADA.
 > **Escopo:** define *o que* o AAMP mede e reporta como "Noise Floor", em termos físicos e normativos.
 > Não descreve *como* a medida é obtida. Documento independente de qualquer método de análise.
 
@@ -25,6 +25,19 @@ A grandeza é o **nível total de ruído contido na banda de áudio** — equiva
 uma densidade espectral (nível por unidade de frequência). A densidade espectral é uma grandeza
 **complementar e distinta**, que pode ser oferecida como descritor adicional, mas **não** é o que o
 AAMP nomeia "Noise Floor".
+
+### Independência da Grandeza Física
+
+O Noise Floor representa uma **propriedade física da aquisição**, e não do método utilizado para
+estimá-la. Qualquer algoritmo empregado para determinar essa grandeza constitui apenas um **estimador**
+da definição normativa aqui estabelecida. Alterações futuras na implementação somente serão aceitas se
+**preservarem a equivalência metrológica** desta definição.
+
+### Princípio da Independência do Estimador
+
+A definição normativa do Noise Floor é **independente do algoritmo utilizado para sua estimação**.
+Mudanças futuras em FFT, janelas, estimadores espectrais ou qualquer técnica de processamento **não
+alteram esta especificação**; apenas alteram o método de estimativa da mesma grandeza física.
 
 ## 3. Qual a unidade
 

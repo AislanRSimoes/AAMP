@@ -228,18 +228,25 @@ deve seguir este registro como referência normativa.
 
 ---
 
-## MS-08 (Noise Floor) — decisão N1 em revisão
+## Registro de Decisão — MS-08 (Noise Floor) — **NORMATIVO**
 
-**N1 — Definição normativa de "Noise Floor": SUSPENSA.**
-- **Decisão pendente:** qual grandeza física o AAMP chamará de "Noise Floor" — **nível integrado em
-  banda** (RMS / potência in-band, dBFS) **ou** **densidade espectral** (PSD, dBFS/Hz). *(Após Parseval,
-  estas são as únicas duas famílias — ver Apêndice A.)*
-- **Motivo da suspensão:** a dúvida deixou de ser sobre a **grandeza física** e migrou para a
-  **metrologia da implementação**. A pergunta anterior a responder é: *"a implementação atual mede
-  corretamente essa grandeza?"* — ver **N1-R1** e o **Apêndice B**.
-- **Referência:** **Apêndice A** (estudo comparativo das definições) e **Apêndice B** (investigação da
-  normalização espectral).
-- **N2–N6** permanecem **em revisão**, aguardando aprovação; não serão registrados como decididos até lá.
+> **Status: ESPECIFICAÇÃO APROVADA.** As decisões normativas do MS-08 estão consolidadas. Documentação
+> apenas — nenhuma implementação, teste, constante, limiar ou algoritmo foi alterado.
+
+**N1 — Definição normativa de "Noise Floor": APROVADO.**
+- **Decisão aprovada:** o Noise Floor do AAMP é definido como o **nível RMS total de ruído residual
+  integrado na banda de 20 Hz a 20 kHz, expresso em dBFS**, conforme a especificação normativa
+  [`docs/laboratory/noise-floor-definition.md`](./noise-floor-definition.md)
+  (**ESPECIFICAÇÃO NORMATIVA APROVADA**).
+- **Conformidade:** futuras implementações deverão **demonstrar conformidade com esta definição,
+  independentemente do algoritmo empregado** (Princípio da Independência do Estimador). O algoritmo é
+  apenas um *estimador* da grandeza normativa; nunca a redefine.
+- **Disposição dos demais itens (N2–N6):** **N2** (banda 20–20 k) fica **subsumida** na definição
+  ratificada; **N6** (reúso do ruído pelo SNR) = **D1**, já aprovado, sob a ordem obrigatória do
+  **AR-01**; **N3** (método/observação) **deixa de ser questão normativa** — é escolha de *estimador*,
+  regida pelo Princípio da Independência do Estimador (Pilar 1); **N4** (estados de qualidade) segue o
+  princípio de **D4** (piso não-mensurável / silêncio sujo → Pilar 1; limiares → Pilar 2); **N5**
+  (apresentação/faixas) → **Pilar 2**.
 
 **N1-R1 — Precondição de normalização (ENBW).** A independência em relação à FFT pressupõe normalização
 adequada para **ruído** (ENBW / Parseval). A implementação atual utiliza correção de **ganho coerente**
@@ -248,6 +255,20 @@ invalida nenhuma definição normativa**, mas deverá ser considerada quando o *
 implementação. **Verificado (Apêndice B):** a estimativa atual é energeticamente correta para **tons**,
 **não** para ruído de banda larga (falta o fator ENBW / Σw²). *Provável reaparecimento ao revisar MS-09,
 espectro, Dynamic Range e exportação.*
+
+### Matriz de Rastreabilidade — MS-08
+
+| Decisão | Documento Normativo | Arquivos afetados (impl. futura) | Testes afetados | Vínculos | Pilar |
+|---------|---------------------|----------------------------------|-----------------|----------|-------|
+| **N1** (definição do Noise Floor) | [`noise-floor-definition.md`](./noise-floor-definition.md) | `src/analysis/AnalysisEngine.cpp` (MS-08) — *sem alteração nesta etapa* | `tests/test_analysis.cpp` (conformidade futura) | MS-09; MS-10 (D1); AR-01; N1-R1; Apêndice A; Apêndice B | Pilar 1 |
+
+### Encerramento do MS-08
+
+**MS-08 conceitualmente encerrado.**
+- Todas as decisões **normativas** foram **aprovadas** (definição ratificada em `noise-floor-definition.md`).
+- Permanece **apenas a futura implementação (Pilar 1)**.
+- **AR-01** continua **obrigatória** antes de qualquer reutilização normativa do pipeline espectral
+  (ordem: corrigir e validar o MS-08 → só então implementar D1 no MS-10).
 
 ---
 
@@ -276,6 +297,23 @@ espectro, Dynamic Range e exportação.*
    antes de implementar D1 no MS-10.
 2. **Pilar 2 (apresentação normativa):** define e expõe as faixas da **Seção C** (V5) de forma uniforme.
 3. **Pilar 3 (exportação):** congela o formato só depois que Seções A–C estiverem estáveis.
+
+---
+
+## Roadmap de revisão conceitual
+
+Fluxo metodológico por métrica (o mesmo empregado no MS-10 e no MS-08): **(1)** especificação normativa
+(o que medir) → **(2)** auditoria da implementação (como mede) → **(3)** análise de conformidade →
+**(4)** registro de decisão → **(5)** só então implementação.
+
+| Métrica | Estado |
+|---|---|
+| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo; item aberto `pn≈0` rastreado) |
+| **MS-08 — Noise Floor** | ✅ **Encerrado** (definição normativa ratificada — N1; `noise-floor-definition.md`) |
+| **MS-09 — Dynamic Range** | ▶ **Próxima revisão conceitual** |
+
+Nenhuma implementação (Pilar 1) inicia enquanto a arquitetura normativa não estiver consolidada; **AR-01**
+condiciona qualquer reutilização normativa do pipeline espectral.
 
 ---
 
@@ -330,12 +368,13 @@ Como cada grandeza se integra às demais métricas já existentes:
 **nível integrado (1)** é portável em FFT/fs/duração, dependente só da banda (fixa no AAMP); (iii) a
 **PSD/Hz (2)** é a mais portável em todos os eixos, mas é densidade e não serve diretamente ao SNR.
 
-### A.4 Recomendação (não-vinculante — N1 permanece suspensa)
+### A.4 Recomendação — **RATIFICADA (N1 APROVADO)**
 
 Grandeza-título "Noise Floor" = **(1) nível integrado em banda (RMS / potência in-band, dBFS, 20–20 k,
 flat)** — padrão de ficha técnica, serve diretamente ao SNR (D1) e é **metrologicamente coerente com
 MS-09/MS-10/Trust/Exportação** (A.2). **PSD/Hz** como **descritor complementar** (a curva por bin já
-existe). Precondição obrigatória: **N1-R1** (normalização ENBW). N1 **não** está decidida.
+existe). Precondição obrigatória: **N1-R1** (normalização ENBW). **N1 APROVADO** — ratificado em
+[`noise-floor-definition.md`](../laboratory/noise-floor-definition.md) (ver Registro de Decisão do MS-08).
 
 ---
 
