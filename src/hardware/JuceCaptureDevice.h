@@ -5,6 +5,15 @@
 // movido para namespace aamp e para um header, para ser consumido tambem pela ponte (M-08).
 // Reproduz e captura cada estimulo gerado por StimulusGenerator (M-03) atraves do AudioDeviceManager
 // configurado (dispositivo/modo/canais) pela mesma logica do AudioConfig.
+//
+// ===================== FASE 1 — INSTRUMENTACAO PASSIVA (2026-07) =====================
+// Objetivo: reconstruir integralmente o ciclo de vida de cada captura APENAS pelo diag_log.txt.
+// PASSIVA: nao altera logica, temporizacao nem sincronizacao. Apenas adiciona logs e contadores.
+//   - No AUDIO CALLBACK: somente atomicos + escrita em array pre-alocado (SEM I/O, SEM alocacao).
+//   - Todo I/O (diagLog) ocorre na THREAD DE CONTROLE (playAndCapture) ou nos eventos de stream
+//     (audioDeviceAboutToStart/Stopped), que sao transicoes raras — nunca no caminho por-bloco.
+// A logica original (m_playPos/m_capPos/energia/teto/m_done) permanece VERBATIM.
+// ====================================================================================
 #pragma once
 #if defined(AAMP_WITH_JUCE)
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -16,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 
 namespace aamp {
 
@@ -45,16 +55,51 @@ public:
         m_cap.assign((size_t) juce::jmax(1, m_total), 0.0f);
         m_playPos.store(0); m_capPos.store(0); m_done.store(false);
         m_floor = 0.0; m_floorDone = false; m_belowRun = 0; m_capturedEnd = m_total; m_endByEnergy = false;
+
+        // ---- Fase 1: reset dos coletores de instrumentacao (log-only) ----
+        m_cbCount.store(0); m_lastCbMs.store(0); m_firstSeen.store(false); m_snapN.store(0);
+        m_aboutToStartInCap.store(0); m_stoppedInCap.store(0);
+        m_firstMs = 0; m_firstNumSamples = 0; m_firstNumIn = 0; m_firstNumOut = 0; m_firstInCh = -1; m_firstCapPos = 0; m_firstDone = false;
+        const std::uint32_t tCapStart = juce::Time::getMillisecondCounter();
+
+        // ---- Fase 1: CAPTURE BEGIN + estado do device ANTES de addAudioCallback ----
+        diagLog("========== CAPTURE BEGIN ==========");
+        diagLog(juce::String("callIndex=") + juce::String(m_callIndex)
+                + " preRoll=" + juce::String(m_preRoll)
+                + " stimSize=" + juce::String((int) m_stim.size())
+                + " total=" + juce::String(m_total));
+        diagLog("STATE Preparing");
+        {
+            juce::AudioIODevice* d = m_dm.getCurrentAudioDevice();
+            if (d != nullptr)
+                diagLog(juce::String("AudioDevice: device!=null=1 name='") + d->getName() + "'"
+                        + " open=" + (d->isOpen() ? "1" : "0")
+                        + " playing=" + (d->isPlaying() ? "1" : "0")
+                        + " sampleRate=" + juce::String(d->getCurrentSampleRate(), 1)
+                        + " bufferSize=" + juce::String(d->getCurrentBufferSizeSamples())
+                        + " activeInputChannels=" + d->getActiveInputChannels().toString(2)
+                        + " activeOutputChannels=" + d->getActiveOutputChannels().toString(2));
+            else
+                diagLog("AudioDevice: device!=null=0 (getCurrentAudioDevice()==nullptr)");
+        }
+
         m_dm.addAudioCallback(this);
+        diagLog("addAudioCallback()  STATE CallbackAttached");
+
         const double secs = (double) m_total / (m_fs > 0.0 ? m_fs : 48000.0);
         const int timeoutMs = (int) (secs * 1000.0) + 2000;
         const auto t0 = juce::Time::getMillisecondCounter();
+        diagLog("STATE WaitingForCompletion");
+        bool exAbort = false, exTimeout = false;   // Fase 1: registra o motivo de saida (NAO altera os breaks)
         while (!m_done.load()) {
-            if (m_abort != nullptr && m_abort->load()) break;
+            if (m_abort != nullptr && m_abort->load()) { exAbort = true; break; }
             juce::Thread::sleep(5);
-            if ((int) (juce::Time::getMillisecondCounter() - t0) > timeoutMs) break;
+            if ((int) (juce::Time::getMillisecondCounter() - t0) > timeoutMs) { exTimeout = true; break; }
         }
+        const std::uint32_t elapsedMs = juce::Time::getMillisecondCounter() - t0;
+        diagLog("STATE Completed");
         m_dm.removeAudioCallback(this);
+        diagLog("removeAudioCallback()  STATE RemovingCallback");
         m_capturedEnd = juce::jlimit(m_preRoll, m_total, m_capPos.load());
         const int outLen = juce::jmax(0, m_capturedEnd - m_preRoll);   // strip do pre-roll (alinhamento da analise intacto)
 
@@ -78,6 +123,51 @@ public:
                 + " FIM=" + juce::String(m_endByEnergy ? "ENERGIA(decaimento+hold) -> transicao autorizada"
                                                        : "TIMEOUT(nao-decaente) -> teto de seguranca")
                 + (cpk > 0.99f ? "  *** CLIP ***" : ""));
+
+        // ---- Fase 1: TIMELINE do callback (flush na thread de controle; nada disto rodou no callback) ----
+        {
+            const long cbTotal = m_cbCount.load();
+            if (cbTotal == 0) {
+                diagLog("FIRST CALLBACK: <NUNCA OCORREU>  (callback nao foi invocado durante a janela)");
+            } else {
+                diagLog(juce::String("FIRST CALLBACK: n=1  t+") + juce::String((juce::int64)(std::uint32_t)(m_firstMs - tCapStart)) + "ms"
+                        + " numSamples=" + juce::String(m_firstNumSamples)
+                        + " numInputs=" + juce::String(m_firstNumIn)
+                        + " numOutputs=" + juce::String(m_firstNumOut)
+                        + " firstValidInputChannel=" + juce::String(m_firstInCh)
+                        + " m_capPos=" + juce::String(m_firstCapPos)
+                        + " m_done=" + (m_firstDone ? "1" : "0"));
+                const int ns = m_snapN.load();
+                const int lim = juce::jmin(ns, (int) kMaxSnaps);
+                for (int i = 0; i < lim; ++i) {
+                    const CbSnap& s = m_snaps[(size_t) i];
+                    diagLog(juce::String("callback #") + juce::String((juce::int64) s.n)
+                            + "  m_capPos=" + juce::String(s.capPos)
+                            + " numSamples=" + juce::String(s.numSamples)
+                            + " t+" + juce::String((juce::int64)(std::uint32_t)(s.tMs - tCapStart)) + "ms");
+                }
+                if (ns > (int) kMaxSnaps) diagLog(juce::String("(marcos truncados: +") + juce::String(ns - (int) kMaxSnaps) + " nao registrados)");
+                diagLog(juce::String("callback FINAL: n=") + juce::String((juce::int64) cbTotal)
+                        + "  m_capPos=" + juce::String(m_capPos.load())
+                        + " lastCb t+" + juce::String((juce::int64)(std::uint32_t)(m_lastCbMs.load() - tCapStart)) + "ms");
+            }
+            // Motivo da saida: ABORT > ENERGY > TOTAL_LIMIT (teto) > TIMEOUT > UNKNOWN
+            const char* reason = exAbort ? "ABORT"
+                               : (m_endByEnergy ? "ENERGY"
+                               : (m_done.load() ? "TOTAL_LIMIT"
+                               : (exTimeout ? "TIMEOUT" : "UNKNOWN")));
+            diagLog(juce::String("reason: ") + reason
+                    + "  callbackCount=" + juce::String((juce::int64) cbTotal)
+                    + " m_capPos=" + juce::String(m_capPos.load())
+                    + " m_total=" + juce::String(m_total)
+                    + " capturadoEfetivo=" + juce::String(outLen)
+                    + " elapsed_ms=" + juce::String((int) elapsedMs)
+                    + " aboutToStartInCap=" + juce::String(m_aboutToStartInCap.load())
+                    + " stoppedInCap=" + juce::String(m_stoppedInCap.load()));
+            diagLog("STATE Finished");
+            diagLog("========== CAPTURE END ==========");
+        }
+
         ++m_callIndex;
 
         // ===== Observacao do basal (MODO OBSERVACIONAL: mede, classifica, registra; NAO decide) =====
@@ -128,15 +218,30 @@ private:
     void audioDeviceIOCallbackWithContext(const float* const* in, int numIn,
                                           float* const* out, int numOut, int numSamples,
                                           const juce::AudioIODeviceCallbackContext&) override {
+        // ---- Fase 1: contagem/marcos PASSIVOS (somente atomicos + array pre-alocado; SEM I/O) ----
+        const long n = m_cbCount.fetch_add(1) + 1;
+        const std::uint32_t nowMs = juce::Time::getMillisecondCounter();
+        m_lastCbMs.store(nowMs);
+        if (!m_firstSeen.exchange(true)) {
+            int inCh0 = -1; for (int ch = 0; ch < numIn; ++ch) if (in[ch]) { inCh0 = ch; break; }
+            m_firstMs = nowMs; m_firstNumSamples = numSamples; m_firstNumIn = numIn; m_firstNumOut = numOut;
+            m_firstInCh = inCh0; m_firstCapPos = m_capPos.load(); m_firstDone = m_done.load();
+        }
+        if (n == 1 || n == 10 || (n % 100) == 0) {
+            const int idx = m_snapN.fetch_add(1);
+            if (idx < (int) kMaxSnaps)
+                m_snaps[(size_t) idx] = CbSnap{ n, m_capPos.load(), m_playPos.load(), numSamples, nowMs };
+        }
+        // ---- (LOGICA ORIGINAL, INALTERADA a partir daqui) ----
         for (int ch = 0; ch < numOut; ++ch) if (out[ch]) juce::FloatVectorOperations::clear(out[ch], numSamples);
         if (m_done.load()) return;
         const int pp = m_playPos.load();
         // Saida: silencio no pre-roll, depois o estimulo (offset por m_preRoll), depois silencio (cauda).
         for (int ch = 0; ch < numOut; ++ch)
             if (out[ch])
-                for (int n = 0; n < numSamples; ++n) {
-                    const int s = (pp + n) - m_preRoll;   // posicao dentro do estimulo
-                    out[ch][n] = (s >= 0 && s < (int) m_stim.size()) ? m_stim[(size_t) s] : 0.0f;
+                for (int nn = 0; nn < numSamples; ++nn) {
+                    const int s = (pp + nn) - m_preRoll;   // posicao dentro do estimulo
+                    out[ch][nn] = (s >= 0 && s < (int) m_stim.size()) ? m_stim[(size_t) s] : 0.0f;
                 }
         m_playPos.store(pp + numSamples);
 
@@ -144,10 +249,10 @@ private:
         int inCh = -1; for (int ch = 0; ch < numIn; ++ch) if (in[ch]) { inCh = ch; break; }
         double blkSq = 0.0; int blkN = 0;
         if (inCh >= 0)
-            for (int n = 0; n < numSamples; ++n) {
-                const int idx = cp + n;
+            for (int nn = 0; nn < numSamples; ++nn) {
+                const int idx = cp + nn;
                 if (idx < m_total) {
-                    const float v = in[inCh][n];
+                    const float v = in[inCh][nn];
                     m_cap[(size_t) idx] = v;
                     blkSq += (double) v * v; ++blkN;
                 }
@@ -176,8 +281,18 @@ private:
         }
         if (cp + numSamples >= m_total) m_done.store(true);   // teto de seguranca
     }
-    void audioDeviceAboutToStart(juce::AudioIODevice*) override {}
-    void audioDeviceStopped() override {}
+    // Fase 1: eventos de STREAM (transicoes raras — start/stop). Logam direto p/ flagrar reinicializacoes.
+    void audioDeviceAboutToStart(juce::AudioIODevice* d) override {
+        m_aboutToStartInCap.fetch_add(1);
+        diagLog(juce::String(">>> audioDeviceAboutToStart()  t=") + juce::String((juce::int64) juce::Time::getMillisecondCounter())
+                + " name='" + (d != nullptr ? d->getName() : juce::String("<null>")) + "'"
+                + " sampleRate=" + juce::String(d != nullptr ? d->getCurrentSampleRate() : 0.0, 1)
+                + " bufferSize=" + juce::String(d != nullptr ? d->getCurrentBufferSizeSamples() : 0));
+    }
+    void audioDeviceStopped() override {
+        m_stoppedInCap.fetch_add(1);
+        diagLog(juce::String(">>> audioDeviceStopped()  t=") + juce::String((juce::int64) juce::Time::getMillisecondCounter()));
+    }
 
     juce::AudioDeviceManager& m_dm;
     double m_fs;
@@ -195,6 +310,20 @@ private:
     static constexpr double kPreRollSeconds = 0.15; // captura antes do estimulo
     static constexpr double kDecayK         = 3.0;  // limiar = 3x o PISO (preserva todo decaimento acima do piso)
     static constexpr double kHoldSeconds    = 0.20; // hold abaixo do limiar p/ autorizar a transicao
+
+    // ---- Fase 1: coletores de instrumentacao (log-only). Escritos no callback SEM I/O; lidos no flush. ----
+    struct CbSnap { long n; int capPos; int playPos; int numSamples; std::uint32_t tMs; };
+    static constexpr int kMaxSnaps = 128;               // marcos por captura (#1,#10, e a cada 100)
+    std::atomic<long> m_cbCount { 0 };                  // total de invocacoes do callback nesta captura
+    std::atomic<std::uint32_t> m_lastCbMs { 0 };        // timestamp do ultimo callback
+    std::atomic<bool> m_firstSeen { false };            // guarda de "primeiro callback registrado"
+    std::atomic<int>  m_snapN { 0 };                    // indice atomico (limitado) dos marcos
+    std::array<CbSnap, (size_t) kMaxSnaps> m_snaps {};  // buffer pre-alocado dos marcos
+    // Detalhes do PRIMEIRO callback (gravados uma unica vez, sem I/O):
+    std::uint32_t m_firstMs = 0; int m_firstNumSamples = 0, m_firstNumIn = 0, m_firstNumOut = 0, m_firstInCh = -1, m_firstCapPos = 0; bool m_firstDone = false;
+    // Eventos de stream ocorridos DURANTE a captura corrente:
+    std::atomic<int> m_aboutToStartInCap { 0 };
+    std::atomic<int> m_stoppedInCap { 0 };
 };
 
 } // namespace aamp

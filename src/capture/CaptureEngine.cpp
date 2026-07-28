@@ -7,6 +7,7 @@
 #include <fstream>   // DIAG TEMPORARIO
 #include <cstdlib>   // DIAG TEMPORARIO
 #include <string>    // DIAG TEMPORARIO
+#include <chrono>    // DIAG TEMPORARIO (Fase 1: cronometragem do bloco EXP-RAW ST-02)
 namespace aamp {
 
 // FR-018: habilita o alinhamento temporal (deslocamento do buffer capturado pelo offset medido).
@@ -71,8 +72,17 @@ CaptureResult CaptureEngine::capture(const Stimulus& stim, IAudioDevice& dev,
     std::vector<double> raw = dev.playAndCapture(stim.samples, captureLen);
 	
 	// ===== EXP-RAW =====
+// FASE 1 (instrumentacao passiva): NAO removemos o bloco de debug. Apenas documentamos
+// EXATAMENTE quando ele executa (apos playAndCapture, so no ST-02) e cronometramos seu
+// custo (inicio/fim) para evidenciar no diag_log.txt se essa exportacao sincrona de WAV
+// interfere no ciclo da proxima captura. Sem alterar logica/temporizacao/sincronizacao.
 if (stim.id == StimulusId::ST02_MultiTone)
 {
+    const auto expRawT0 = std::chrono::steady_clock::now();
+    m04log("EXP-RAW ST02 BEGIN (pos-playAndCapture) rawSize=" + std::to_string(raw.size())
+           + " stimSize=" + std::to_string(stim.samples.size())
+           + " capLen=" + std::to_string(captureLen));
+
     ExportEngine ex("DEBUG");
 
 #ifdef _WIN32
@@ -90,6 +100,11 @@ if (stim.id == StimulusId::ST02_MultiTone)
         std::free(base);
     }
 #endif
+
+    const auto expRawT1 = std::chrono::steady_clock::now();
+    const long long expRawUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(expRawT1 - expRawT0).count();
+    m04log("EXP-RAW ST02 END durationUs=" + std::to_string(expRawUs));
 }
 // ===== fim EXP-RAW =====
 	
