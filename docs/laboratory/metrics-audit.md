@@ -92,7 +92,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 | ID | Nome | Objetivo | Fórmula | Unidade | Estímulo | Referência | Normativo | Aplicab. |
 |---|---|---|---|---|---|---|---|---|
-| **MS-08** | Noise Floor | Piso de ruído integrado | `10·log10(Σ_banda P̄(f))`, `P̄` média de frames Hann 4096 (16 frames / ou todos), 50% overlap | dBFS | ST-09 Silence | `cpp:684-746`; 16 frames = `Constants.h:59` | *a definir* | Todas |
+| **MS-08** | Noise Floor | Piso de ruído integrado | `10·log10(Σ_banda P̄(f))`, `P̄` média de frames Hann 4096 (16 frames / ou todos), 50% overlap | dBFS | ST-09 Silence | `cpp:684-746`; 16 frames = `Constants.h:59` | `docs/laboratory/noise-floor-definition.md` | Todas |
 | **MS-09** | Dynamic Range | Faixa dinâmica útil | `20·log10(RMSmax_degrau_não-clipado) − NoiseFloor_dBFS` | dB | ST-08 + ST-09 | `cpp:749-776` | `NotApplicable` se todos os degraus clipados | Todas |
 | **MS-10** | **SNR** | Relação sinal-ruído | `10·log10(ps/pn)`, `ps`=meanSquare(tom 1 kHz), `pn`=meanSquare(silêncio); satura em **200** se `pn=0` | dB | ST-03 + ST-09 | `cpp:71-76, 779-791` | gauge exibido **0–120 dB** (`html:2721`); piso de retorno na captura **20 dB acima do floor** (`MIN_SNR_OVER_FLOOR_DB`, `Constants.h:47`) | Todas |
 | **MS-11** | Crosstalk | Vazamento entre canais | `10·log10(p_inativo/p_ativo)` | dB | ST-01 (L+R) | `cpp:794-810` | *a definir* | **Só Estéreo** (`NotApplicable` em Mono) |
@@ -150,8 +150,8 @@ exige um estímulo específico; ausência ⇒ `Error`.
 - **V6 — Dupla implementação (C++ × JS).** Risco de divergência silenciosa das fórmulas espectrais.
 - **V7 — Escalares `DBG_*` temporários** presentes em MS-04/05/06/07 (`cpp`), marcados
   "REMOVER antes do RC"; hoje entram no bundle de métricas.
-- **V8 — MS-10 (SNR): numerador `S/N` vs `(S+D+N)/N` — decisão de especificação PENDENTE.**
-  *(Não é um defeito; é uma escolha a ser feita conscientemente antes de qualquer alteração de código ou teste.)*
+- **V8 — MS-10 (SNR): numerador `S/N` vs `(S+D+N)/N` — RESOLVIDO pelo Registro de Decisão MS-10 (D2/V8).**
+  *(Histórico do achado preservado abaixo. Não é um defeito; foi uma escolha feita conscientemente — resolvida na direção `S/N` estrito.)*
   A primitiva `snrDb(signal, noise) = 10·log10(ps/pn)` (`cpp:71-76`) é agnóstica quanto ao conteúdo
   de `signal`. Há duas leituras coexistindo, cada uma apoiada por evidência:
   - **Intenção `S/N` puro** — sustentada por: (a) o comentário do header `// SNR em dB dado sinal e
@@ -319,8 +319,9 @@ condiciona qualquer reutilização normativa do pipeline espectral.
 
 # Apêndice A — Estudo N1: Definição Normativa de Noise Floor
 
-> Embasamento técnico da decisão **N1 (SUSPENSA)**. Estudo comparativo das definições candidatas.
-> **Não** contém decisão de implementação. N1 permanece em aberto.
+> Embasamento técnico da decisão **N1 (RATIFICADA)** — conforme
+> [`docs/laboratory/noise-floor-definition.md`](../laboratory/noise-floor-definition.md). Estudo
+> comparativo das definições candidatas. **Não** contém decisão de implementação.
 
 > **⬛ Resultado fundamental.** Após aplicar Parseval, **potência integrada in-band** e **RMS in-band**
 > são a **mesma grandeza física** (mesmo valor e unidade, dBFS):
