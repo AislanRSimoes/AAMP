@@ -150,6 +150,26 @@ exige um estímulo específico; ausência ⇒ `Error`.
 - **V6 — Dupla implementação (C++ × JS).** Risco de divergência silenciosa das fórmulas espectrais.
 - **V7 — Escalares `DBG_*` temporários** presentes em MS-04/05/06/07 (`cpp`), marcados
   "REMOVER antes do RC"; hoje entram no bundle de métricas.
+- **V8 — MS-10 (SNR): numerador `S/N` vs `(S+D+N)/N` — decisão de especificação PENDENTE.**
+  *(Não é um defeito; é uma escolha a ser feita conscientemente antes de qualquer alteração de código ou teste.)*
+  A primitiva `snrDb(signal, noise) = 10·log10(ps/pn)` (`cpp:71-76`) é agnóstica quanto ao conteúdo
+  de `signal`. Há duas leituras coexistindo, cada uma apoiada por evidência:
+  - **Intenção `S/N` puro** — sustentada por: (a) o comentário do header `// SNR em dB dado sinal e
+    ruido (potencias RMS)` (`AnalysisEngine.h:34`), que descreve uma razão de potências limpa; e
+    (b) o teste **TC-033** (`tests/test_analysis.cpp:93-103`), que valida `snrDb` com um tom **puro,
+    sem distorção**, e ruído **separado**, esperando 80 dB ±0.5. O comportamento *especificado e
+    verificado* da primitiva é `S/N`.
+  - **Comportamento `(S+D+N)/N`** — no sítio de produção (`snr()`, `cpp:785-786`), `signal` é o bloco
+    de 1 kHz **capturado inteiro**, que em medição real carrega tom + harmônicos + ruído. Assim o
+    numerador efetivo é `(S+D+N)`, aproximando-se de um SINAD referido à saída.
+  - **Rastreabilidade da origem:** as linhas do SNR entraram no commit único de baseline
+    `4997d86 "AAMP baseline approved"` e **nunca foram modificadas** (blame `^`); **não há** histórico
+    incremental nem mensagem de commit sobre o numerador, e o **DOC-03** citado nos comentários
+    **não existe no repositório** — logo, não há especificação versionada que fixe a escolha.
+  - **Decisão a tomar (antes de mexer em código/teste):** (a) formalizar `S/N` estrito — isolar o bin
+    do tom no numerador, alinhado ao que o TC-033 já verifica; **ou** (b) assumir e **documentar**
+    `(S+D+N)/N` como métrica tipo-SINAD, revisando o TC-033 para refletir essa definição. Hoje o
+    código faz (b) enquanto o teste garante (a): o descompasso deve ser resolvido **na especificação**.
 
 ---
 
@@ -157,5 +177,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
    (propagação de `Quality`), **V3** (semântica da Consistência), **V4** (Reproducibility), **V7** (DBG).
+   Pré-decisão de especificação a resolver antes de tocar código/teste: **V8** (numerador do MS-10:
+   `S/N` vs `(S+D+N)/N`).
 2. **Pilar 2 (apresentação normativa):** define e expõe as faixas da **Seção C** (V5) de forma uniforme.
 3. **Pilar 3 (exportação):** congela o formato só depois que Seções A–C estiverem estáveis.
