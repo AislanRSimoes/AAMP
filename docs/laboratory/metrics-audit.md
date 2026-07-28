@@ -228,6 +228,29 @@ deve seguir este registro como referência normativa.
 
 ---
 
+## MS-08 (Noise Floor) — decisão N1 em revisão
+
+**N1 — Definição normativa de "Noise Floor": SUSPENSA.**
+- **Decisão pendente:** qual grandeza física o AAMP chamará de "Noise Floor" — **nível integrado em
+  banda** (RMS / potência in-band, dBFS) **ou** **densidade espectral** (PSD, dBFS/Hz). *(Após Parseval,
+  estas são as únicas duas famílias — ver Apêndice A.)*
+- **Motivo da suspensão:** a dúvida deixou de ser sobre a **grandeza física** e migrou para a
+  **metrologia da implementação**. A pergunta anterior a responder é: *"a implementação atual mede
+  corretamente essa grandeza?"* — ver **N1-R1** e o **Apêndice B**.
+- **Referência:** **Apêndice A** (estudo comparativo das definições) e **Apêndice B** (investigação da
+  normalização espectral).
+- **N2–N6** permanecem **em revisão**, aguardando aprovação; não serão registrados como decididos até lá.
+
+**N1-R1 — Precondição de normalização (ENBW).** A independência em relação à FFT pressupõe normalização
+adequada para **ruído** (ENBW / Parseval). A implementação atual utiliza correção de **ganho coerente**
+(`windowCoherentGain = Σw`, `Windows.cpp:46`), apropriada para **tons discretos**. Esta observação **não
+invalida nenhuma definição normativa**, mas deverá ser considerada quando o **Pilar 1** entrar na fase de
+implementação. **Verificado (Apêndice B):** a estimativa atual é energeticamente correta para **tons**,
+**não** para ruído de banda larga (falta o fator ENBW / Σw²). *Provável reaparecimento ao revisar MS-09,
+espectro, Dynamic Range e exportação.*
+
+---
+
 ## Encadeamento com os pilares
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
@@ -236,3 +259,108 @@ deve seguir este registro como referência normativa.
    `S/N` vs `(S+D+N)/N`).
 2. **Pilar 2 (apresentação normativa):** define e expõe as faixas da **Seção C** (V5) de forma uniforme.
 3. **Pilar 3 (exportação):** congela o formato só depois que Seções A–C estiverem estáveis.
+
+---
+
+# Apêndice A — Estudo N1: Definição Normativa de Noise Floor
+
+> Embasamento técnico da decisão **N1 (SUSPENSA)**. Estudo comparativo das definições candidatas.
+> **Não** contém decisão de implementação. N1 permanece em aberto.
+
+> **⬛ Resultado fundamental.** Após aplicar Parseval, **potência integrada in-band** e **RMS in-band**
+> são a **mesma grandeza física** (mesmo valor e unidade, dBFS):
+> `10·log10(Σ_banda P̄) = 20·log10(RMS_banda)`. Logo existem apenas **duas famílias** de definição de
+> Noise Floor:
+> 1. **Nível integrado em banda** (RMS / Potência) — grandeza *extensiva*, escala com a banda;
+> 2. **Densidade espectral** (PSD, dBFS/Hz) — grandeza *intensiva*, independe da banda.
+> Isso elimina uma falsa terceira opção e simplifica toda a discussão futura.
+
+### A.1 Comparação das grandezas
+
+| Critério | **(1) Nível de banda (integrado / RMS in-band)** | **(2) PSD média (densidade)** |
+|---|---|---|
+| Significado físico | Energia **total** de ruído em 20 Hz–20 kHz que o sinal precisa superar | "Altura do tapete" de ruído **por Hz**; caracteriza a fonte, independente da banda medida |
+| Unidade | **dBFS** (nível único) | **dBFS/Hz** (ou dBFS/bin se por bin) |
+| Dependência de FFT | Independente de N se ENBW-normalizado (Parseval conserva a potência total) | Independente de N **por Hz**; **dependente de N por bin** (piso cai ~3 dB/oitava de N) |
+| Comparabilidade entre instrumentos | Comparável **se a banda e a ponderação forem declaradas e iguais**; é o número único de "noise" das fichas técnicas | Comparável **mesmo com bandas diferentes** (densidade); ideal p/ qualidade intrínseca de conversores |
+| Aderência à literatura / analisadores pro | **Padrão** de spec de ruído (AES17, IEC 61606; Audio Precision APx, R&S): RMS em banda declarada | Padrão de **densidade** ("−140 dBFS/Hz", "nV/√Hz"); é o que o display FFT mostra por bin |
+
+### A.2 Coerência metrológica **dentro do AAMP** (4º eixo)
+
+Como cada grandeza se integra às demais métricas já existentes:
+
+| Componente do AAMP | **(1) Nível de banda** | **(2) PSD (densidade)** |
+|---|---|---|
+| **MS-09 Dynamic Range** (`DR = lmaxDb − NoiseFloor`) | **Consistente** — subtração de dois níveis dBFS na mesma base | **Inconsistente de unidade** — `dBFS − dBFS/Hz` não é dB; exigiria integrar a PSD na banda (= virar (1)) |
+| **MS-10 SNR** (D1: sinal − ruído, mesma banda) | **Consistente** — o `pn` do SNR é exatamente este nível | **Inconsistente** — `nível − densidade`; mesma exigência de integração |
+| **Exportação** | **Coerente** — um escalar dBFS, alinhado às demais métricas de nível | Exige declarar banda/normalização; mistura unidades no pacote |
+| **Trust Ladder** (porta inferior / V1) | **Coerente** — compara nível de sinal × nível de ruído diretamente | Densidade não entra na comparação sinal×ruído sem integrar |
+
+> **Leitura do 4º eixo:** MS-09, MS-10 e a Trust Ladder **já assumem subtração de níveis em dBFS**.
+> O **nível integrado (1)** é metrologicamente coerente com todo o AAMP; a **PSD (2)** é superior como
+> *descritor de densidade*, mas quebra a coerência de subtração a menos que seja integrada de volta
+> (tornando-se (1)). Este eixo é tão decisivo quanto a aderência à literatura.
+
+### A.3 N7 — Portabilidade normativa (expectativa do estimador)
+
+| Grandeza | FFT (N) | Taxa de amostragem (fs) | Largura de banda | Duração da observação |
+|---|---|---|---|---|
+| **(1) Nível de banda** | Invariante com ENBW-correção (Parseval); com escala atual → viés **constante** de janela (ver N1-R1 / Apêndice B) | Invariante (banda fixa 20–20 k; basta `fs>40 k`) | ⚠️ **Escala com a banda** — comparável só com banda declarada | Média invariante; variância ↓ com mais frames |
+| **(2) PSD por Hz** | Invariante | Invariante | **Invariante** (densidade) | Média invariante; variância ↓ com duração |
+| **(2′) PSD por bin** | ❌ Depende de N (~3 dB/oitava) | ❌ Depende via Δf | n/a | Invariante |
+
+**Conclusões:** (i) nunca definir Noise Floor como potência **por bin** (2′) — menos portável; (ii) o
+**nível integrado (1)** é portável em FFT/fs/duração, dependente só da banda (fixa no AAMP); (iii) a
+**PSD/Hz (2)** é a mais portável em todos os eixos, mas é densidade e não serve diretamente ao SNR.
+
+### A.4 Recomendação (não-vinculante — N1 permanece suspensa)
+
+Grandeza-título "Noise Floor" = **(1) nível integrado em banda (RMS / potência in-band, dBFS, 20–20 k,
+flat)** — padrão de ficha técnica, serve diretamente ao SNR (D1) e é **metrologicamente coerente com
+MS-09/MS-10/Trust/Exportação** (A.2). **PSD/Hz** como **descritor complementar** (a curva por bin já
+existe). Precondição obrigatória: **N1-R1** (normalização ENBW). N1 **não** está decidida.
+
+---
+
+# Apêndice B — Investigação da Normalização Espectral do MS-08
+
+> Objetivo (a pedido): determinar **exclusivamente** se a implementação atual do MS-08 produz uma
+> estimativa **energeticamente correta para ruído de banda larga** (ENBW / Parseval) ou apenas para
+> **tons discretos** (ganho coerente) — independentemente de qual definição N1 for adotada.
+> **Sem propor alterações.**
+
+### B.1 O que o código faz (fatos)
+- `windowCoherentGain(win) = Σw` — soma dos coeficientes da janela (`Windows.cpp:46-50`); o header a
+  declara explicitamente "para normalização de **magnitude**" (`Windows.h:14`). É o **ganho coerente**.
+- `magSpectrum` normaliza `mag[i] = |X[i]| / (Σw) · 2` (`AnalysisEngine.cpp:24-26`). Essa escala faz um
+  **tom on-bin de amplitude A** ler `mag = A` (calibração de **amplitude de tom**).
+- MS-08 acumula `acc[b] += mag[b]²`, faz média sobre frames (Welch, Hann 4096, 50% overlap) e **soma**
+  sobre os bins da banda → `NoiseFloor_dBFS = 10·log10(Σ_banda P̄)` (`cpp:684-746`).
+- **Não existe** nenhuma função de **ENBW / ganho de ruído / Σw²** no código (busca: só `CoherentGain`).
+
+### B.2 Verificação por Parseval (por que isso importa para ruído)
+Para ruído com variância σ² (mean-square real = σ²), pela relação de Parseval e `E[Σ(x·w)²] = σ²·Σw²`:
+`E[Σ_onesided mag²] = 2·σ²·ENBW_bins`, onde `ENBW_bins = N·Σw²/(Σw)²`.
+- Para um **tom**, a mesma convenção devolve a amplitude correta (`mag = A`) — **calibração exata**.
+- Para **ruído**, a estimativa carrega o fator **ENBW** da janela. Para **Hann, ENBW = 1.5 bins**
+  (`10·log10(1.5) ≈ 1.76 dB`): o nível absoluto de ruído fica **enviesado por um offset constante,
+  determinado pela janela**, porque a normalização por ganho coerente pressupõe energia concentrada em
+  **um** bin (linha espectral), enquanto ruído de banda larga espalha energia por ~ENBW bins.
+
+### B.3 Veredito
+- **Tons discretos:** a estimativa é **energeticamente correta** (calibração de amplitude por ganho coerente).
+- **Ruído de banda larga:** a estimativa **NÃO é energeticamente correta** — falta a normalização ENBW/Σw².
+  O nível absoluto de ruído tem **viés constante de janela** (Hann ⇒ ~1.76 dB), pois mede uma grandeza
+  **calibrada para tom**, não a potência real de ruído.
+- **Natureza do erro:** é um **offset constante** (a janela é sempre Hann) e **independente de N**
+  (ENBW é propriedade da janela; Parseval conserva a potência integrada). Portanto:
+  - **forma espectral / relativa:** correta;
+  - **comparabilidade entre sessões (mesma janela):** preservada (o offset cancela);
+  - **correção energética absoluta do ruído:** **não** — o dBFS reportado não é a potência real de ruído em banda.
+
+### B.4 Escopo
+O viés ENBW afeta **níveis absolutos de banda larga** (o piso de ruído do MS-08 e, por D1, o `pn` do
+SNR). Ele **cancela em razões estritamente de banda estreita computadas com a mesma primitiva** (ex.:
+THD = harmônicos/fundamental, ambos tom-like). Métricas que incluem energia de banda larga no numerador
+(THD+N, ruído) merecem a mesma verificação **quando forem revisadas** — fora do escopo desta investigação,
+que se limitou ao MS-08. Consolidado em **N1-R1**.
