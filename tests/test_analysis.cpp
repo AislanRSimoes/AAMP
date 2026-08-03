@@ -166,6 +166,91 @@ TEST_CASE("TC-037 Group delay constante p/ fase linear +-2 samples") {
     CHECK_NEAR(meanMs, expectedMs, tolMs);
 }
 
+// TC-038 (P1-001): a estimativa de piso de ruido do MS-08 deve ser ENERGETICAMENTE correta
+// para ruido de banda larga (normalizacao ENBW / Parseval), e nao a calibracao de amplitude
+// de TOM por ganho coerente. Ver docs/laboratory/noise-floor-definition.md (secoes 2, 3 e 7),
+// achado N1-R1 e restricao arquitetural AR-01.
+//
+// Oraculo INDEPENDENTE do codigo de producao: o nivel esperado e derivado aqui, do nivel RMS
+// total do ruido determinístico sintetizado, restrito a banda normativa:
+//
+//     L_esperado(dBFS) = 20*log10(RMS_total) + 10*log10( bins_na_banda / (N/2) )
+//
+// (ruido branco distribui potencia uniformemente entre os bins; a fracao de bins dentro de
+// 20 Hz-20 kHz e a fracao de potencia que o Noise Floor normativo deve reter).
+//
+// O teste FALHA se a normalizacao por ganho coerente for reintroduzida: aquela escala produz
+// um valor 10*log10(2*ENBW) = +4.77 dB acima do nivel RMS (Hann), muito alem da tolerancia.
+TEST_CASE("TC-038 MS-08 piso de ruido energeticamente correto (ENBW/Parseval) +-0.1 dB") {
+    const int NFFT = 4096;              // espelha a janela de analise de AnalysisEngine::noiseFloor
+    const double TOL_DB = 0.1;          // mesma tolerancia de calibracao espectral de TC-031
+
+    // Fracao de potencia branca retida pela banda normativa 20 Hz - 20 kHz.
+    int inBand = 0;
+    for (int b = 0; b < NFFT / 2; ++b) {
+        const double f = static_cast<double>(b) * FS / NFFT;
+        if (f >= k::BAND_LOW_HZ && f <= k::BAND_HIGH_HZ) ++inBand;
+    }
+    CHECK(inBand > 0 && inBand < NFFT / 2);
+    const double bandDb = 10.0 * std::log10(static_cast<double>(inBand) / static_cast<double>(NFFT / 2));
+
+    // ENBW da janela Hann, calculada AQUI (oraculo independente) apenas para caracterizar o
+    // viés da normalizacao antiga, que este teste deve rejeitar.
+    double s1 = 0.0, s2 = 0.0;
+    for (int i = 0; i < NFFT; ++i) {
+        const double w = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979 * i / (NFFT - 1));
+        s1 += w; s2 += w * w;
+    }
+    const double enbwBins = static_cast<double>(NFFT) * s2 / (s1 * s1);   // Hann ~ 1.5
+    const double viesAntigoDb = 10.0 * std::log10(2.0 * enbwBins);        // ~ +4.77 dB
+    CHECK_NEAR(enbwBins, 1.5, 0.01);
+
+    const double niveis[3] = { -60.0, -95.0, -120.0 };   // nivel RMS TOTAL do ruido sintetico
+    double medidos[3] = { 0.0, 0.0, 0.0 };
+    double rmsDeclarados[3] = { 0.0, 0.0, 0.0 };
+    double piorErro = 0.0;
+
+    for (int i = 0; i < 3; ++i) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false, niveis[i]);
+        // Nivel RMS total efetivamente sintetizado (declarado explicitamente pelo teste).
+        auto it = cap.captured.find(StimulusId::ST09_Silence);
+        CHECK(it != cap.captured.end() && !it->second.empty());
+        double acc = 0.0;
+        for (double v : it->second) acc += v * v;
+        const double rmsTotal = std::sqrt(acc / static_cast<double>(it->second.size()));
+        rmsDeclarados[i] = 20.0 * std::log10(rmsTotal);
+        CHECK_NEAR(rmsDeclarados[i], niveis[i], 0.01);   // o harness gera o nivel pedido
+
+        const double esperado = rmsDeclarados[i] + bandDb;
+
+        // Caminho OFICIAL do MS-08 (computeAllMetrics -> noiseFloor).
+        AnalysisEngine eng(FS);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* nf = b.find("MS-08");
+        CHECK(nf != nullptr);
+        bool achou = false;
+        if (nf != nullptr)
+            for (const Scalar& s : nf->scalars)
+                if (s.key == "NoiseFloor_dBFS") { medidos[i] = s.value; achou = true; break; }
+        CHECK(achou);
+
+        CHECK_NEAR(medidos[i], esperado, TOL_DB);
+        piorErro = std::max(piorErro, std::fabs(medidos[i] - esperado));
+
+        // Anti-regressao explicita: rejeita a normalizacao por ganho coerente (viés +4.77 dB).
+        CHECK(std::fabs(medidos[i] - (esperado + viesAntigoDb)) > TOL_DB);
+    }
+    CHECK(piorErro <= TOL_DB);
+
+    // Invariancia de escala: a diferenca entre os niveis estimados deve acompanhar a diferenca
+    // entre os niveis de entrada (o estimador nao pode ter termo dependente do nivel).
+    for (int i = 0; i + 1 < 3; ++i) {
+        const double dEntrada = rmsDeclarados[i] - rmsDeclarados[i + 1];
+        const double dEstimado = medidos[i] - medidos[i + 1];
+        CHECK_NEAR(dEstimado, dEntrada, 0.01);
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);
