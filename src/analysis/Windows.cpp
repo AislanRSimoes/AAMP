@@ -49,4 +49,18 @@ double windowCoherentGain(const std::vector<double>& win) {
     return s;
 }
 
+double windowPowerGain(const std::vector<double>& win) {
+    double s = 0.0;
+    for (double v : win) s += v * v;
+    return s;
+}
+
+double windowEnbwBins(const std::vector<double>& win) {
+    if (win.empty()) return 1.0;
+    const double s1 = windowCoherentGain(win);
+    if (s1 == 0.0) return 1.0;
+    const double s2 = windowPowerGain(win);
+    return static_cast<double>(win.size()) * s2 / (s1 * s1);
+}
+
 } // namespace aamp

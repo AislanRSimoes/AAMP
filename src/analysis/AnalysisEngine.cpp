@@ -27,6 +27,27 @@ static std::vector<double> magSpectrum(const std::vector<double>& sig, int n, Wi
     return mag;
 }
 
+// Espectro de POTENCIA de ruido, normalizado energeticamente (Parseval / ENBW) -- P1-001.
+// Dominio exclusivo de RUIDO de banda larga (MS-08). NAO substitui magSpectrum(), cuja normalizacao
+// por ganho coerente e a calibracao de AMPLITUDE DE TOM (TC-031/TC-032) e permanece inalterada.
+//
+// magSpectrum() entrega mag[b] na escala "amplitude de tom equivalente". Para ruido de banda larga
+// vale  E[ sum_b mag[b]^2 ] = 2 * sigma^2 * ENBW , logo a conversao para POTENCIA (media quadratica)
+// exige o fator 1/(2*ENBW):
+//   /2     -> amplitude de tom ao quadrado -> potencia (um seno de amplitude A tem potencia A^2/2);
+//   /ENBW  -> ruido espalha energia por ~ENBW bins, um tom concentra em 1 bin.
+// O fator e uma constante da FORMA da janela (independente de N, fs, nivel e overlap); assim
+// sum_{b na banda} p[b] estima diretamente o valor quadratico medio in-band, e 10*log10 desse valor
+// e o nivel RMS in-band em dBFS exigido por noise-floor-definition.md (secoes 2, 3 e 7).
+static std::vector<double> noisePowerSpectrum(const std::vector<double>& sig, int n, Window w) {
+    const std::vector<double> mag = magSpectrum(sig, n, w); // primitiva de TOM, usada sem alteracao
+    const double enbw = windowEnbwBins(makeWindow(w, n));
+    const double k = 1.0 / (2.0 * enbw);
+    std::vector<double> p(mag.size());
+    for (std::size_t b = 0; b < mag.size(); ++b) p[b] = mag[b] * mag[b] * k;
+    return p;
+}
+
 static double meanSquare(const std::vector<double>& x) {
     if (x.empty()) return 0.0;
     double s = 0.0;
@@ -694,8 +715,9 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         const std::size_t start = static_cast<std::size_t>(f * hop);
         if (start + static_cast<std::size_t>(N) > sig.size()) break;
         std::vector<double> frame = slice(sig, start, start + static_cast<std::size_t>(N));
-        std::vector<double> mag = magSpectrum(frame, N, Window::Hann);
-        for (std::size_t b = 0; b < acc.size(); ++b) acc[b] += mag[b] * mag[b];
+        // P1-001: estimativa energetica de ruido (ENBW/Parseval), nao a calibracao de tom.
+        std::vector<double> pw = noisePowerSpectrum(frame, N, Window::Hann);
+        for (std::size_t b = 0; b < acc.size(); ++b) acc[b] += pw[b];
         frames++;
     }
     Curve c; c.name = "Noise Floor"; c.xUnit = "Hz"; c.yUnit = "dBFS";
@@ -719,8 +741,8 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         fr2 = 0;
         for (std::size_t start = 0; start + static_cast<std::size_t>(N) <= sig.size(); start += static_cast<std::size_t>(hop)) {
             std::vector<double> frame = slice(sig, start, start + static_cast<std::size_t>(N));
-            std::vector<double> m2 = magSpectrum(frame, N, Window::Hann);
-            for (std::size_t b = 0; b < acc2.size(); ++b) acc2[b] += m2[b] * m2[b];
+            std::vector<double> p2 = noisePowerSpectrum(frame, N, Window::Hann); // P1-001
+            for (std::size_t b = 0; b < acc2.size(); ++b) acc2[b] += p2[b];
             ++fr2;
         }
         integFull = 0.0;
