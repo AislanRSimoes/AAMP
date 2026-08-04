@@ -2,6 +2,7 @@
 #include "../export/ExportEngine.h"
 #include "CaptureEngine.h"
 #include "../common/Constants.h"
+#include "../common/DiagLog.h"
 #include <cmath>
 #include <algorithm>
 #include <fstream>   // DIAG TEMPORARIO
@@ -20,21 +21,8 @@ static constexpr bool ENABLE_SYNC_ALIGNMENT = false;
 static constexpr double MAX_TAIL_SECONDS     = 8.0;    // teto p/ sistemas nao-decaentes (freeze/oscilacao)
 static constexpr double DECAY_FLOOR_FACTOR   = 3.0;    // limiar = 3x o piso de ruido (~ +9.5 dB)
 
-// ---- DIAG TEMPORARIO: append no mesmo diag_log.txt do device (plain C++, sem JUCE) ----
-static void m04log(const std::string& s) {
-#ifdef _WIN32
-    char* base = nullptr; std::size_t len = 0;
-    if (_dupenv_s(&base, &len, "APPDATA") != 0 || base == nullptr) return;
-    const std::string path = std::string(base) + "\\AAMP\\diag_log.txt";
-    std::free(base);
-#else
-    const char* base = std::getenv("APPDATA");
-    if (base == nullptr) return;
-    const std::string path = std::string(base) + "/AAMP/diag_log.txt";
-#endif
-    std::ofstream f(path, std::ios::app);
-    if (f) f << s << "\n";
-}
+// ---- DIAG: encaminha ao canal unico (src/common/DiagLog.h). Assinatura preservada. ----
+static void m04log(const std::string& s) { diag::write(s); }
 
 static double rmsOf(const std::vector<double>& x) {
     if (x.empty()) return 0.0;

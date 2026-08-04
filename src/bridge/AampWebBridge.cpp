@@ -338,6 +338,16 @@ void AampWebBridge::doPrepare(juce::var args) {
             + (hwErr1.isNotEmpty() ? (" err1='" + hwErr1 + "'") : juce::String())
             + (hwErr2.isNotEmpty() ? (" err2='" + hwErr2 + "'") : juce::String()));
 
+    // Proveniencia do hardware, registrada SOMENTE quando o device foi realmente aberto e os
+    // valores sao os efetivos do driver. Nao ha default inventado: sem device, nao ha linha.
+    if (dev2 != nullptr)
+        diagLog(juce::String("AudioConfig: Driver=") + m_dm.getCurrentAudioDeviceType()
+                + " Device=" + dev2->getName()
+                + " SampleRate=" + juce::String(dev2->getCurrentSampleRate(), 1)
+                + " BufferSize=" + juce::String(dev2->getCurrentBufferSizeSamples())
+                + " InputMask="  + dev2->getActiveInputChannels().toString(2)
+                + " OutputMask=" + dev2->getActiveOutputChannels().toString(2));
+
     // Capacidades do device ABERTO -> painel (DOC-05 §3.2) e dropdowns Entrada/Saída (nIn/nOut).
     DeviceInfo full = *chosen;
     full.caps.inputChannels = nIn; full.caps.outputChannels = nOut;

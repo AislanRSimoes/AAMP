@@ -21,7 +21,26 @@ else()
 endif()
 
 # ---- Núcleo headless determinístico (L-03 Domain + DSP) ----
+# ---- Proveniencia do build (diag_log.txt) ----
+# Regenerado a CADA build: o commit registrado no log e o do binario em execucao, nao o da
+# ultima configuracao. O header so e reescrito quando a proveniencia muda, entao um build
+# repetido no mesmo commit nao recompila nada.
+set(AAMP_BUILD_INFO_DIR "${CMAKE_BINARY_DIR}/generated")
+set(AAMP_BUILD_INFO_H   "${AAMP_BUILD_INFO_DIR}/AampBuildInfo.h")
+execute_process(COMMAND ${CMAKE_COMMAND}
+  -DAAMP_BUILD_INFO_OUT=${AAMP_BUILD_INFO_H} -DAAMP_SRC=${CMAKE_SOURCE_DIR}
+  -DAAMP_VERSION=${PROJECT_VERSION} -DAAMP_CONFIG=${CMAKE_BUILD_TYPE}
+  -P ${CMAKE_SOURCE_DIR}/cmake/GenerateBuildInfo.cmake)     # garante existencia na 1a configuracao
+add_custom_target(aamp_build_info ALL
+  COMMAND ${CMAKE_COMMAND}
+    -DAAMP_BUILD_INFO_OUT=${AAMP_BUILD_INFO_H} -DAAMP_SRC=${CMAKE_SOURCE_DIR}
+    -DAAMP_VERSION=${PROJECT_VERSION} -DAAMP_CONFIG=$<CONFIG>
+    -P ${CMAKE_SOURCE_DIR}/cmake/GenerateBuildInfo.cmake
+  BYPRODUCTS ${AAMP_BUILD_INFO_H}
+  COMMENT "AAMP: proveniencia do build (git) -> AampBuildInfo.h")
+
 add_library(aamp_core STATIC
+  src/common/DiagLog.cpp
   src/analysis/Fft.cpp
   src/analysis/Windows.cpp
   src/analysis/Hilbert.cpp
@@ -38,7 +57,8 @@ add_library(aamp_core STATIC
   src/routing/RoutingManager.cpp
   src/dashboard/DashboardModel.cpp
 )
-target_include_directories(aamp_core PUBLIC src)
+target_include_directories(aamp_core PUBLIC src ${AAMP_BUILD_INFO_DIR})
+add_dependencies(aamp_core aamp_build_info)
 
 # ---- Testes (CTest; RD-04: Catch2/GTest na máquina-alvo) ----
 enable_testing()
@@ -54,6 +74,7 @@ add_executable(aamp_tests
   tests/test_evidence.cpp
   tests/test_evidence_recorder.cpp
   tests/test_evidence_serializer.cpp
+  tests/test_diaglog.cpp
   tests/main.cpp
 )
 target_link_libraries(aamp_tests PRIVATE aamp_core)

@@ -20,6 +20,7 @@
 #include "../capture/IAudioDevice.h"
 #include "../capture/Baseline.h"
 #include "../common/Constants.h"
+#include "../common/DiagLog.h"
 #include <atomic>
 #include <vector>
 #include <array>
@@ -29,13 +30,10 @@
 
 namespace aamp {
 
-// diag_log.txt: mesmo destino/comportamento do Gerador (static => linkage interno; sem colisao ODR).
+// diag_log.txt: encaminha ao canal unico (src/common/DiagLog.h), que carimba data/hora e
+// tempo relativo e serializa as escritas. Assinatura preservada -- nenhuma chamada mudou.
 namespace capture_detail {
-inline juce::File diagFile() {
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("AAMP").getChildFile("diag_log.txt");
-}
-inline void diagLog(const juce::String& line) { diagFile().appendText(line + "\n"); }
+inline void diagLog(const juce::String& line) { diag::write(line.toStdString()); }
 } // namespace capture_detail
 using capture_detail::diagLog;
 

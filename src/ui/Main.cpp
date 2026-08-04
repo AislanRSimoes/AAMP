@@ -6,6 +6,7 @@
 #if defined(AAMP_WITH_JUCE)
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../bridge/AampWebBridge.h"
+#include "../common/DiagLog.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -71,8 +72,12 @@ public:
     const juce::String getApplicationName() override    { return "AAMP"; }
     const juce::String getApplicationVersion() override { return "2.0.0"; }
     bool moreThanOneInstanceAllowed() override           { return false; }
-    void initialise(const juce::String&) override        { m_window = std::make_unique<MainWindow>(); }
-    void shutdown() override                             { m_window = nullptr; }
+    // Sessao de diagnostico: cabecalho ANTES da primeira linha de qualquer subsistema; rodape no
+    // encerramento normal. Um termino anormal simplesmente nao produz rodape -- essa ausencia e a
+    // evidencia de interrupcao e nunca e fabricada pela sessao seguinte.
+    void initialise(const juce::String&) override        { diag::begin(); diag::write("Aplicacao inicializada");
+                                                           m_window = std::make_unique<MainWindow>(); }
+    void shutdown() override                             { m_window = nullptr; diag::end("Normal"); }
     void systemRequestedQuit() override                  { quit(); }
 private:
     std::unique_ptr<MainWindow> m_window;
