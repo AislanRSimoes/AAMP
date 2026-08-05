@@ -378,6 +378,253 @@ AR-01** (D2). **Nenhum item normativo em aberto.**
   MS-10**. A ordem deixa de ser arbitrária. *(Se, no futuro, alguém criar outra métrica baseada em
   potência espectral, esta regra já a alcança.)*
 
+  > **Estado: SATISFEITA** (2026-08-05). A precondição foi cumprida e validada — ver *Registro de
+  > Encerramento — P1-001* abaixo. Os passos (1) e (2) estão concluídos; o passo (3) (D1 no MS-10)
+  > fica liberado quanto a AR-01, permanecendo sujeito à ordem do Plano Mestre (P1-005).
+
+---
+
+## Registro de Encerramento — P1-001 (Normalização Energética do MS-08) — **NORMATIVO**
+
+> **Estado: ENCERRADO** — técnica, analítica, sintética e fisicamente.
+> **Escopo do item:** normalização energética (ENBW / Parseval) da estimativa de ruído do MS-08.
+> **Referências normativas:** `noise-floor-definition.md` §2/§3/§7 · **N1-R1** · **AR-01** · Apêndice B.
+
+### E.1 Implementação
+
+Nova abstração dedicada ao **domínio de ruído** (não existia nenhuma função de ENBW / ganho energético
+/ *window energy* / normalização de potência no código — apenas `windowCoherentGain = Σw`, do domínio de
+tom): `windowPowerGain(win) = Σw²` e `windowEnbwBins(win) = n·Σw²/(Σw)²` (`Windows.h/.cpp`), consumidas
+pelo estimador estático `noisePowerSpectrum()` (`AnalysisEngine.cpp`), que **reutiliza `magSpectrum()`
+sem alterá-la** e aplica o fator `1/(2·ENBW)` exigido por Parseval. Aplicado apenas nos dois laços de
+acumulação de `noiseFloor()` e, de forma espelhada, em `computeMS08()` do LabEngine (**CC-A**).
+
+A **primitiva de tom permaneceu inalterada**: `magSpectrum()`, `fullSpectrum()`, `peakBin()`,
+`thdPercent()` e as famílias MS-05/06/07 ficaram *byte-idênticas* (verificado por diff).
+
+Para a janela Hann o fator é a constante `10·log10(2·ENBW) = 4,772273 dB`, dependente apenas da **forma**
+da janela — independente de `N`, `fs`, nível e *overlap*.
+
+### E.2 Regressão permanente — TC-038
+
+`TC-038 — MS-08 piso de ruído energeticamente correto (ENBW/Parseval) ±0,1 dB` (`tests/test_analysis.cpp`).
+Oráculo **independente do código de produção**: o nível esperado é derivado no próprio teste por
+`L_esperado = 20·log10(RMS_total) + 10·log10(bins_na_banda / (N/2))`, sobre ruído determinístico em três
+níveis (−60, −95, −120 dBFS). Protege por três vias: comparação absoluta (tolerância 0,1 dB, a mesma de
+TC-031), **asserção anti-regressão explícita** contra o valor que a normalização por ganho coerente
+produziria, e **invariância de escala** (0,01 dB).
+
+**Controle negativo executado:** com o fator `1/(2·ENBW)` removido, TC-038 falha em **7 checks**;
+restaurado, passa. Registrado que as asserções de invariância de escala **continuam passando** sob o
+defeito — um viés constante preserva diferenças —, razão pela qual a comparação absoluta e a asserção
+anti-regressão são necessárias.
+
+### E.3 Validação sintética
+
+| Nível RMS total | Teórico in-band | Medido | Erro absoluto |
+|---:|---:|---:|---:|
+| −60,00 dBFS | −60,7961 | −60,7998 | 0,0037 dB |
+| −95,00 dBFS | −95,7961 | −95,7998 | 0,0037 dB |
+| −120,00 dBFS | −120,7961 | −120,7998 | 0,0037 dB |
+
+Erro **constante em 5 décadas de nível** (*scale invariance*); pior erro = 3,7 % da tolerância adotada.
+
+### E.4 Validação em ambiente
+
+| Ambiente | Build | Resultado |
+|---|---|---|
+| Linux (headless, `aamp_core`/`aamp_tests`) | CMake Release | **461 checks, 0 falhas** |
+| Windows (Vostro) | CMake + Ninja Release | **469 checks, 0 falhas** |
+
+Divergência de contagem entre plataformas registrada como **F8** (abaixo). Em ambos os ambientes
+TC-030, TC-031, TC-032, TC-033, TC-034 e TC-038 passaram.
+
+### E.5 Validação física — caracterização com a Helix (preset AC30 Clean)
+
+Caracterização física realizada em **loopback digital puro**, dispositivo Helix, preset **AC30 Clean**,
+48 000 Hz, mono, 16 capturas. Resultados observados no Laboratório: Noise Floor **−96,2 dBFS**,
+SNR **80,4 dB**, Dynamic Range **80,1 dB**, Clipping 0, Consistência 1,5 %.
+
+Registrada também a caracterização anterior em **preset vazio** (Noise Floor −300 dBFS, SNR 200 dB,
+Dynamic Range 290 dB): trata-se de **silêncio digital bit-exato** — `−300 dBFS` é o *clamp*
+`10·log10(1e-30)` e `200 dB` é o retorno de saturação de `snrDb` para `pn ≤ 0`. Esse caso é
+**insensível ao fator ENBW** (produziria o mesmo valor com a normalização anterior) e, portanto,
+**não constitui evidência sobre o P1-001**; ele exercita P1-002, P1-004 e P1-007, que permanecem abertos.
+
+### E.6 Validação A/B — **reprocessamento offline, sem nova aquisição**
+
+> **Natureza do procedimento — registro explícito.**
+> **Não foi realizada uma nova caracterização física.** **Não houve nova aquisição da Helix.**
+> O procedimento A/B foi feito por **reprocessamento offline** do arquivo `captures/ST09_Capture.wav`
+> **extraído diretamente do Evidence Package da caracterização física já existente** (o `.aamp` é um
+> container ZIP STORE com WAV IEEE float32 mono).
+>
+> Os dois binários processaram **exatamente o mesmo arquivo de áudio, byte a byte**. Nenhuma recaptura
+> foi realizada; nenhuma condição de hardware foi alterada. **A única variável modificada entre as duas
+> medições foi o algoritmo.**
+
+| Estado | Commit | `NoiseFloor_dBFS` |
+|---|---|---:|
+| Pré-correção | `692a49a` | **−91,457365** |
+| Pós-correção | `9222ae0` | **−96,229638** |
+| | **Δ** | **−4,772273 dB** |
+
+O deslocamento coincide **exatamente** com `−10·log10(2·ENBW_Hann) = −4,772273 dB`.
+
+*Controle do procedimento:* o binário pré-correção foi verificado como genuinamente anterior (0
+ocorrências de `noisePowerSpectrum`; `acc[b] += mag[b]*mag[b]` presente) e, sobre a captura sintética de
+referência, devolveu o valor pré-correção já conhecido (−91,027516 dBFS).
+
+*Ferramenta:* modo `noise` de `tools/wav_metric_harness` (ferramenta de regressão **fora do produto**;
+commit `9222ae0`), que mapeia o WAV como ST-09 e extrai o escalar oficial via `computeAllMetrics()`.
+
+### E.7 Verificações complementares
+
+**(a) Oráculo independente no domínio do tempo.** O RMS de banda larga calculado diretamente das
+amostras (`sqrt(mean(x²))`, sem FFT, janela, *overlap* ou normalização) reproduziu o resultado espectral:
+
+```
+NoiseFloor_dBFS (espectral, Welch/Hann, 20 Hz–20 kHz, ENBW) = −96,229638 dBFS
+RMS de banda larga (domínio do tempo)                       = −96,2298   dBFS
+erro                                                        ≈  0,00016  dB
+```
+
+**(b) CC-A confirmado sobre dado físico real.** O valor exibido pelo LabEngine (JS) e o produzido pelo
+`AnalysisEngine` (C++) coincidem na precisão apresentada — a verificação C++ ↔ JS deixa de ser apenas
+sintética.
+
+**(c) Interface, Evidence Package e áudio bruto coerentes.** Os valores apresentados no Laboratório
+foram reproduzidos a partir do áudio bruto preservado no pacote:
+
+| Interface | Reproduzido do WAV | Confere |
+|---|---|:--:|
+| Piso de ruído −96,2 dBFS | −96,2296 | ✓ |
+| Nível RMS −96,2 dBFS | −96,2298 (RMS banda larga) | ✓ |
+| Headroom −92,2 dBFS | −92,2387 (pico) | ✓ |
+| Crista 4,0 dB | 3,9911 | ✓ |
+
+Confirma a **fidelidade do áudio no Evidence Package** (o WAV extraído regenera os números da tela).
+
+### E.8 Infraestrutura de diagnóstico (validada no Windows)
+
+O canal único `src/common/DiagLog` (commit `8fb6849`) foi validado no ambiente real. Confirmados:
+**SessionId**, **CommitFull/CommitShort**, **Branch**, **GitDirty**, **timestamps absolutos**
+(`YYYY-MM-DD HH:MM:SS.mmm`, `system_clock`), **timestamps relativos** (`[T+HH:MM:SS.mmm]`,
+`steady_clock`), **rotação e arquivamento automático** da sessão anterior em `logs/`, **rodapé de
+encerramento** com `Elapsed`/`Exit` e **proveniência completa** do binário. A ausência de rodapé
+permanece como evidência de término anormal e não é fabricada pela sessão seguinte.
+
+### E.9 Matriz de rastreabilidade — P1-001
+
+| Requisito / origem | Documento normativo | Implementação | Evidência | Estado |
+|---|---|---|---|:--:|
+| Grandeza = nível RMS in-band em dBFS | `noise-floor-definition.md` §2/§3 | `noisePowerSpectrum()` + `noiseFloor()` (`2bc5f88`) | E.3, E.6, E.7(a) | ✅ |
+| Estimativa energeticamente correta (ENBW/Parseval) | **N1-R1**, Apêndice B | fator `1/(2·ENBW)` | E.3 (0,0037 dB), E.7(a) (0,00016 dB) | ✅ |
+| Banda 20 Hz–20 kHz, sem ponderação | `noise-floor-definition.md` §4 | filtro de banda preservado em `noiseFloor()` | E.6, E.7(a) | ✅ |
+| Coerência dimensional com MS-09/MS-10 | `noise-floor-definition.md` §7 | escala RMS/dBFS homogênea | E.7(c) | ✅ |
+| Sem regressão da calibração de tom | Autorização P1-001 | `magSpectrum`/`fullSpectrum`/`peakBin`/`thdPercent` intactos | diff byte-idêntico; TC-031, TC-032 | ✅ |
+| **AR-01** satisfeita (precondição validada) | AR-01 | — | E.3, E.6, E.7 | ✅ |
+| **CC-A** — C++ ↔ JS | Plano Mestre | `computeMS08()` espelhado | E.7(b) + `−95,799789` idêntico em ambos | ✅ |
+| Regressão permanente | Critério de aceite | TC-038 (`acca002`) | E.2 + controle negativo | ✅ |
+| Reprodutibilidade / determinismo | `noise-floor-definition.md` §7 | — | TC-034 | ✅ |
+| Proveniência da evidência | — | `DiagLog` (`8fb6849`) | E.8 | ✅ |
+
+**Commits do item:** `2bc5f88` (implementação) · `acca002` (TC-038) · `8fb6849` (infraestrutura de
+diagnóstico) · `9222ae0` (ferramenta de reprocessamento A/B).
+
+### E.10 Achados da validação (F*)
+
+Série **F** — achados originados na revisão técnica final do P1-001, distintos dos achados de auditoria
+(**V***) e das decisões (**D*/N***).
+
+| ID | Achado | Estado | Bloqueia |
+|---|---|:--:|---|
+| **F1** | Conteúdo do resíduo do ST-09 e validade do estimador para conteúdo tonal | ✅ **Encerrado** | — |
+| **F2** | `Dynamic Range < SNR`, contrariando `dynamic-range-definition.md` §6 | 🔴 **Aberto** | **P1-003, P1-005** |
+| **F3** | Interface declara "métricas normativas não se aplicam" e exibe os valores | 🟡 Aberto | — |
+| **F5** | Gráfico de "Captura de silêncio" visualmente enganoso | ✅ **Encerrado** | — |
+| **F8** | Divergência de contagem de checks entre plataformas (469 × 461) | 🟡 Aberto | — |
+
+#### F1 — **ENCERRADO** · inclui correção de entendimento
+
+**Correção de entendimento (registro preservado para histórico).** Durante a revisão foi levantada a
+ressalva de que o estimador ENBW/Parseval subestimaria conteúdo **tonal** em `10·log10(ENBW) = 1,76 dB`,
+por supor que a energia de um tom se concentra em um único *bin*. **Essa ressalva foi revisada e está
+incorreta.** Com janela Hann, um tom de amplitude `A` distribui-se pelo lóbulo principal com amplitudes
+≈ `A/2, A, A/2`, de modo que `Σ_bins mag² = A²(0,25 + 1 + 0,25) = 1,5·A² = ENBW·A²`; aplicando
+`1/(2·ENBW)` obtém-se `A²/2` — exatamente a potência média do tom. O comportamento é o esperado:
+**Parseval é independente do tipo de sinal**, e essa independência é justamente a propriedade que a
+correção implementa.
+
+**Confirmação empírica:** a captura analisada concentra **96,18 %** da energia in-band em três *bins*
+adjacentes, e ainda assim o estimador espectral casou com o RMS temporal em **0,00016 dB** (E.7a).
+
+> **Conclusão de F1:** o estimador ENBW/Parseval é **válido tanto para ruído de banda larga quanto para
+> conteúdo tonal**. **Não existe ressalva de domínio de validade para o P1-001.**
+
+**Caracterização da captura (observação, sem atribuição de origem).** O espectro médio do ST-09
+analisado apresenta **predominância de componentes discretas próximas de 120 Hz e harmônicos
+associados**:
+
+| Freq. (Hz) | Nível (dBFS) | % do total | % acumulado |
+|---:|---:|---:|---:|
+| 117,2 | −98,47 | 59,67 % | 59,67 % |
+| 128,9 | −101,51 | 29,63 % | **89,30 %** |
+| 105,5 | −107,86 | 6,88 % | **96,18 %** |
+| 58,6 | −115,36 | 1,22 % | 97,40 % |
+| 234,4 / 246,1 | −117,6 / −117,8 | 1,42 % | 98,83 % |
+
+Os *bins* 9/10/11 (105,5 / 117,2 / 128,9 Hz) são **adjacentes** — correspondem ao lóbulo principal da
+janela Hann sobre **uma única** componente, não a três componentes distintas. Distribuição: 50 % da
+energia em **1** *bin* e 90 % em **3**, contra ~852 e ~1534 *bins* esperados para ruído de banda larga
+(1705 *bins* na banda). O envelope RMS é **estacionário** (−96,2 ± 0,06 dB ao longo de 10,2 s).
+
+> **A origem física dessas componentes não foi determinada** e **não é atribuída** neste registro.
+> Registra-se apenas a observação espectral da cadeia medida. Consequência quantitativa observada:
+> excluindo o agrupamento próximo de 120 Hz o restante fica em ≈ −110 dBFS; excluindo todas as
+> componentes discretas observadas, em ≈ −121 dBFS. Componentes discretas sob silêncio **pertencem** ao
+> Noise Floor conforme `noise-floor-definition.md` §1/§5 (que exclui distorção, não componentes
+> discretas) — **nenhuma questão normativa em aberto**.
+
+#### F2 — **ABERTO** · bloqueia P1-003 e P1-005
+
+- **Estado:** Aberto.
+- **Bloqueia:** **P1-003** e **P1-005**.
+- **Não bloqueia:** **P1-002**.
+- **Observação:** `Dynamic Range = 80,1 dB` e `SNR = 80,4 dB` na caracterização física, contrariando
+  `dynamic-range-definition.md` §6 (*"Em geral, Dynamic Range ≥ SNR"*). Verificado que **não** é
+  artefato da divergência entre os dois estimadores de piso: o piso de banda larga e o de banda
+  coincidem em 0,0002 dB nessa captura (E.7a), de modo que o P1-005 não o resolve.
+
+*Nenhum estudo conceitual foi iniciado.*
+
+#### F3 — **ABERTO** · Pilar 2 / P1-008
+
+A aba Integridade declara *"Sinal externo — métricas normativas (SNR, consistência) não se aplicam"* e,
+no mesmo cabeçalho, exibe `SNR 80,4 dB` e `Consistência 1,5 %`; a aba Ruído as reapresenta como leituras
+normativas. Declaração de aplicabilidade e apresentação têm fontes distintas. Relacionado a **V1/V5** e
+a **MS-10/D5**. Tratamento previsto **durante o Pilar 2 / P1-008**.
+
+#### F5 — **ENCERRADO** · achado de apresentação (Pilar 2)
+
+O gráfico rotulado "Captura de silêncio" exibe forma de onda de aparência musical, com envelope variável
+e decaimento, em eixo rotulado ±0,50 — enquanto o arquivo tem pico de −92,2387 dBFS (2,4 × 10⁻⁵) e
+envelope **plano**. Causas identificadas:
+
+1. **Auto-normalização** do gráfico: os rótulos do eixo não correspondem à escala dos dados;
+2. **Efeito de moiré na renderização**: 489 568 amostras em ~1300 px ⇒ ~377 amostras por pixel, contra
+   400 amostras por período da componente dominante ⇒ **0,94 ciclo por pixel**. Menos de um ciclo por
+   pixel produz batimento de fase entre pixels — o padrão pseudoaleatório observado.
+
+> **Dados corretos; representação gráfica potencialmente enganosa.** Nenhum escalar é afetado.
+> Achado de **apresentação** → **Pilar 2**.
+
+#### F8 — **ABERTO** · higiene de evidência
+
+Windows reporta **469 checks** e Linux **461**, no mesmo commit. Verificado que **não existe nenhum
+`#ifdef`/`_WIN32` em `tests/`**. Enquanto não reconciliado, "a suíte passou" não significa exatamente a
+mesma afirmação nos dois ambientes. Não bloqueia nenhum item do Plano Mestre.
+
 ---
 
 ## Encadeamento com os pilares

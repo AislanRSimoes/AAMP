@@ -19,7 +19,7 @@
 
 | ID | Origem | Ref. normativa | Tipo | Risco | Situação atual | Situação esperada | Dependências |
 |----|--------|----------------|------|:----:|----------------|-------------------|--------------|
-| **P1-001** | MS-08 | N1-R1 / **AR-01** | algoritmo | Moderado | Normalização por **ganho coerente** (calibrada para tom); ruído de banda larga **enviesado** por offset ~constante da janela (Apêndice B) | Normalização **energeticamente correta para ruído** (equivalência ENBW/Parseval), preservando a grandeza normativa do Noise Floor | **AR-01** (é a própria precondição) |
+| ~~**P1-001**~~ ✅ | MS-08 | N1-R1 / **AR-01** | algoritmo | Moderado | ~~Normalização por **ganho coerente** (calibrada para tom); ruído de banda larga **enviesado** por offset ~constante da janela (Apêndice B)~~ | **CONCLUÍDO** — normalização energeticamente correta para ruído (ENBW/Parseval) implementada em C++ e JS, preservando a grandeza normativa do Noise Floor | **AR-01** → **SATISFEITA** |
 | **P1-002** | MS-08 | N4 / D4 (princípio) | validação | Baixo | Só `Normal`/`Error`; silêncio vazio/curto → piso degenerado reportado como `Normal`; silêncio "sujo" não sinalizado | Estados de qualidade para silêncio degenerado (não caracterizável / baixa confiança) | P1-001 |
 | **P1-003** | MS-09 | **D2** | algoritmo | Moderado | Teto = RMS **banda larga no tempo** (inclui DC/fora de banda) — Apêndice C, MS09-A2 | Teto medido na **mesma banda** do Noise Floor (20–20 k) | AR-01, P1-001 |
 | **P1-004** | MS-09 | **D3** | validação / trat. de erro | Baixo | `teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4 | `teto ≤ piso` → **não caracterizável** (nunca valor positivo espúrio nem negativo) | P1-003 |
@@ -102,11 +102,16 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 
 ## Etapa 5 — Critérios de aceite por grupo
 
-**Normalização Espectral (FFT / ENBW)** — P1-001
-- ✓ Estimativa **energeticamente correta para ruído** demonstrada (equivalência ENBW/Parseval)
-- ✓ **Sem regressão** para tons (calibração de tom preservada)
-- ✓ **AR-01 satisfeita** (precondição validada e registrada)
-- ✓ Aplicada em **C++ e JS** (CC-A); ✓ documentação consistente; ✓ testes passam
+**Normalização Espectral (FFT / ENBW)** — P1-001 — ✅ **TODOS ATENDIDOS**
+- ✅ Estimativa **energeticamente correta para ruído** demonstrada (equivalência ENBW/Parseval) — erro
+  sintético 0,0037 dB (tolerância 0,1 dB), invariante em 5 décadas de nível
+- ✅ **Sem regressão** para tons — `magSpectrum`/`fullSpectrum`/`peakBin`/`thdPercent` byte-idênticos;
+  TC-031 e TC-032 preservados
+- ✅ **AR-01 satisfeita** (precondição validada e registrada em `metrics-audit.md` → AR-01)
+- ✅ Aplicada em **C++ e JS** (CC-A), confirmado também sobre dado físico real
+- ✅ Documentação consistente; ✅ testes passam (Linux 461 · Windows 469, 0 falhas)
+- ✅ **Regressão permanente:** TC-038, com controle negativo executado
+- ✅ **Validação física** e **A/B por reprocessamento offline** (Δ = −4,772273 dB)
 
 **Noise Floor (MS-08)** — P1-002
 - ✓ Valor = nível **RMS in-band 20–20 k**, energeticamente correto (consome P1-001)
@@ -134,6 +139,51 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - ✓ Noise Floor exportado como **escalar dBFS + banda/condição** nos metadados
 - ✓ Dynamic Range como **escalar dB + `NotApplicable`** na degeneração + metadados
 - ✓ SNR conforme; ✓ (**congelamento do formato → Pilar 3**)
+
+---
+
+## Estado de execução
+
+| Item | Estado | Observação |
+|---|:--:|---|
+| **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
+| **P1-002** | ⬜ Não iniciado | Próximo na ordem. Aguarda autorização específica para a fase de análise. |
+| P1-003 … P1-008 | ⬜ Não iniciados | — |
+
+### P1-001 — síntese do encerramento
+
+- **Implementação:** `windowPowerGain` / `windowEnbwBins` (nova abstração do **domínio de ruído**;
+  nenhuma função de ENBW existia no código) consumidas por `noisePowerSpectrum()`, que reutiliza
+  `magSpectrum()` **sem alterá-la**. Espelhado em `computeMS08()` do LabEngine (**CC-A**).
+- **Commits:** `2bc5f88` (implementação) · `acca002` (TC-038) · `8fb6849` (infraestrutura de
+  diagnóstico) · `9222ae0` (ferramenta de reprocessamento A/B, fora do produto).
+- **Validação A/B — natureza do procedimento:** **não houve nova caracterização física nem nova
+  aquisição da Helix.** O A/B foi feito por **reprocessamento offline** do
+  `captures/ST09_Capture.wav` extraído do Evidence Package da caracterização já existente. Os dois
+  binários processaram **o mesmo arquivo, byte a byte**; a **única variável alterada foi o algoritmo**.
+
+  | Estado | Commit | `NoiseFloor_dBFS` |
+  |---|---|---:|
+  | Pré-correção | `692a49a` | −91,457365 |
+  | Pós-correção | `9222ae0` | −96,229638 |
+  | | **Δ** | **−4,772273 dB** = `−10·log10(2·ENBW_Hann)` |
+
+- **Verificação independente:** RMS no domínio do tempo (sem FFT) reproduziu o resultado espectral com
+  erro de **0,00016 dB**.
+
+### Achados abertos que condicionam a execução
+
+| ID | Achado | Bloqueia | Não bloqueia |
+|---|---|---|---|
+| **F2** | `Dynamic Range < SNR` contraria `dynamic-range-definition.md` §6 | **P1-003, P1-005** | **P1-002** |
+| **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
+| **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
+
+**F1** e **F5** foram encerrados. Detalhamento de todos em [`metrics-audit.md`](./metrics-audit.md) →
+*Registro de Encerramento — P1-001* → §E.10.
+
+> **F2 exige decisão antes do P1-003.** Nenhum estudo conceitual foi iniciado. Como **F2 não bloqueia o
+> P1-002**, a ordem do Plano Mestre permanece **inalterada**.
 
 ---
 
