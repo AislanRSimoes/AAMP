@@ -251,6 +251,116 @@ TEST_CASE("TC-038 MS-08 piso de ruido energeticamente correto (ENBW/Parseval) +-
     }
 }
 
+// TC-039 (P1-002): estados de qualidade do MS-08 em silencio degenerado.
+// Fundamento: noise-floor-definition.md sec.7 (Estabilidade / Rastreabilidade), N4 e o principio D4.
+// Mapeamento aprovado: ST-09 ausente -> Error; nao caracterizavel -> NotApplicable; observacao
+// insuficiente -> LowConfidence. "Silencio sujo" (DV-4) NAO faz parte deste item -> Pilar 2.
+//
+// O teste tambem fixa duas nao-regressoes exigidas pela autorizacao:
+//   (a) captura valida permanece Normal e com o MESMO valor do P1-001 (TC-038 cobre o numero);
+//   (b) o comportamento do MS-09 NAO muda (Q4), inclusive no caso de silencio digital.
+namespace {
+// Localiza um escalar do MS-08 no bundle. Devolve nullptr se ausente.
+const Scalar* nfScalar(const ResultBundle& b, const char* key) {
+    const MetricResult* m = b.find("MS-08");
+    if (m == nullptr) return nullptr;
+    for (const Scalar& s : m->scalars) if (s.key == key) return &s;
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("TC-039 MS-08 estados de qualidade em silencio degenerado") {
+    AnalysisEngine eng(FS);
+    const int NFFT = 4096, HOP = 2048;
+
+    // --- Referencia: captura valida -> Normal, presente, com quadros suficientes ---
+    {
+        ResultBundle b = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+        const MetricResult* m = b.find("MS-08");
+        CHECK(m != nullptr && m->quality == Quality::Normal);
+        const Scalar* v = nfScalar(b, "NoiseFloor_dBFS");
+        const Scalar* f = nfScalar(b, "NoiseFloor_frames");
+        CHECK(v != nullptr && v->quality == Quality::Normal && v->valuePresent);
+        CHECK(f != nullptr && f->value >= static_cast<double>(k::NOISE_AVG_FRAMES));
+        CHECK(v != nullptr && v->value < -1.0);   // valor real, nunca o clamp
+    }
+
+    // --- C0: ST-09 ausente -> Error (comportamento preservado) ---
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured.erase(StimulusId::ST09_Silence);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* m = b.find("MS-08");
+        CHECK(m != nullptr && m->quality == Quality::Error);
+        CHECK(nfScalar(b, "NoiseFloor_dBFS") == nullptr);   // Error nao emite escalar
+    }
+
+    // --- C1: ST-09 presente porem VAZIO -> nada observado -> NotApplicable ---
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence].clear();
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* m = b.find("MS-08");
+        const Scalar* v = nfScalar(b, "NoiseFloor_dBFS");
+        const Scalar* f = nfScalar(b, "NoiseFloor_frames");
+        CHECK(m != nullptr && m->quality == Quality::NotApplicable);
+        CHECK(v != nullptr && v->quality == Quality::NotApplicable && !v->valuePresent);
+        CHECK(f != nullptr && f->value == 0.0 && f->quality == Quality::Normal && f->valuePresent);
+    }
+
+    // --- C2: ST-09 mais curto que uma janela -> nada observado -> NotApplicable ---
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence] =
+            harness::deterministicNoise(static_cast<std::size_t>(NFFT - 1), -95.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* m = b.find("MS-08");
+        const Scalar* f = nfScalar(b, "NoiseFloor_frames");
+        CHECK(m != nullptr && m->quality == Quality::NotApplicable);
+        CHECK(f != nullptr && f->value == 0.0);
+    }
+
+    // --- C3: poucos quadros (5 < 16) -> observacao insuficiente -> LowConfidence ---
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        const std::size_t n5 = static_cast<std::size_t>(NFFT + 4 * HOP);   // exatamente 5 janelas
+        cap.captured[StimulusId::ST09_Silence] = harness::deterministicNoise(n5, -95.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* m = b.find("MS-08");
+        const Scalar* v = nfScalar(b, "NoiseFloor_dBFS");
+        const Scalar* f = nfScalar(b, "NoiseFloor_frames");
+        CHECK(f != nullptr && f->value == 5.0);
+        CHECK(m != nullptr && m->quality == Quality::LowConfidence);
+        // observacao insuficiente reduz a CONFIANCA, mas o valor continua sendo uma medicao
+        CHECK(v != nullptr && v->quality == Quality::LowConfidence && v->valuePresent);
+    }
+
+    // --- C4: silencio digital bit-exato -> piso nao-mensuravel -> NotApplicable ---
+    // (condicao efetivamente observada em hardware: Helix em preset vazio)
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& st09 = cap.captured[StimulusId::ST09_Silence];
+        std::fill(st09.begin(), st09.end(), 0.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const MetricResult* m = b.find("MS-08");
+        const Scalar* v = nfScalar(b, "NoiseFloor_dBFS");
+        const Scalar* f = nfScalar(b, "NoiseFloor_frames");
+        CHECK(m != nullptr && m->quality == Quality::NotApplicable);
+        CHECK(v != nullptr && !v->valuePresent);
+        // discrimina C4 de C1/C2: houve observacao (quadros > 0), o piso e que e nulo
+        CHECK(f != nullptr && f->value > 0.0);
+
+        // Q4 -- NAO-REGRESSAO DO MS-09: o DV-2 nao pode alterar o Dynamic Range neste item.
+        // O MS-09 le NoiseFloor_dBFS por chave e ignora nf.quality; deve continuar produzindo
+        // exatamente o mesmo resultado de antes do P1-002 (clamp -300 dBFS preservado no campo).
+        const MetricResult* dr = b.find("MS-09");
+        CHECK(dr != nullptr && dr->quality == Quality::Normal);
+        CHECK(v != nullptr && std::fabs(v->value - (-300.0)) < 1e-9);
+        for (const Scalar& s : dr->scalars)
+            if (s.key == "DynamicRange_dB") CHECK(s.value > 200.0);   // teto - (-300)
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);

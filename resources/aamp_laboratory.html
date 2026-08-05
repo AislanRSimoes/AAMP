@@ -937,7 +937,16 @@ function computeMS08(signal){
   }
   const integFull=frames>0 ? acc/frames : 0;              // média Welch sobre todos os quadros
   const noisefloor_dbfs=10*Math.log10(Math.max(integFull,1e-30));
-  return {noisefloor_dbfs};
+  // P1-002 — classificação da observação, espelha AnalysisEngine::noiseFloor (CC-A).
+  // Estrutural, sem limiar novo; NÃO detecta "silêncio sujo" (DV-4 → Pilar 2).
+  //   frames == 0     → nenhuma janela observada: não há medição      → NotApplicable
+  //   integFull == 0  → piso não-mensurável (silêncio digital)        → NotApplicable
+  //   frames < 16     → observação aquém da linha de base do projeto  → LowConfidence
+  const NOISE_AVG_FRAMES=16;                             // k::NOISE_AVG_FRAMES do Core
+  let quality='Normal', valuePresent=true;
+  if(frames<=0||integFull<=0){quality='NotApplicable'; valuePresent=false;}
+  else if(frames<NOISE_AVG_FRAMES){quality='LowConfidence';}
+  return {noisefloor_dbfs, frames, quality, valuePresent};
 }
 /* MS-09 (Dynamic Range) — QUINTA família nativa. Primeira com DEPENDÊNCIA CIENTÍFICA entre famílias.
    Método oficial (AnalysisEngine::dynamicRange): sobre a captura de degraus dinâmicos (ST-08), divide em
@@ -1362,8 +1371,10 @@ const LabEngine={
     if(st09&&st09.wav){
       const sig={samples:st09.wav.samples, sampleRate:st09.wav.sampleRate};
       m08result=computeMS08(sig);
-      const mr08={id:'MS-08',name:'Noise Floor',quality:'Normal',scalars:[
-        {key:'NoiseFloor_dBFS',value:m08result.noisefloor_dbfs,unit:'dBFS',quality:'Normal',valuePresent:true}],curves:[]};
+      // P1-002/CC-B: o estado deixa de ser 'Normal' literal e passa a vir da própria família.
+      const mr08={id:'MS-08',name:'Noise Floor',quality:m08result.quality,scalars:[
+        {key:'NoiseFloor_dBFS',value:m08result.noisefloor_dbfs,unit:'dBFS',quality:m08result.quality,valuePresent:m08result.valuePresent},
+        {key:'NoiseFloor_frames',value:m08result.frames,unit:'n',quality:'Normal',valuePresent:true}],curves:[]};
       byId[mr08.id]=mr08; mr08.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     const st08=(session.captures||[]).find(c=>c.stimulus==='ST-08');   // localização = responsabilidade do LabEngine

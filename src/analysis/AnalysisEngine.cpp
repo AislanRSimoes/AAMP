@@ -752,9 +752,31 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
                 if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
                 integFull += acc2[b] / fr2;
             }
-        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, 1e-30)), "dBFS", Quality::Normal, true});
     }
-    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, 1e-30)), "dBFS", Quality::Normal, true});
+
+    // ---- P1-002: classificacao da observacao (NAO altera o estimador do P1-001) ----
+    // Fundamento: noise-floor-definition.md sec.7 (Estabilidade: "dado tempo de observacao
+    // suficiente"; Rastreabilidade: condicao declarada junto ao numero) e N4/D4.
+    // Condicoes ESTRUTURAIS, sem limiar novo. A deteccao de "silencio sujo" (DV-4) NAO e feita
+    // aqui: depende de limiar, que pertence ao Pilar 2.
+    //   fr2 == 0        -> nenhuma janela observada: nao ha medicao      -> NotApplicable
+    //   integFull == 0  -> piso nao-mensuravel (silencio digital)        -> NotApplicable
+    //   fr2 < 16        -> observacao aquem da linha de base do projeto  -> LowConfidence
+    // O limite de 16 reutiliza k::NOISE_AVG_FRAMES, a observacao ja dimensionada pelo projeto;
+    // nao e um limiar novo.
+    Quality nfQuality = Quality::Normal;
+    bool    nfPresent = true;
+    if (fr2 <= 0 || integFull <= 0.0) { nfQuality = Quality::NotApplicable; nfPresent = false; }
+    else if (fr2 < k::NOISE_AVG_FRAMES) { nfQuality = Quality::LowConfidence; }
+
+    // Quando nfPresent e false o campo numerico NAO deve ser interpretado como medicao (o valor
+    // permanece o do clamp apenas para que o MS-09 mantenha comportamento identico -- Q4/P1-002;
+    // fazer o MS-09 honrar nf.quality pertence a P1-003/P1-004).
+    if (USE_FULL_OBSERVATION)
+        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, 1e-30)), "dBFS", nfQuality, nfPresent});
+    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, 1e-30)), "dBFS", nfQuality, nfPresent});
+    // Descritor auditavel da condicao (sec.7 Rastreabilidade): sempre valido e presente -- e o
+    // discriminador entre "nada observado" (0) e "observado e nulo" (>0), que compartilham o clamp.
     r.scalars.push_back({"NoiseFloor_frames", static_cast<double>(fr2), "n", Quality::Normal, true});
     {
         const double covBase = (frames > 0) ? static_cast<double>((frames - 1) * hop + N) : 0.0;
@@ -763,7 +785,7 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         dbgUsage(r, "NF", static_cast<double>(sig.size()), 0.0, cov, cov, N, m_fs);
     }
 
-    r.quality = Quality::Normal;
+    r.quality = nfQuality;   // P1-002 (antes: Quality::Normal incondicional)
     return r;
 }
 
