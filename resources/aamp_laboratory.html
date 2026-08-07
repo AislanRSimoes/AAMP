@@ -957,16 +957,25 @@ function computeMS08(signal){
    D-DEPENDÊNCIA-DE-FAMÍLIA: a segunda entrada é o RESULTADO CIENTÍFICO OFICIAL da MS-08 (objeto), não o
    contrato/UI — a família não conhece apresentação. Reproduz internamente a semântica do Core
    (Normal/NotApplicable/Error); a tradução para o contrato é feita pelo LabEngine. */
-function computeMS09(signal, officialNoiseFloor){
+function computeMS09(signal, officialNoiseFloor, stepSource){
   const samples=signal.samples, fs=signal.sampleRate;
   const nf = officialNoiseFloor && officialNoiseFloor.noisefloor_dbfs;   // dependência: resultado oficial da MS-08
   if(!samples || !samples.length || nf==null || !isFinite(nf))
     return {quality:'Error', dynamicrange_db:null};                      // pré-condição científica ausente
+  // F9 — alinhamento temporal local, MESMA convenção do computeMS13 (espelha AnalysisEngine::dynamicRange).
+  // A latência da cadeia desloca a captura; fatiar a partir de 0 mistura degraus adjacentes e enviesa
+  // o teto para baixo. O lag atua SÓ sobre índices de leitura — nenhum buffer é deslocado ou filtrado,
+  // e nada da definição espectral do teto (P1-003) muda aqui.
+  const src = stepSource && stepSource.samples;
+  if(!src || !src.length)                                                // sem referência temporal das
+    return {quality:'NotApplicable', dynamicrange_db:null};              // fronteiras: não caracterizável
+  const maxLag=Math.round(0.050*fs);                                     // mesma política de latência da MS-13/14
+  const lag=bestLag(officialEnvelope(src,fs), officialEnvelope(samples,fs), maxLag);
   const seg=Math.round(0.100*fs);
   let lmaxRms=0;
   for(let s=0;s<8;s++){
-    const a=s*seg; if(a>=samples.length) continue;                       // segmento vazio -> ignora (slice do Core)
-    const part=samples.slice(a, Math.min((s+1)*seg, samples.length));
+    const a=s*seg+lag; if(a>=samples.length) continue;                   // segmento vazio -> ignora (slice do Core)
+    const part=samples.slice(a, Math.min((s+1)*seg+lag, samples.length));
     if(part.length===0) continue;
     let sq=0, pk=0;
     for(let i=0;i<part.length;i++){const v=part[i]; sq+=v*v; const av=Math.abs(v); if(av>pk)pk=av;}
@@ -1379,7 +1388,9 @@ const LabEngine={
     }
     const st08=(session.captures||[]).find(c=>c.stimulus==='ST-08');   // localização = responsabilidade do LabEngine
     if(st08&&st08.wav){
-      const m09=computeMS09({samples:st08.wav.samples, sampleRate:st08.wav.sampleRate}, m08result);
+      const src08=(session.stimuli||[]).find(x=>x.stimulus==='ST-08');   // F9: fonte emitida (D-EVIDENCE-DOMÍNIO)
+      const m09=computeMS09({samples:st08.wav.samples, sampleRate:st08.wav.sampleRate}, m08result,
+                            (src08&&src08.wav)?{samples:src08.wav.samples, sampleRate:src08.wav.sampleRate}:null);
       const present=m09.quality==='Normal';                            // traduz Normal/NotApplicable/Error -> contrato
       const mr09={id:'MS-09',name:'Dynamic Range',quality:m09.quality,scalars:[
         {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,valuePresent:present}],curves:[]};

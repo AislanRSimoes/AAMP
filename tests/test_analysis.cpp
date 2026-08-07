@@ -361,6 +361,92 @@ TEST_CASE("TC-039 MS-08 estados de qualidade em silencio degenerado") {
     }
 }
 
+// TC-041 (F9): o teto do MS-09 deve ser INVARIANTE a latencia da cadeia.
+// A captura chega deslocada (loopback tipico ~913 amostras). Fatiar em janelas fixas de 100 ms a
+// partir da amostra 0 faz cada janela misturar degraus adjacentes; como a progressao do ST-08 e
+// monotonica, o vies e sistematico e sempre REDUZ o teto. O MS-09 passa a alinhar por correlacao
+// de envelopes contra a fonte emitida -- mesma convencao ja empregada pelo MS-13.
+//
+// O caso prova DUAS coisas separadamente:
+//   (a) controle POSITIVO -- com o alinhamento, o teto nao depende do offset;
+//   (b) controle NEGATIVO -- o fatiamento SEM lag, reimplementado aqui de forma independente do
+//       codigo de producao, reproduz -0,3157 dB (913) e -0,8859 dB (2400).
+// (b) nao usa nenhuma funcao do produto: e um oraculo proprio do teste.
+namespace {
+
+// Oraculo independente: replica o fatiamento ANTIGO (sem lag) apenas para o controle negativo.
+double tetoSemAlinhamento(const std::vector<double>& cap, double fs) {
+    const int seg = static_cast<int>(0.100 * fs + 0.5);
+    double best = 0.0;
+    for (int s = 0; s < 8; ++s) {
+        const std::size_t a = static_cast<std::size_t>(s * seg);
+        std::size_t b = static_cast<std::size_t>((s + 1) * seg);
+        if (a >= cap.size()) continue;
+        if (b > cap.size()) b = cap.size();
+        double sq = 0.0, pkv = 0.0;
+        for (std::size_t i = a; i < b; ++i) { sq += cap[i] * cap[i]; pkv = std::max(pkv, std::fabs(cap[i])); }
+        const double rms = std::sqrt(sq / static_cast<double>(b - a));
+        if (pkv < 1.0) best = std::max(best, rms);
+    }
+    return 20.0 * std::log10(std::max(best, 1e-30));
+}
+
+// Captura simulada: cadeia de ganho unitario, apenas atrasada de 'off' amostras.
+std::vector<double> atrasar(const std::vector<double>& x, int off) {
+    std::vector<double> y(x.size() + static_cast<std::size_t>(off), 0.0);
+    for (std::size_t i = 0; i < x.size(); ++i) y[i + static_cast<std::size_t>(off)] = x[i];
+    return y;
+}
+
+double drDe(const ResultBundle& b) {
+    const MetricResult* m = b.find("MS-09");
+    if (m == nullptr) return 0.0;
+    for (const Scalar& s : m->scalars) if (s.key == "DynamicRange_dB") return s.value;
+    return 0.0;
+}
+
+} // namespace
+
+TEST_CASE("TC-041 MS-09 teto invariante a latencia (F9: alinhamento temporal)") {
+    AnalysisEngine eng(FS);
+    StimulusGenerator gen(FS);
+    const std::vector<double> src = gen.getStimulus(StimulusId::ST08_DynamicStep).samples;
+    // Teto ideal: degrau mais alto = seno de 1 kHz a -6 dBFS de pico -> RMS -9,0103 dBFS.
+    const double tetoIdeal = 20.0 * std::log10(std::sqrt(0.5) * dbfsToLinear(-6.0));
+
+    const int offsets[3] = { 0, 913, 2400 };
+    // Vies esperado do fatiamento SEM alinhamento, derivado analiticamente da contaminacao:
+    //   f = off/seg;  vies = 10*log10[ f*10^(-0.8) + (1-f)*10^(-0.6) ] - 10*log10(10^(-0.6))
+    const double viesEsperado[3] = { 0.0, -0.3157, -0.8859 };
+
+    double drRef = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST08_DynamicStep] = atrasar(src, offsets[k]);
+        ResultBundle b = eng.computeAllMetrics(cap);
+
+        // --- (a) controle POSITIVO: o MS-09 nao depende do offset ---
+        const MetricResult* m = b.find("MS-09");
+        CHECK(m != nullptr && m->quality == Quality::Normal);
+        const double dr = drDe(b);
+        if (k == 0) drRef = dr; else CHECK_NEAR(dr, drRef, 0.01);
+
+        // --- (b) controle NEGATIVO: o fatiamento antigo reproduz o vies previsto ---
+        const double tetoAntigo = tetoSemAlinhamento(cap.captured[StimulusId::ST08_DynamicStep], FS);
+        CHECK_NEAR(tetoAntigo - tetoIdeal, viesEsperado[k], 0.01);
+
+        // e o vies do algoritmo ANTIGO e efetivamente diferente de zero quando ha atraso
+        if (offsets[k] > 0) CHECK(std::fabs(tetoAntigo - tetoIdeal) > 0.1);
+
+        // --- MS-13 permanece invariante (ja alinhava): nao-regressao ---
+        const MetricResult* m13 = b.find("MS-13");
+        CHECK(m13 != nullptr);
+        if (m13 != nullptr)
+            for (const Scalar& s : m13->scalars)
+                if (s.key == "LevelTransfer_step8_dB") CHECK_NEAR(s.value, 0.0, 0.01);
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);

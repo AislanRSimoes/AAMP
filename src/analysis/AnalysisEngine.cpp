@@ -140,6 +140,7 @@ static constexpr bool USE_FULL_IR          = true;  // IR completa exposta (sem 
 static constexpr int  WELCH_NFFT           = 16384; // janela Welch (quando religado)
 static void dbgUsage(MetricResult& r, const std::string& m, double bufTotal,
                      double regStart, double regEnd, double used, int fftSize, double fs); // fwd decl
+static int bestLag(const std::vector<double>& in, const std::vector<double>& out, int maxLag); // fwd decl (F9)
 
 MetricResult AnalysisEngine::freqResponse(const CapturedSet& cap) const {
     MetricResult r; r.id = "MS-01"; r.name = "Frequency Response";
@@ -800,10 +801,32 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     for (const auto& sc : nf.scalars)
         if (sc.key == "NoiseFloor_dBFS") { lnf = sc.value; haveNf = true; break; }
     if (step == cap.captured.end() || !haveNf) { r.quality = Quality::Error; return r; }
+
+    // ---- F9: alinhamento temporal local (MESMA convencao ja empregada pelo MS-13) ----
+    // A latencia da cadeia desloca a captura; fatiar a partir da amostra 0 faz cada janela de
+    // 100 ms misturar degraus adjacentes e enviesa o teto para baixo de forma sistematica
+    // (~-0,32 dB para o offset de ~913 amostras observado em loopback).
+    // O lag atua SOMENTE sobre indices de leitura: nenhum buffer e deslocado, filtrado ou
+    // reamostrado, e NADA da definicao espectral do teto (P1-003) e alterado aqui.
+    StimulusGenerator gen(m_fs);
+    const std::vector<double> src = gen.getStimulus(StimulusId::ST08_DynamicStep).samples;
+    if (src.empty()) {
+        // Sem a fonte emitida nao ha referencia temporal para as fronteiras dos degraus: o
+        // estimador aprovado nao pode caracterizar. NAO se usa o fatiamento desalinhado como
+        // fallback -- ele e sabidamente enviesado. (No caminho NATIVO a fonte e regenerada
+        // deterministicamente, entao este ramo e inalcancavel; ele existe para manter o mesmo
+        // contrato do LabEngine, onde a fonte vem do Evidence Package e pode faltar.)
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+    const int maxLag = static_cast<int>(0.050 * m_fs);   // mesma politica de latencia do MS-13/MS-14
+    const int lag = bestLag(extractEnvelope(src, m_fs), extractEnvelope(step->second, m_fs), maxLag);
+
     const int seg = static_cast<int>(0.100 * m_fs + 0.5);
     double lmaxRms = 0.0;
     for (int s = 0; s < 8; ++s) {
-        std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg), static_cast<std::size_t>((s + 1) * seg));
+        std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg + lag), static_cast<std::size_t>((s + 1) * seg + lag));
         if (part.empty()) continue;
         const double rms = std::sqrt(meanSquare(part));
         if (peak(part) < 1.0) lmaxRms = std::max(lmaxRms, rms);
