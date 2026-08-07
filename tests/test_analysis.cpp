@@ -447,6 +447,97 @@ TEST_CASE("TC-041 MS-09 teto invariante a latencia (F9: alinhamento temporal)") 
     }
 }
 
+// TC-043 (P1-003): o teto do MS-09 deve ser o nivel RMS IN-BAND (20 Hz - 20 kHz), medido pelo
+// MESMO estimador espectral do MS-08 (Hann N=4096 + ENBW/Parseval), e NAO o RMS de banda larga
+// no tempo. `dynamic-range-definition.md` sec.4 exige teto e piso na MESMA banda; sec.5 exclui
+// explicitamente DC, subsonicos e ultrassonicos TAMBEM no teto.
+//
+// Prova tres coisas separadamente:
+//   (a) cadeia limpa -> teto correto e INVARIANTE ao atraso (F9 permanece preservado);
+//   (b) energia FORA da banda nao eleva o teto -- com controle NEGATIVO independente que
+//       reproduz o vies do estimador de banda larga (oraculo proprio do teste);
+//   (c) o gate de clipping continua TEMPORAL e ainda rejeita o degrau saturado.
+TEST_CASE("TC-043 MS-09 teto restrito a banda 20 Hz-20 kHz (P1-003)") {
+    AnalysisEngine eng(FS);
+    StimulusGenerator gen(FS);
+    const std::vector<double> src = gen.getStimulus(StimulusId::ST08_DynamicStep).samples;
+    // Degrau mais alto: seno de 1 kHz a -6 dBFS de pico -> -9,0103 dBFS RMS.
+    const double tetoIdeal = 20.0 * std::log10(std::sqrt(0.5) * dbfsToLinear(-6.0));
+
+    // teto reconstruido do bundle: DynamicRange_dB + NoiseFloor_dBFS (mesmo piso nos dois)
+    auto tetoDe = [](const ResultBundle& b) -> double {
+        double dr = 0.0, nf = 0.0;
+        const MetricResult* m9 = b.find("MS-09");
+        const MetricResult* m8 = b.find("MS-08");
+        if (m9 != nullptr) for (const Scalar& s : m9->scalars) if (s.key == "DynamicRange_dB")   dr = s.value;
+        if (m8 != nullptr) for (const Scalar& s : m8->scalars) if (s.key == "NoiseFloor_dBFS")   nf = s.value;
+        return dr + nf;
+    };
+    auto bundleCom = [&](const std::vector<double>& st08) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST08_DynamicStep] = st08;
+        return eng.computeAllMetrics(cap);
+    };
+
+    // --- (a) cadeia limpa: teto correto e invariante ao atraso (nao-regressao de F9) ---
+    {
+        const int offsets[3] = { 0, 913, 2400 };
+        for (int k = 0; k < 3; ++k) {
+            ResultBundle b = bundleCom(atrasar(src, offsets[k]));
+            const MetricResult* m = b.find("MS-09");
+            CHECK(m != nullptr && m->quality == Quality::Normal);
+            CHECK_NEAR(tetoDe(b), tetoIdeal, 0.01);
+            // MS-13 nao regride na cadeia limpa
+            const MetricResult* m13 = b.find("MS-13");
+            if (m13 != nullptr)
+                for (const Scalar& s : m13->scalars)
+                    if (s.key == "LevelTransfer_step8_dB") CHECK_NEAR(s.value, 0.0, 0.01);
+        }
+    }
+
+    // --- (b) energia fora da banda NAO eleva o teto; controle negativo independente ---
+    // O oraculo tetoSemAlinhamento() replica o estimador ANTIGO (RMS de banda larga no tempo);
+    // com offset 0 o alinhamento e trivial, entao ele isola exclusivamente o efeito de BANDA.
+    {
+        // DC de 0,02 (componente continua: fora da banda por definicao)
+        std::vector<double> cDc = src;
+        for (double& v : cDc) v += 0.02;
+        CHECK_NEAR(tetoDe(bundleCom(cDc)), tetoIdeal, 0.01);                 // rejeitado
+        CHECK_NEAR(tetoSemAlinhamento(cDc, FS), -8.9965, 0.01);              // oraculo: inflado
+
+        // subsonico de 5 Hz a -20 dBFS
+        std::vector<double> cSub = src;
+        for (std::size_t i = 0; i < cSub.size(); ++i)
+            cSub[i] += 0.1 * std::sin(2.0 * 3.14159265358979 * 5.0 * static_cast<double>(i) / FS);
+        CHECK_NEAR(tetoDe(bundleCom(cSub)), tetoIdeal, 0.01);                // rejeitado
+        CHECK_NEAR(tetoSemAlinhamento(cSub, FS), -8.8408, 0.01);             // oraculo: inflado
+
+        // ultrassonico de 22 kHz a -20 dBFS
+        std::vector<double> cUlt = src;
+        for (std::size_t i = 0; i < cUlt.size(); ++i)
+            cUlt[i] += 0.1 * std::sin(2.0 * 3.14159265358979 * 22000.0 * static_cast<double>(i) / FS);
+        CHECK_NEAR(tetoDe(bundleCom(cUlt)), tetoIdeal, 0.01);                // rejeitado
+        CHECK_NEAR(tetoSemAlinhamento(cUlt, FS), -8.8408, 0.01);             // oraculo: inflado
+
+        // o vies do estimador antigo e efetivamente NAO-NULO (impede aprovacao por acaso)
+        CHECK(tetoSemAlinhamento(cSub, FS) - tetoIdeal > 0.1);
+        CHECK(tetoSemAlinhamento(cUlt, FS) - tetoIdeal > 0.1);
+    }
+
+    // --- (c) o gate de clipping continua TEMPORAL e rejeita o degrau saturado ---
+    {
+        std::vector<double> cSat = src;
+        for (double& v : cSat) v = std::max(-1.0, std::min(1.0, v * 4.0));
+        ResultBundle b = bundleCom(cSat);
+        const MetricResult* m = b.find("MS-09");
+        CHECK(m != nullptr && m->quality == Quality::Normal);
+        // degrau 6 (-10 dBFS) x 4 = +2 dBFS satura; o maior valido e o degrau 5 (-16 dBFS x 4)
+        const double tetoEsperado = 20.0 * std::log10(std::sqrt(0.5) * 4.0 * dbfsToLinear(-16.0));
+        CHECK_NEAR(tetoDe(b), tetoEsperado, 0.01);
+        CHECK(tetoDe(b) < tetoIdeal + 6.0);   // nao pegou um degrau saturado
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);

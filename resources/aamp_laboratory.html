@@ -915,25 +915,36 @@ function computeMS07(signal){
    D-SAÍDA-OFICIAL: calcula apenas o escalar oficial (NoiseFloor_dBFS) — não reproduz a Curve "Noise Floor"
    nem os diagnósticos do Core (sem consumidor); a integração de banda é acumulada por quadro (sem array
    por-bin intermediário). */
-function computeMS08(signal){
-  const samples=signal.samples, fs=signal.sampleRate;
-  const N=4096, hop=N>>1, half=N>>1, BAND_LO=20, BAND_HI=20000;
-  const win=new Array(N); let cg=0, s2=0;                  // janela Hann + ganho coerente (privados à família)
+/* officialBandPower — POTÊNCIA integrada na banda pelo método oficial do Core (Hann + normalização
+   ENBW/Parseval + soma dos bins dentro de [bandLo, bandHi]). Espelha AnalysisEngine::inBandPower,
+   que por sua vez reutiliza noisePowerSpectrum.
+   EXTRAÍDA MECANICAMENTE do computeMS08 (P1-003): nenhuma operação matemática, ordem de soma ou
+   constante foi alterada — a saída do MS-08 permanece numericamente idêntica. Lê o bloco a partir
+   de `start` sem copiar. Consumidores: MS-08 (piso, média de Welch sobre quadros) e MS-09 (teto,
+   quadro único centrado no degrau).
+   ENBW em bins = N·Σw²/(Σw)² (Hann = 1.5). O fator 1/(2·ENBW) converte a escala de AMPLITUDE DE TOM
+   entregue pela normalização por ganho coerente em POTÊNCIA (média quadrática) in-band — e vale
+   para ruído e para tom indistintamente (Parseval independe do tipo de sinal). */
+function officialBandPower(samples, start, N, fs, bandLo, bandHi){
+  const win=new Array(N); let cg=0, s2=0;
   for(let i=0;i<N;i++){const w=0.5-0.5*Math.cos(2*Math.PI*i/(N-1)); win[i]=w; cg+=w; s2+=w*w;}
-  // P1-001 — normalização ENERGÉTICA de ruído (ENBW/Parseval), espelha AnalysisEngine::noisePowerSpectrum.
-  // ENBW em bins = N·Σw²/(Σw)² (Hann = 1.5). O fator 1/(2·ENBW) converte a escala de AMPLITUDE DE TOM
-  // entregue pela normalização por ganho coerente em POTÊNCIA (média quadrática) in-band.
   const enbw=N*s2/(cg*cg), kPow=1/(2*enbw);
   const re=new Array(N), im=new Array(N);
+  for(let i=0;i<N;i++){re[i]=samples[start+i]*win[i]; im[i]=0;}
+  SCI.fft(re,im);
+  let band=0;
+  for(let b=0;b<(N>>1);b++){const f=b*fs/N; if(f<bandLo||f>bandHi)continue;
+    const mag=Math.hypot(re[b],im[b])/cg*2;                // magnitude normalizada (método espectral do Core)
+    band+=mag*mag*kPow;}                                   // potência por bin, integrada na banda
+  return band;
+}
+function computeMS08(signal){
+  const samples=signal.samples, fs=signal.sampleRate;
+  const N=4096, hop=N>>1, BAND_LO=20, BAND_HI=20000;
   let acc=0, frames=0;                                     // Σ_quadros (Σ_bins-na-banda mag²) ; nº de quadros
   for(let start=0; start+N<=samples.length; start+=hop){
-    for(let i=0;i<N;i++){re[i]=samples[start+i]*win[i]; im[i]=0;}
-    SCI.fft(re,im);
-    let band=0;
-    for(let b=0;b<half;b++){const f=b*fs/N; if(f<BAND_LO||f>BAND_HI)continue;
-      const mag=Math.hypot(re[b],im[b])/cg*2;              // magnitude normalizada (método espectral do Core)
-      band+=mag*mag*kPow;}                                 // potência de ruído por bin, integrada na banda
-    acc+=band; frames++;
+    acc+=officialBandPower(samples, start, N, fs, BAND_LO, BAND_HI);
+    frames++;
   }
   const integFull=frames>0 ? acc/frames : 0;              // média Welch sobre todos os quadros
   const noisefloor_dbfs=10*Math.log10(Math.max(integFull,1e-30));
@@ -972,19 +983,28 @@ function computeMS09(signal, officialNoiseFloor, stepSource){
   const maxLag=Math.round(0.050*fs);                                     // mesma política de latência da MS-13/14
   const lag=bestLag(officialEnvelope(src,fs), officialEnvelope(samples,fs), maxLag);
   const seg=Math.round(0.100*fs);
-  let lmaxRms=0;
+  // P1-003 (D2) — o teto passa a ser o NÍVEL RMS IN-BAND (20 Hz–20 kHz), pelo mesmo estimador do
+  // MS-08 (officialBandPower). Ordem obrigatória, com F9 preservado: alinhar → segmentar →
+  // gate de clipping no sinal BRUTO no tempo → só então estimar o nível in-band. O gate permanece
+  // temporal por necessidade física: saturação não é detectável num espectro restrito à banda.
+  const NFFT=4096, BAND_LO=20, BAND_HI=20000;                            // mesma janela do MS-08
+  let lmaxDb=0, have=false;
   for(let s=0;s<8;s++){
     const a=s*seg+lag; if(a>=samples.length) continue;                   // segmento vazio -> ignora (slice do Core)
     const part=samples.slice(a, Math.min((s+1)*seg+lag, samples.length));
     if(part.length===0) continue;
-    let sq=0, pk=0;
-    for(let i=0;i<part.length;i++){const v=part[i]; sq+=v*v; const av=Math.abs(v); if(av>pk)pk=av;}
-    const rms=Math.sqrt(sq/part.length);                                 // RMS do segmento (primitiva aritmética)
-    if(pk<1.0 && rms>lmaxRms) lmaxRms=rms;                               // gate de clipping: descarta pico ≥ 1.0
+    let pk=0;
+    for(let i=0;i<part.length;i++){const av=Math.abs(part[i]); if(av>pk)pk=av;}
+    if(pk>=1.0) continue;                                                // gate de clipping: descarta pico ≥ 1.0
+    if(part.length<NFFT) continue;
+    const off=(part.length-NFFT)>>1;                                     // quadro CENTRADO no degrau
+    const bp=officialBandPower(part, off, NFFT, fs, BAND_LO, BAND_HI);
+    if(bp<=0) continue;                                                  // degrau sem energia na banda
+    const lvl=10*Math.log10(bp);
+    if(!have || lvl>lmaxDb){lmaxDb=lvl; have=true;}
   }
-  if(lmaxRms<=0) return {quality:'NotApplicable', dynamicrange_db:null}; // todos os degraus clipados/vazios
-  const lmaxDb=20*Math.log10(lmaxRms);
-  return {quality:'Normal', dynamicrange_db: lmaxDb - nf};               // maior RMS válido − piso oficial da MS-08
+  if(!have) return {quality:'NotApplicable', dynamicrange_db:null};      // todos os degraus clipados/vazios
+  return {quality:'Normal', dynamicrange_db: lmaxDb - nf};               // maior nível in-band − piso oficial da MS-08
 }
 /* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
    razão de potências RMS temporais entre o tom de 1 kHz (ST-03) e o ruído (ST-09):

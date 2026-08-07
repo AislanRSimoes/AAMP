@@ -48,6 +48,23 @@ static std::vector<double> noisePowerSpectrum(const std::vector<double>& sig, in
     return p;
 }
 
+// Potencia in-band (20 Hz-20 kHz) de um bloco, pelo MESMO estimador espectral do MS-08 --
+// P1-003 / D2: o teto e o piso devem ser tomados na MESMA banda para que a diferenca seja
+// fisicamente valida (dynamic-range-definition.md sec.4/sec.5). Reutiliza noisePowerSpectrum,
+// isto e: Hann + normalizacao ENBW/Parseval, e integra os mesmos bins que o MS-08 integra.
+// Devolve POTENCIA linear (0 quando nao ha energia in-band), nao nivel em dB.
+static double inBandPower(const std::vector<double>& frame, int n, double fs, Window w) {
+    if (static_cast<int>(frame.size()) < n) return 0.0;
+    const std::vector<double> p = noisePowerSpectrum(frame, n, w);
+    double band = 0.0;
+    for (std::size_t b = 0; b < p.size(); ++b) {
+        const double f = static_cast<double>(b) * fs / static_cast<double>(n);
+        if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+        band += p[b];
+    }
+    return band;
+}
+
 static double meanSquare(const std::vector<double>& x) {
     if (x.empty()) return 0.0;
     double s = 0.0;
@@ -824,19 +841,31 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     const int lag = bestLag(extractEnvelope(src, m_fs), extractEnvelope(step->second, m_fs), maxLag);
 
     const int seg = static_cast<int>(0.100 * m_fs + 0.5);
-    double lmaxRms = 0.0;
+    // ---- P1-003 (D2): o teto passa a ser o NIVEL RMS IN-BAND (20 Hz-20 kHz), medido pelo mesmo
+    // estimador espectral do MS-08. Ordem obrigatoria, com F9 integralmente preservado:
+    //   (1) alinhar temporalmente (lag, acima)  -> (2) segmentar o degrau
+    //   (3) gate de clipping no sinal BRUTO no tempo -> (4) so entao estimar o nivel in-band.
+    // O gate permanece temporal por necessidade fisica: saturacao e fenomeno de amplitude no
+    // tempo e NAO e detectavel num espectro restrito a banda.
+    const int N = 4096;                     // mesma janela do MS-08; NAO reduzir para obter quadros
+    double lmaxDb = 0.0; bool haveCeil = false;
     for (int s = 0; s < 8; ++s) {
         std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg + lag), static_cast<std::size_t>((s + 1) * seg + lag));
         if (part.empty()) continue;
-        const double rms = std::sqrt(meanSquare(part));
-        if (peak(part) < 1.0) lmaxRms = std::max(lmaxRms, rms);
+        if (peak(part) >= 1.0) continue;                       // (3) gate TEMPORAL, sinal bruto
+        if (static_cast<int>(part.size()) < N) continue;
+        const int off = (static_cast<int>(part.size()) - N) / 2;  // quadro CENTRADO no degrau
+        const std::vector<double> frame = slice(part, static_cast<std::size_t>(off), static_cast<std::size_t>(off + N));
+        const double bp = inBandPower(frame, N, m_fs, Window::Hann);   // (4) nivel in-band
+        if (bp <= 0.0) continue;                                // degrau sem energia na banda
+        const double lvl = 10.0 * std::log10(bp);
+        if (!haveCeil || lvl > lmaxDb) { lmaxDb = lvl; haveCeil = true; }
     }
-    if (lmaxRms <= 0.0) {   // nenhum degrau valido (todos clipados/vazios) -> nao caracterizavel
+    if (!haveCeil) {   // nenhum degrau valido (todos clipados/vazios) -> nao caracterizavel
         r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
         r.quality = Quality::NotApplicable;
         return r;
     }
-    const double lmaxDb = 20.0 * std::log10(lmaxRms);
     r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", Quality::Normal, true});
     r.quality = Quality::Normal;
     return r;
