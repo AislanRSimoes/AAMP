@@ -79,9 +79,32 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
   Dynamic Range depende do Noise Floor; o Noise Floor **não** depende do Dynamic Range.
 - **MS-10 (SNR).** Grandeza **aparentada, porém distinta**. O SNR usa um **nível de sinal de referência
   fixo**; o Dynamic Range usa o **maior nível sem saturação** (teto). Ambos compartilham o **Noise
-  Floor** como piso comum. Em geral, **Dynamic Range ≥ SNR** (o teto é ≥ o nível de referência). Não
-  confundir: o SNR mede a margem de um sinal de referência; o Dynamic Range mede a **extensão total
-  utilizável**.
+  Floor** como piso comum. Não confundir: o SNR mede a margem de um sinal de referência; o Dynamic
+  Range mede a **extensão total utilizável**.
+
+  **Relação `Dynamic Range ≥ SNR` — propriedade condicional (decisão B).** Esta relação **não é uma
+  invariante numérica obrigatória**: é uma **consequência** da condição física
+
+  > *o nível de referência do SNR está contido no teto efetivamente caracterizado* — `referência ≤ teto`.
+
+  Quando essa condição se verifica, e sendo o piso comum, segue-se `Dynamic Range ≥ SNR`. Quando ela
+  **não** se verifica — porque o teto não foi observado (ver o parágrafo seguinte), porque o suíte de
+  estímulos coloca referência e teto no **mesmo nível nominal**, ou porque os estimadores das duas
+  grandezas têm vieses distintos — a relação **pode não se sustentar numericamente**, e essa
+  ocorrência **não constitui, por si só, violação normativa**.
+  É **expressamente vedado** impor a desigualdade por meios artificiais: **não** se aplica saturação
+  (`clamp`), **não** se substitui `DR` por `max(DR, SNR)` nem equivalente, e **não** se alteram os
+  estímulos para fabricá-la. Uma inversão observada deve ser **investigada como indício** — de teto
+  censurado ou de viés de estimador — nunca corrigida por construção.
+
+  **Teto não atingido — censura pelo limite superior do ensaio (decisão D).** O teto normativo é o
+  **início da saturação**. Quando a progressão de níveis do ST-08 **não alcança a saturação**, o maior
+  nível observado **não demonstra** esse início: sabe-se apenas que a cadeia **suporta ao menos** aquele
+  nível. Nessa condição o teto está **censurado pelo limite superior do ensaio**, e o Dynamic Range
+  dele derivado é um **limite inferior** da faixa dinâmica real — não a faixa dinâmica. É precisamente
+  nesse regime que a relação `Dynamic Range ≥ SNR` perde qualquer garantia.
+  *Este princípio está **registrado**; a sinalização do estado, a exportação, a apresentação e o
+  cálculo **não** foram alterados nesta etapa.*
 - **Exportação.** O Dynamic Range é exportado como um **escalar em dB**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz), da **ausência de ponderação** e da **condição** (teto sem saturação; piso em
   silêncio). É **homogêneo** com as demais métricas expressas em dB.
@@ -121,3 +144,10 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 >
 > **Referência de embasamento:** [`noise-floor-definition.md`](./noise-floor-definition.md) — o piso do
 > Dynamic Range.
+>
+> **Ratificação complementar (Registro de Decisão — F2), 2026-08-07.** Precisada a §6 com duas
+> decisões: **B** — `Dynamic Range ≥ SNR` é **propriedade condicional** de `referência ≤ teto`, nunca
+> invariante imposta; **D** — quando o ST-08 não alcança a saturação, o teto está **censurado pelo
+> limite superior do ensaio** e o Dynamic Range é um **limite inferior**. Nenhuma alteração de
+> cálculo, estado de qualidade, exportação, interface ou estímulo acompanha esta ratificação.
+> Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — F2*.

@@ -544,7 +544,8 @@ Série **F** — achados originados na revisão técnica final do P1-001, distin
 | ID | Achado | Estado | Bloqueia |
 |---|---|:--:|---|
 | **F1** | Conteúdo do resíduo do ST-09 e validade do estimador para conteúdo tonal | ✅ **Encerrado** | — |
-| **F2** | `Dynamic Range < SNR`, contrariando `dynamic-range-definition.md` §6 | 🔴 **Aberto** | **P1-003, P1-005** |
+| **F2** | `Dynamic Range < SNR`, contrariando `dynamic-range-definition.md` §6 | ✅ **Resolvido** (Registro de Decisão — F2: **B** + **D**) | — |
+| **F9** | Segmentação temporal do ST-08 não alinhada (derivado de F2) | 🔴 **Aberto** | **posição vs. P1-003 em aberto** |
 | **F3** | Interface declara "métricas normativas não se aplicam" e exibe os valores | 🟡 Aberto | — |
 | **F5** | Gráfico de "Captura de silêncio" visualmente enganoso | ✅ **Encerrado** | — |
 | **F8** | Divergência de contagem de checks entre plataformas (469 × 461) | 🟡 Aberto | — |
@@ -590,17 +591,27 @@ energia em **1** *bin* e 90 % em **3**, contra ~852 e ~1534 *bins* esperados par
 > Noise Floor conforme `noise-floor-definition.md` §1/§5 (que exclui distorção, não componentes
 > discretas) — **nenhuma questão normativa em aberto**.
 
-#### F2 — **ABERTO** · bloqueia P1-003 e P1-005
+#### F2 — **RESOLVIDO** pelo Registro de Decisão — F2
 
-- **Estado:** Aberto.
-- **Bloqueia:** **P1-003** e **P1-005**.
-- **Não bloqueia:** **P1-002**.
-- **Observação:** `Dynamic Range = 80,1 dB` e `SNR = 80,4 dB` na caracterização física, contrariando
-  `dynamic-range-definition.md` §6 (*"Em geral, Dynamic Range ≥ SNR"*). Verificado que **não** é
-  artefato da divergência entre os dois estimadores de piso: o piso de banda larga e o de banda
-  coincidem em 0,0002 dB nessa captura (E.7a), de modo que o P1-005 não o resolve.
+- **Observação original:** `Dynamic Range = 80,1 dB` e `SNR = 80,4 dB` na caracterização física,
+  contrariando a redação então vigente da `dynamic-range-definition.md` §6.
+- **Verificado:** **não** é artefato da divergência entre os dois estimadores de piso — o piso de
+  banda larga e o de banda coincidem em **0,0002 dB** nessa captura (E.7a). O **P1-005 não o resolve**.
+- **Encerramento:** estudo conceitual concluído; decisões **B** e **D** ratificadas. Registro completo
+  em *Registro de Decisão — F2*, abaixo. O achado derivado de segmentação temporal é **F9**.
 
-*Nenhum estudo conceitual foi iniciado.*
+> ⚠️ **Correção de interpretação — a hipótese registrada anteriormente estava incorreta.**
+> A versão anterior deste registro atribuía o desvio a uma diferença de frequência entre o teto e a
+> referência, sugerindo que *"a referência é um bloco de 2 s do ST-03 que pode cair sobre uma
+> ressonância do modelo"* (ressonância próxima de 95 Hz), e concluía que *"a referência do ST-03 está
+> ≥ 0,3 dB **acima** do teto"*.
+>
+> **Ambas as afirmações estão refutadas.** O `snr()` recorta `[2 s, 4 s)` do ST-03 — o bloco de
+> **1 kHz** — e o degrau mais alto do ST-08 é **1 kHz a −6 dBFS**: **mesma frequência, mesmo nível
+> nominal**. A ressonância de 95 Hz é **irrelevante** para a referência do SNR. E os dois números
+> estimam **o mesmo sinal físico**, de modo que a leitura *"referência acima do teto"* — embora
+> aritmeticamente verdadeira — é **fisicamente enganosa**: não descreve um fato sobre a cadeia medida,
+> e sim um viés de estimador. A hipótese anterior fica **substituída**, não preservada.
 
 #### F3 — **ABERTO** · Pilar 2 / P1-008
 
@@ -622,6 +633,23 @@ envelope **plano**. Causas identificadas:
 
 > **Dados corretos; representação gráfica potencialmente enganosa.** Nenhum escalar é afetado.
 > Achado de **apresentação** → **Pilar 2**.
+
+#### F9 — **ABERTO** · segmentação temporal do ST-08 *(derivado de F2)*
+
+`AnalysisEngine::dynamicRange()` fatia o ST-08 em 8 janelas fixas de 100 ms **a partir da amostra 0**,
+sem compensar a latência da cadeia (`ENABLE_SYNC_ALIGNMENT = false`, decisão deliberada). Cada janela
+mistura dois degraus adjacentes; como a progressão é monotônica, o **viés é sistemático e sempre
+reduz o teto**.
+
+**A mesma captura já é tratada corretamente pelo MS-13**, que alinha por correlação de envelopes
+antes de fatiar — com um comentário no código que descreve exatamente este mecanismo. **MS-09 e
+MS-13 leem o ST-08 sob convenções de alinhamento diferentes**: essa incoerência interna é o núcleo
+de F9 e existe independentemente de F2.
+
+Estudo de impacto das alternativas (alinhamento global · `bestLag` local · intervalo de guarda ·
+conservadoras) em [`temporal-segmentation-impact-study.md`](./temporal-segmentation-impact-study.md).
+**Nenhuma alternativa foi escolhida.** A posição de F9 em relação ao **P1-003** (item próprio /
+pré-condição / incorporado) **permanece em aberto**.
 
 #### F8 — **ABERTO** · higiene de evidência
 
@@ -789,6 +817,65 @@ em runtime (Chromium 151 via Edg/151):
 exportação**. Permanecem abertos e explicitamente rastreados: **DV-4** e **DV-8** (Pilar 2),
 **DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5, condicionada a
 P1-003/P1-004). Nenhum deles foi corrigido neste item.
+
+---
+
+## Registro de Decisão — F2 (`Dynamic Range` × `SNR`) — **NORMATIVO**
+
+> **Status: DECISÕES RATIFICADAS.** Documentação apenas — nenhum código, teste, estímulo, frontend,
+> Evidence Package, limiar ou algoritmo foi alterado.
+> **Base:** Estudo Conceitual de F2 · **Documento normativo precisado:**
+> [`dynamic-range-definition.md`](./dynamic-range-definition.md) §6.
+
+### H.1 Separação entre evidência, derivação e interpretação
+
+| Camada | Conteúdo |
+|---|---|
+| **Evidência medida** | Caracterização física Helix / preset AC30 Clean: `NoiseFloor = −96,2296 dBFS`, `DR = 80,1 dB`, `SNR = 80,4 dB` ⇒ `DR − SNR = −0,30 dB`. Piso de banda e piso de banda larga coincidem em **0,0002 dB** (reprocessamento offline do P1-001). |
+| **Derivação analítica** | Do gerador: ST-03 `[2 s, 4 s)` = seno de **1 kHz a −6 dBFS de pico** (−9,0103 dBFS RMS); ST-08 degrau 8 = seno de **1 kHz a −6 dBFS de pico**. **Mesmo sinal nominal** ⇒ numa cadeia LTI ideal, `teto = referência` e `DR − SNR = 0`. Com o *offset* de **913 amostras** registrado no `diag_log`, a janela de 100 ms recebe **19,02 %** do degrau anterior (−8 dBFS), produzindo viés de teto de **−0,3161 dB**. |
+| **Interpretação normativa** | O desvio observado (−0,30 dB) é **compatível** com o viés derivado (−0,3161 dB); a diferença é **0,016 dB**. Conclui-se que `DR < SNR`, no caso analisado, **não representa fisicamente uma referência acima do teto**, e sim um **viés do estimador de teto**. |
+
+*O nível absoluto cancela na diferença `DR − SNR`, pois os dois pisos coincidem — logo a comparação
+não depende do ganho da cadeia nem da resposta em frequência do DUT.*
+
+### H.2 Decisão B — relação `Dynamic Range ≥ SNR`
+
+**Ratificada como propriedade condicional**, decorrente de `referência ≤ teto`. **Não** é invariante
+numérica obrigatória. Vedado: `clamp`, `max(DR, SNR)` ou equivalente, e alteração de estímulos para
+fabricar a desigualdade. Redação normativa incorporada à §6 da `dynamic-range-definition.md`.
+
+*Fundamento:* com o suíte atual, teto e referência são **o mesmo sinal nominal** — a desigualdade
+tem **margem zero de projeto** e qualquer viés de estimador a decide. Elevá-la a obrigação exigiria
+alterar o estímulo ou mascarar o viés.
+
+### H.3 Decisão D — teto censurado pelo limite superior do ensaio
+
+**Ratificado o princípio:** quando o ST-08 não alcança saturação/clipping, o maior nível observado
+**não demonstra** o início da saturação — sabe-se apenas que a cadeia **suporta ao menos** aquele
+nível. O teto está **censurado**, e o Dynamic Range dele derivado é um **limite inferior**.
+
+Constatado na evidência: o pico do ST-08 retornou a **−8,3 dBFS**, com o ST-08 terminando em
+−6 dBFS e o gate de clipping em `peak < 1.0` — **nenhum degrau clipou**.
+
+> **Escopo desta etapa:** princípio **registrado**. **Não** foram implementados estado de qualidade,
+> alteração de exportação, de interface ou de cálculo.
+
+### H.4 Impactos registrados
+
+| Item | Impacto |
+|---|---|
+| **P1-003** | Limitar a banda **não corrige** F9 — a contaminação é temporal. Restrição adicional: 100 ms = 4800 amostras comporta **uma única** janela de 4096 ⇒ estimativa espectral de um só quadro, sem média. |
+| **P1-004** | Teto enviesado ~0,32 dB para baixo aproxima marginalmente a degeneração. A decisão **D**, se um dia implementada, acrescenta um segundo caso (teto censurado). |
+| **P1-005** | **Nenhum sobre F2** — os pisos já coincidem em 0,0002 dB. Confirmado empiricamente que F2 **não** é problema de piso. |
+| **P1-006** | **Mitiga parcialmente:** isolar a energia do tom remove do numerador a contaminação de 0,95 % e o ruído/distorção ⇒ referência **diminui**, favorecendo `DR ≥ SNR`. |
+| **CC-A** | **Preservado.** `computeMS09`/`computeMS10` replicam a mesma segmentação e o mesmo recorte ⇒ **carregam o mesmo viés**. Não há descompasso entre implementações. |
+| **Estímulos** | **Nenhuma alteração** (vedada por B). |
+
+### H.5 Encerramento
+
+**F2 encerrado.** Decisões **B** e **D** ratificadas e incorporadas à especificação normativa.
+O achado derivado — **F9**, segmentação temporal — permanece **aberto**, com estudo de impacto
+concluído e **nenhuma alternativa escolhida**.
 
 ---
 

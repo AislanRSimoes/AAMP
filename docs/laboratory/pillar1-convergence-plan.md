@@ -152,7 +152,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 |---|:--:|---|
 | **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
-| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **Bloqueado por F2** até decisão. |
+| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **F2 decidido**; agora condicionado a **F9** (alternativa de alinhamento e posição no plano — em aberto). |
 | P1-004 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
@@ -195,7 +195,8 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 
 | ID | Achado | Bloqueia | Não bloqueia |
 |---|---|---|---|
-| **F2** | `Dynamic Range < SNR` contraria `dynamic-range-definition.md` §6 | **P1-003, P1-005** | ~~P1-002~~ (encerrado) |
+| ~~**F2**~~ ✅ | `Dynamic Range < SNR` — **RESOLVIDO**: relação é propriedade condicional (B); teto pode estar censurado (D) | — (decidido) | — |
+| **F9** | **Segmentação temporal do ST-08 não alinhada** — viés sistemático de −0,32 dB no teto; MS-09 e MS-13 leem a mesma captura sob convenções distintas | **posição vs. P1-003 EM ABERTO** | P1-004…P1-008 |
 | **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
@@ -206,10 +207,19 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 **F1** e **F5** foram encerrados. Detalhamento de todos em [`metrics-audit.md`](./metrics-audit.md) →
 *Registro de Encerramento — P1-001* → §E.10.
 
-> **F2 exige decisão antes do P1-003.** Nenhum estudo conceitual foi iniciado. O P1-002 foi concluído
-> sem depender dela; **o P1-003 não pode iniciar antes que F2 seja decidida**. A ordem do Plano Mestre
-> permanece **inalterada**. DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução —
-> serão tratados no Pilar 2 e no P1-008.
+> **F2 está decidido** (Registro de Decisão — F2: **B** + **D**), e com ele caiu o bloqueio que pesava
+> sobre P1-003 e P1-005. Em seu lugar surgiu **F9** — a segmentação temporal do ST-08 —, cujo estudo de
+> impacto está concluído em
+> [`temporal-segmentation-impact-study.md`](./temporal-segmentation-impact-study.md).
+>
+> **Três pontos permanecem em aberto e condicionam o P1-003:** (a) qual alternativa de alinhamento
+> adotar; (b) se F9 vira **item próprio anterior** ao P1-003, **pré-condição formal** dele (análoga a
+> AR-01 no P1-001) ou é **incorporado** a ele; (c) se a decisão **D** (teto censurado) passa a ser
+> sinalizada, o que alcançaria P1-004 e a exportação. **Nenhuma foi decidida.** A ordem do Plano
+> Mestre permanece **inalterada**.
+>
+> DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
+> Pilar 2 e no P1-008.
 
 ---
 
