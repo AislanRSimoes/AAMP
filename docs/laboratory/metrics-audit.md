@@ -545,7 +545,7 @@ Série **F** — achados originados na revisão técnica final do P1-001, distin
 |---|---|:--:|---|
 | **F1** | Conteúdo do resíduo do ST-09 e validade do estimador para conteúdo tonal | ✅ **Encerrado** | — |
 | **F2** | `Dynamic Range < SNR`, contrariando `dynamic-range-definition.md` §6 | ✅ **Resolvido** (Registro de Decisão — F2: **B** + **D**) | — |
-| **F9** | Segmentação temporal do ST-08 não alinhada (derivado de F2) | 🔴 **Aberto** | **posição vs. P1-003 em aberto** |
+| **F9** | Segmentação temporal do ST-08 não alinhada (derivado de F2) | ✅ **Resolvido e validado** (A2 · `cfb95fa` · TC-041) | — |
 | **F3** | Interface declara "métricas normativas não se aplicam" e exibe os valores | 🟡 Aberto | — |
 | **F5** | Gráfico de "Captura de silêncio" visualmente enganoso | ✅ **Encerrado** | — |
 | **F8** | Divergência de contagem de checks entre plataformas (469 × 461) | 🟡 Aberto | — |
@@ -634,22 +634,21 @@ envelope **plano**. Causas identificadas:
 > **Dados corretos; representação gráfica potencialmente enganosa.** Nenhum escalar é afetado.
 > Achado de **apresentação** → **Pilar 2**.
 
-#### F9 — **ABERTO** · segmentação temporal do ST-08 *(derivado de F2)*
+#### F9 — **RESOLVIDO · VALIDADO INDEPENDENTEMENTE NO WINDOWS** *(derivado de F2)*
 
-`AnalysisEngine::dynamicRange()` fatia o ST-08 em 8 janelas fixas de 100 ms **a partir da amostra 0**,
-sem compensar a latência da cadeia (`ENABLE_SYNC_ALIGNMENT = false`, decisão deliberada). Cada janela
-mistura dois degraus adjacentes; como a progressão é monotônica, o **viés é sistemático e sempre
-reduz o teto**.
+**Problema (histórico).** `AnalysisEngine::dynamicRange()` fatiava o ST-08 em 8 janelas fixas de
+100 ms **a partir da amostra 0**, sem compensar a latência da cadeia. Cada janela misturava dois
+degraus adjacentes; como a progressão é monotônica, o **viés era sistemático e sempre reduzia o
+teto**. **A mesma captura já era tratada corretamente pelo MS-13**, que alinha por correlação de
+envelopes antes de fatiar — MS-09 e MS-13 liam o ST-08 sob **convenções de alinhamento diferentes**,
+incoerência interna que era o núcleo de F9 e existia independentemente de F2.
 
-**A mesma captura já é tratada corretamente pelo MS-13**, que alinha por correlação de envelopes
-antes de fatiar — com um comentário no código que descreve exatamente este mecanismo. **MS-09 e
-MS-13 leem o ST-08 sob convenções de alinhamento diferentes**: essa incoerência interna é o núcleo
-de F9 e existe independentemente de F2.
+**Solução — alternativa A2**, escolhida entre as estudadas em
+[`temporal-segmentation-impact-study.md`](./temporal-segmentation-impact-study.md), por **menor
+escopo**, **precedente existente** e **rastreabilidade**. F9 foi tratado como **item próprio e
+pré-requisito** do P1-003, não incorporado a ele.
 
-Estudo de impacto das alternativas (alinhamento global · `bestLag` local · intervalo de guarda ·
-conservadoras) em [`temporal-segmentation-impact-study.md`](./temporal-segmentation-impact-study.md).
-**Nenhuma alternativa foi escolhida.** A posição de F9 em relação ao **P1-003** (item próprio /
-pré-condição / incorporado) **permanece em aberto**.
+Registro completo em *Registro de Encerramento — F9*, abaixo.
 
 #### F8 — **ABERTO** · higiene de evidência
 
@@ -864,7 +863,7 @@ Constatado na evidência: o pico do ST-08 retornou a **−8,3 dBFS**, com o ST-0
 
 | Item | Impacto |
 |---|---|
-| **P1-003** | Limitar a banda **não corrige** F9 — a contaminação é temporal. Restrição adicional: 100 ms = 4800 amostras comporta **uma única** janela de 4096 ⇒ estimativa espectral de um só quadro, sem média. |
+| **P1-003** | Limitar a banda **não corrige** F9 — a contaminação é temporal (F9 foi resolvido à parte, em `cfb95fa`). Restrição que **permanece**: 100 ms = 4800 amostras comporta **uma única** janela de 4096 ⇒ estimativa espectral de um só quadro, sem média. |
 | **P1-004** | Teto enviesado ~0,32 dB para baixo aproxima marginalmente a degeneração. A decisão **D**, se um dia implementada, acrescenta um segundo caso (teto censurado). |
 | **P1-005** | **Nenhum sobre F2** — os pisos já coincidem em 0,0002 dB. Confirmado empiricamente que F2 **não** é problema de piso. |
 | **P1-006** | **Mitiga parcialmente:** isolar a energia do tom remove do numerador a contaminação de 0,95 % e o ruído/distorção ⇒ referência **diminui**, favorecendo `DR ≥ SNR`. |
@@ -874,8 +873,115 @@ Constatado na evidência: o pico do ST-08 retornou a **−8,3 dBFS**, com o ST-0
 ### H.5 Encerramento
 
 **F2 encerrado.** Decisões **B** e **D** ratificadas e incorporadas à especificação normativa.
-O achado derivado — **F9**, segmentação temporal — permanece **aberto**, com estudo de impacto
-concluído e **nenhuma alternativa escolhida**.
+O achado derivado — **F9**, segmentação temporal — foi posteriormente **resolvido pela alternativa
+A2** e **validado independentemente no Windows** (ver *Registro de Encerramento — F9*).
+
+---
+
+## Registro de Encerramento — F9 (Segmentação Temporal do MS-09) — **NORMATIVO**
+
+> **Estado: RESOLVIDO · VALIDADO INDEPENDENTEMENTE NO WINDOWS.**
+> **Natureza:** item **próprio** e **pré-requisito** do P1-003 — **não** incorporado a ele.
+> **Origem:** Estudo Conceitual de **F2**. **Alternativa adotada:** **A2**.
+
+### I.1 Correção implementada — exclusivamente temporal
+
+```
+fonte ST-08 ──► extractEnvelope ──┐
+                                  ├──► bestLag(maxLag = 0,050·fs) ──► lag
+captura ST-08 ──► extractEnvelope ┘
+                                        ▼
+                    slice(s·seg + lag, (s+1)·seg + lag)
+                                        ▼
+                        cálculo do teto — INALTERADO
+```
+
+Mesma convenção já empregada pelo **MS-13** sobre a mesma captura; nenhuma primitiva nova, nenhum
+segundo algoritmo de correlação, nenhuma terceira convenção de alinhamento. `maxLag` reutiliza a
+política de latência de 50 ms já vigente em MS-13/MS-14 — **não é limiar novo**.
+
+**Garantias preservadas — verificadas no diff e na validação independente:**
+
+- ✅ **A correção é exclusivamente temporal.** O lag atua **somente sobre índices de leitura**.
+- ✅ **Nenhum buffer bruto foi alterado.** Nada é deslocado, filtrado ou reamostrado; o áudio e o
+  Evidence Package permanecem intactos.
+- ✅ **Nenhuma definição espectral do teto foi antecipada.** Banda, RMS, gate `peak < 1.0`,
+  progressão do ST-08, duração dos degraus, Noise Floor, `teto ≤ piso` e teto censurado
+  permanecem exatamente como estavam. **P1-003 não foi iniciado.**
+- ✅ **MS-13 permaneceu inalterado** (`LevelTransfer_step8_dB` invariante).
+- ✅ **`ENABLE_SYNC_ALIGNMENT` continua `false`** e não foi tocado.
+- ✅ **ST-08 byte-identicamente inalterado.**
+
+**Fonte ST-08 ausente → `NotApplicable`** com `valuePresent = false`. O fatiamento desalinhado
+**não** é usado como *fallback* — é sabidamente enviesado. No caminho **nativo** a fonte é
+regenerada deterministicamente pelo `StimulusGenerator`, tornando o ramo inalcançável; no
+**reprocessamento/importação** a fonte vem do Evidence Package e pode faltar. A diferença está
+documentada no próprio código, sem uniformização artificial.
+
+### I.2 Regressão permanente — TC-041
+
+`TC-041 — MS-09 teto invariante a latencia (F9: alinhamento temporal)`, com **controle positivo** e
+**controle negativo** demonstrados separadamente. O controle negativo é um **oráculo independente
+implementado no próprio teste** — nenhum código de produção antigo foi preservado para isso.
+
+| Offset | Viés do fatiamento antigo | Pós-F9 |
+|---:|---:|---|
+| 0 amostras | ~0 dB | invariante (referência) |
+| **913** | **−0,3157 dB** | invariante em **0,01 dB** |
+| **2400** | **−0,8859 dB** | invariante em **0,01 dB** |
+
+Verifica também que o viés antigo é efetivamente não-nulo para offsets > 0 (impedindo aprovação por
+acaso) e a **não-regressão do MS-13**.
+
+### I.3 Validação independente no Windows — **APROVADO**
+
+Executada por agente independente do autor do commit, sobre o repositório remoto como fonte de
+verdade.
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| HEAD local = remoto | `cfb95fa600f31e7844552f56b30f7ac018757fdb` |
+| Plataforma / *toolchain* | Windows · MSVC 14.51.36231 x64 |
+| Configuração | `Release` |
+| Build | **0 warnings, 0 errors** |
+| Executável | `C:\aamp\build\windows-ninja\aamp_app_artefacts\Release\AAMP.exe` |
+| SHA-256 | `2145781C1F61742FAAF5D42C94050C05E2956CC83A24ED0CC5DEAE670E4C80AE` |
+| `aamp_headless_suite` | **497 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 aprovados** |
+| Casos confirmados | **TC-030 · TC-034 · TC-038 · TC-039 · TC-041** |
+| Escopo do commit | exclusivamente `AnalysisEngine.cpp`, `aamp_laboratory.html`, `test_analysis.cpp` |
+| ST-08 | byte-identicamente inalterado |
+| `ENABLE_SYNC_ALIGNMENT` | permanece `false` |
+| Árvore Git | limpa quanto a arquivos versionados |
+
+**TC-041 confirmado na execução independente:** offsets `0`, `913` e `2400` amostras; controle
+negativo dos vieses antigos **−0,3157 dB** e **−0,8859 dB**; invariância pós-F9 dentro de
+**0,01 dB**; ausência de regressão do MS-13.
+
+**Classificação: APROVADO.**
+
+### I.4 Rastreabilidade final
+
+```
+F2 (estudo conceitual)
+   └─► F9 — segmentação temporal identificada como causa dominante
+          └─► temporal-segmentation-impact-study.md — A1 · A2 · A3 · A4a · A4c
+                 └─► decisão: A2 (menor escopo · precedente MS-13 · rastreabilidade)
+                        └─► item PRÓPRIO, pré-requisito do P1-003 (não incorporado)
+                               └─► cfb95fa  (AnalysisEngine.cpp · aamp_laboratory.html · test_analysis.cpp)
+                                      └─► TC-041 (controle positivo + controle negativo)
+                                             └─► validação independente Windows — APROVADO
+                                                    SHA-256 2145781C…C80AE · CTest 2/2
+```
+
+### I.5 Encerramento
+
+**F9 RESOLVIDO e VALIDADO INDEPENDENTEMENTE.** A divergência temporal do MS-09 está fechada e o
+pré-requisito do **P1-003** está cumprido. **P1-003 permanece não iniciado** e depende de nova
+autorização. As decisões pendentes registradas no estudo de impacto que **não** foram alcançadas
+por F9 — notadamente a convivência com o **teto censurado** (decisão **D**) — permanecem abertas.
 
 ---
 

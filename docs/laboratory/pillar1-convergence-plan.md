@@ -152,7 +152,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 |---|:--:|---|
 | **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
-| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **F2 decidido**; agora condicionado a **F9** (alternativa de alinhamento e posição no plano — em aberto). |
+| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **F2 decidido** e **F9 resolvido/validado** — pré-requisitos cumpridos. Aguarda autorização específica para a fase de análise. |
 | P1-004 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
@@ -196,7 +196,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | ID | Achado | Bloqueia | Não bloqueia |
 |---|---|---|---|
 | ~~**F2**~~ ✅ | `Dynamic Range < SNR` — **RESOLVIDO**: relação é propriedade condicional (B); teto pode estar censurado (D) | — (decidido) | — |
-| **F9** | **Segmentação temporal do ST-08 não alinhada** — viés sistemático de −0,32 dB no teto; MS-09 e MS-13 leem a mesma captura sob convenções distintas | **posição vs. P1-003 EM ABERTO** | P1-004…P1-008 |
+| ~~**F9**~~ ✅ | Segmentação temporal do ST-08 — **RESOLVIDO** pela alternativa **A2** (`cfb95fa`), como **item próprio e pré-requisito** do P1-003. **Validado independentemente no Windows — APROVADO** | — (pré-requisito cumprido) | — |
 | **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
@@ -212,14 +212,34 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 > impacto está concluído em
 > [`temporal-segmentation-impact-study.md`](./temporal-segmentation-impact-study.md).
 >
-> **Três pontos permanecem em aberto e condicionam o P1-003:** (a) qual alternativa de alinhamento
-> adotar; (b) se F9 vira **item próprio anterior** ao P1-003, **pré-condição formal** dele (análoga a
-> AR-01 no P1-001) ou é **incorporado** a ele; (c) se a decisão **D** (teto censurado) passa a ser
-> sinalizada, o que alcançaria P1-004 e a exportação. **Nenhuma foi decidida.** A ordem do Plano
-> Mestre permanece **inalterada**.
+> **F9 foi decidido e encerrado:** adotada a alternativa **A2** (alinhamento local por
+> `extractEnvelope`/`bestLag`, mesma convenção do MS-13), tratado como **item próprio e
+> pré-requisito** do P1-003 — **não** incorporado a ele. Implementado em `cfb95fa`, protegido por
+> **TC-041** e **validado independentemente no Windows (APROVADO)**. Registro completo em
+> [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — F9*.
+>
+> **Permanece em aberto:** se a decisão **D** (teto censurado) passa a ser sinalizada, o que
+> alcançaria **P1-004** e a exportação. A ordem do Plano Mestre permanece **inalterada**.
 >
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
 > Pilar 2 e no P1-008.
+
+---
+
+## Disciplina de validação dos gates do Pilar 1
+
+Todo gate de validação do Pilar 1 deve executar **a suíte CTest completa**, não apenas o binário
+`aamp_tests`, e **reportar separadamente** as duas entradas hoje registradas:
+
+| Entrada CTest | Observação |
+|---|---|
+| `aamp_headless_suite` | suíte principal (`aamp_tests`); é a que produz a contagem de *checks* |
+| `aamp_scientific_validation` | **não é executada** ao rodar `aamp_tests` diretamente |
+
+*Motivação registrada:* durante os ciclos de P1-001, P1-002 e F9 os relatórios de suíte foram
+produzidos executando `aamp_tests` diretamente, de modo que `aamp_scientific_validation` **não era
+exercitada** — lacuna revelada pelo gate de validação independente de F9, que exigiu `ctest`. A
+partir daqui, "a suíte passou" só é afirmação completa quando **ambas** as entradas são reportadas.
 
 ---
 

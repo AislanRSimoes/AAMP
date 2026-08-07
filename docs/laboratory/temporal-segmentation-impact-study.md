@@ -208,4 +208,30 @@ ou não aguardar a validação de F9, o que é decisão de sequenciamento e cabe
 
 ---
 
-> **Nenhuma implementação foi iniciada. Nenhuma alternativa foi escolhida.**
+## 9. Encerramento do estudo *(acrescentado após a decisão)*
+
+> O texto acima é preservado **como estava no momento da decisão** — inclusive a frase original
+> "nenhuma alternativa foi escolhida" —, para que o registro histórico permaneça auditável. Esta
+> seção apenas consigna o desfecho.
+
+**Alternativa adotada: A2** — alinhamento temporal local no MS-09 por `extractEnvelope`/`bestLag`,
+mesma convenção já empregada pelo MS-13. Justificativa: **menor escopo** (uma função em cada
+implementação, nenhuma outra família tocada, áudio bruto e Evidence Package intactos), **precedente
+existente** (a técnica já validada em produção sobre a mesma captura) e **rastreabilidade** (resolve
+F9 onde F9 ocorre e elimina a incoerência MS-09 × MS-13).
+
+**Posição adotada: item próprio e pré-requisito do P1-003** — enquadramento (i)/(ii) da §7. **Não**
+incorporado ao P1-003.
+
+**Decisões da §8 resolvidas:** (1) alternativa → **A2**; (2) posição → **item próprio, pré-requisito**;
+(3) fonte ST-08 ausente → **`NotApplicable`**, sem *fallback* desalinhado; (4) não se aplica (A1 não
+foi adotada — `ENABLE_SYNC_ALIGNMENT` permanece `false`).
+**Permanece aberta:** (5) a convivência com o **teto censurado** (decisão **D**) — F9 não a resolve,
+como o próprio estudo antecipou na §4.
+
+**Implementação:** `cfb95fa600f31e7844552f56b30f7ac018757fdb` · **regressão permanente:** TC-041 ·
+**validação independente no Windows: APROVADO** (CTest 2/2; `aamp_headless_suite` 497 checks,
+`aamp_scientific_validation` 8 checks; SHA-256 do `AAMP.exe`
+`2145781C1F61742FAAF5D42C94050C05E2956CC83A24ED0CC5DEAE670E4C80AE`).
+
+Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — F9*.
