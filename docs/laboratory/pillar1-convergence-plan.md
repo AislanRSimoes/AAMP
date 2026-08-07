@@ -20,7 +20,7 @@
 | ID | Origem | Ref. normativa | Tipo | Risco | Situação atual | Situação esperada | Dependências |
 |----|--------|----------------|------|:----:|----------------|-------------------|--------------|
 | ~~**P1-001**~~ ✅ | MS-08 | N1-R1 / **AR-01** | algoritmo | Moderado | ~~Normalização por **ganho coerente** (calibrada para tom); ruído de banda larga **enviesado** por offset ~constante da janela (Apêndice B)~~ | **CONCLUÍDO** — normalização energeticamente correta para ruído (ENBW/Parseval) implementada em C++ e JS, preservando a grandeza normativa do Noise Floor | **AR-01** → **SATISFEITA** |
-| **P1-002** | MS-08 | N4 / D4 (princípio) | validação | Baixo | Só `Normal`/`Error`; silêncio vazio/curto → piso degenerado reportado como `Normal`; silêncio "sujo" não sinalizado | Estados de qualidade para silêncio degenerado (não caracterizável / baixa confiança) | P1-001 |
+| ~~**P1-002**~~ ✅ | MS-08 | N4 / D4 (princípio) | validação | Baixo | ~~Só `Normal`/`Error`; silêncio vazio/curto → piso degenerado reportado como `Normal`~~ | **CONCLUÍDO** — `NotApplicable` para não caracterizável, `LowConfidence` para observação insuficiente, `Error` preservado. Silêncio **"sujo"** (DV-4) **excluído do escopo → Pilar 2** (exige limiar) | P1-001 ✅ |
 | **P1-003** | MS-09 | **D2** | algoritmo | Moderado | Teto = RMS **banda larga no tempo** (inclui DC/fora de banda) — Apêndice C, MS09-A2 | Teto medido na **mesma banda** do Noise Floor (20–20 k) | AR-01, P1-001 |
 | **P1-004** | MS-09 | **D3** | validação / trat. de erro | Baixo | `teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4 | `teto ≤ piso` → **não caracterizável** (nunca valor positivo espúrio nem negativo) | P1-003 |
 | **P1-005** | MS-10 | **D1** | algoritmo | Moderado | `pn` do SNR = `meanSquare` no tempo (banda larga), separado do MS-08 — Apêndice B.5 | `pn` = **Noise Floor band-limited** (reúso da definição MS-08); checagem fora-de-banda fica na Integridade | AR-01, P1-001 |
@@ -113,10 +113,14 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - ✅ **Regressão permanente:** TC-038, com controle negativo executado
 - ✅ **Validação física** e **A/B por reprocessamento offline** (Δ = −4,772273 dB)
 
-**Noise Floor (MS-08)** — P1-002
-- ✓ Valor = nível **RMS in-band 20–20 k**, energeticamente correto (consome P1-001)
-- ✓ Estados de qualidade para **silêncio degenerado** (vazio/curto/sujo)
-- ✓ Conforme a `noise-floor-definition.md`; ✓ C++ ↔ JS consistentes; ✓ testes passam
+**Noise Floor (MS-08)** — P1-002 — ✅ **ATENDIDOS NO ESCOPO AUTORIZADO**
+- ✅ Valor = nível **RMS in-band 20–20 k**, energeticamente correto (consome P1-001, intocado)
+- ✅ Estados de qualidade para silêncio degenerado **vazio / curto / não-mensurável**
+- 🔴 Silêncio **"sujo"** — **excluído do escopo** por exigir limiar (**N4**: limiares → Pilar 2) → **DV-4**
+- ✅ Conforme a `noise-floor-definition.md` §7; ✅ testes passam (Linux 481 · Windows aprovada)
+- ⚠️ C++ ↔ JS consistentes **nas condições degeneradas**; divergente no caso ST-09 ausente → **DV-6**
+- ✅ **Regressão permanente:** TC-039, com controle negativo (7 falhas)
+- ✅ **Gate visual** no WebView nativo com *fixture* sintético mínimo (caso C4)
 
 **Dynamic Range (MS-09)** — P1-003, P1-004
 - ✓ Teto na **banda 20–20 k** (mesma do Noise Floor)
@@ -147,8 +151,9 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | Item | Estado | Observação |
 |---|:--:|---|
 | **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
-| **P1-002** | ⬜ Não iniciado | Próximo na ordem. Aguarda autorização específica para a fase de análise. |
-| P1-003 … P1-008 | ⬜ Não iniciados | — |
+| **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
+| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **Bloqueado por F2** até decisão. |
+| P1-004 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
 
@@ -171,19 +176,40 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - **Verificação independente:** RMS no domínio do tempo (sem FFT) reproduziu o resultado espectral com
   erro de **0,00016 dB**.
 
+### P1-002 — síntese do encerramento
+
+- **Escopo entregue:** cálculo, contrato semântico e exportação. `r.quality` deixa de ser
+  `Normal` incondicional; `NoiseFloor_frames` passa a ser o descritor auditável da condição.
+- **Sem limiar novo:** o limite de observação insuficiente reutiliza `k::NOISE_AVG_FRAMES = 16`,
+  já dimensionado pelo projeto. Limiares numéricos permanecem no **Pilar 2** (N4/N5/D4).
+- **Commit:** `18f64abb3db6dcb9505e4ee2aae65075ef5b3c38`.
+- **Validação:** Linux 481 checks · Windows aprovada · TC-039 com controle negativo (7 falhas) ·
+  convergência C++ ↔ JS nas 5 condições · exportação conferida em CSV real (`N/A`, sem `−300`).
+- **Gate visual nativo:** *fixture* sintético mínimo `p1002_c4_digital_silence.aamp`
+  (SHA-256 `c97e1be1…3954`), não versionado, exercitando o caso C4 sem nova aquisição.
+- **Sentinela `−300` conservada no campo numérico** para que o **MS-09 permaneça inalterado**;
+  neutralizada na exportação por `valuePresent = false`. **Só poderá ser removida em
+  P1-003/P1-004**, quando o MS-09 passar a honrar `nf.quality`.
+
 ### Achados abertos que condicionam a execução
 
 | ID | Achado | Bloqueia | Não bloqueia |
 |---|---|---|---|
-| **F2** | `Dynamic Range < SNR` contraria `dynamic-range-definition.md` §6 | **P1-003, P1-005** | **P1-002** |
+| **F2** | `Dynamic Range < SNR` contraria `dynamic-range-definition.md` §6 | **P1-003, P1-005** | ~~P1-002~~ (encerrado) |
 | **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
+| **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
+| **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família | — | — |
+| **DV-8** | Apresentação ignora `valuePresent`/`quality` e exibe a sentinela `−300` | — (**Pilar 2**) | — |
+| **V1** | Trust Ladder rotula "Medição confiável" com única métrica `NotApplicable` | — (**P1-008**) | — |
 
 **F1** e **F5** foram encerrados. Detalhamento de todos em [`metrics-audit.md`](./metrics-audit.md) →
 *Registro de Encerramento — P1-001* → §E.10.
 
-> **F2 exige decisão antes do P1-003.** Nenhum estudo conceitual foi iniciado. Como **F2 não bloqueia o
-> P1-002**, a ordem do Plano Mestre permanece **inalterada**.
+> **F2 exige decisão antes do P1-003.** Nenhum estudo conceitual foi iniciado. O P1-002 foi concluído
+> sem depender dela; **o P1-003 não pode iniciar antes que F2 seja decidida**. A ordem do Plano Mestre
+> permanece **inalterada**. DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução —
+> serão tratados no Pilar 2 e no P1-008.
 
 ---
 

@@ -138,6 +138,10 @@ exige um estímulo específico; ausência ⇒ `Error`.
   testa teto/`lowConf`. Uma captura **silenciosa / sem sinal / SNR muito baixo** é rotulada
   **"Confiável"**. O material para a porta de piso (`rmsDb`, `silPct`, SNR) já existe em
   `captureIntegrity()` mas **não é usado**. *(Confirmado nas coletas Vostro −42 dBFS e loopback −240 dBFS.)*
+  **Confirmado também no WebView nativo (2026-08-07, gate do P1-002):** uma sessão cuja **única**
+  métrica disponível está em `NotApplicable` é rotulada **"Medição confiável"** — `NotApplicable`
+  incrementa `na`, que **não é consumido** em lugar nenhum da UI, enquanto `lowConf` permanece 0.
+  Tratamento em **P1-008**. Ver *Registro de Encerramento — P1-002* → §G.6.
 - **V2 — `lowConf` quase nunca propaga.** A LabEngine JS fixa `quality:'Normal'` na maioria dos
   escalares (`html:1337+`), então `M.metrics.lowConf` (`html:806-811`) é ~sempre 0. O `Quality` por
   métrica do C++ **não** é o que alimenta o caminho da evidência do Lab.
@@ -624,6 +628,167 @@ envelope **plano**. Causas identificadas:
 Windows reporta **469 checks** e Linux **461**, no mesmo commit. Verificado que **não existe nenhum
 `#ifdef`/`_WIN32` em `tests/`**. Enquanto não reconciliado, "a suíte passou" não significa exatamente a
 mesma afirmação nos dois ambientes. Não bloqueia nenhum item do Plano Mestre.
+
+---
+
+## Registro de Encerramento — P1-002 (Estados de Qualidade do MS-08) — **NORMATIVO**
+
+> **Estado: ENCERRADO** no escopo autorizado — **cálculo, contrato semântico e exportação**.
+> **Escopo do item:** estados de qualidade do MS-08 para silêncio degenerado.
+> **Referências normativas:** `noise-floor-definition.md` §7 (Estabilidade, Rastreabilidade) ·
+> **N4** · princípio **D4** · Plano Mestre P1-002.
+> **Escopo reduzido por decisão:** a detecção de **silêncio sujo (DV-4)** foi **excluída** deste item.
+
+### G.1 Implementação e mapeamento aprovado
+
+Antes: `r.quality = Quality::Normal` **incondicional** e `Quality::Normal` literal em todos os
+escalares. Silêncio vazio, curto ou digitalmente nulo era reportado como medição válida de
+**−300 dBFS** (o *clamp* `10·log10(1e-30)`) em estado `Normal`.
+
+| Condição | Detecção | `quality` | `valuePresent` |
+|---|---|---|:--:|
+| ST-09 ausente | `captured.find()` falha | `Error` *(preservado)* | — |
+| Nada observado | `fr2 == 0` | **`NotApplicable`** | `false` |
+| Piso não-mensurável | `integFull == 0` | **`NotApplicable`** | `false` |
+| Observação insuficiente | `fr2 < k::NOISE_AVG_FRAMES` | **`LowConfidence`** | `true` |
+
+**Nenhum limiar novo foi introduzido.** O limite de observação insuficiente reutiliza
+`k::NOISE_AVG_FRAMES = 16` (`Constants.h:59`), a observação já dimensionada pelo projeto e usada
+pelo próprio estimador. Limiares numéricos permanecem matéria do **Pilar 2** (N4/N5/D4).
+
+`NoiseFloor_frames` permanece **sempre `Normal` e presente**: é o descritor auditável exigido por
+§7 (Rastreabilidade) e o **discriminador** entre "nada observado" (`0`) e "observado e nulo" (`>0`),
+que compartilham o mesmo *clamp*.
+
+**CC-A / CC-B:** `computeMS08()` do LabEngine espelha a classificação e passa a devolver
+`frames`/`quality`/`valuePresent`; a montagem `mr08` deixa de fixar `quality:'Normal'` (escopo
+MS-08 apenas). **O estimador do P1-001 não foi tocado** — nenhuma expressão numérica foi alterada.
+
+**Commit:** `18f64abb3db6dcb9505e4ee2aae65075ef5b3c38`.
+
+### G.2 Regressão permanente — TC-039 e controle negativo
+
+`TC-039 — MS-08 estados de qualidade em silencio degenerado` (`tests/test_analysis.cpp`), com um
+caso por condição (C0 ausente, C1 vazio, C2 curto, C3 poucos quadros, C4 zero digital) mais duas
+não-regressões: valor e estado em captura válida, e o Dynamic Range em silêncio digital (§G.5).
+
+**Controle negativo executado:** com a classificação desativada, **TC-039 falha em 7 checks**;
+restaurada, passa. TC-038 permanece passando — o valor do P1-001 não mudou.
+
+### G.3 Validação em ambiente
+
+| Ambiente | Build | Resultado |
+|---|---|---|
+| Linux (headless) | CMake Release | **481 checks, 0 falhas** *(era 461; +20)* |
+| **Windows (Vostro)** | Ninja **Release**, `…\aamp_app_artefacts\Release\AAMP.exe` | suíte aprovada; aplicação executada e validada |
+
+**Convergência C++ ↔ JS verificada nas cinco condições**, com o `computeMS08()` **real extraído do
+HTML de produção** — estados e contagem de quadros idênticos em ambas as implementações.
+
+**Exportação verificada sobre CSV real:** `NotApplicable` → `N/A`; `LowConfidence` → valor com
+sufixo `*`; `NoiseFloor_frames` sempre presente. **`−300 dBFS` nunca é exportado como resultado
+válido.**
+
+### G.4 Gate visual no WebView nativo
+
+Executado com o *fixture* sintético mínimo **`p1002_c4_digital_silence.aamp`**
+(SHA-256 `c97e1be1fad6bc821ad59bc143b26119acfdc9f93f2e9d8cfeab0450b7333954`), produzido pelo
+`EvidenceSerializer` canônico e **não versionado**: apenas ST-09, 48 kHz, 48 000 amostras
+(22 janelas ≥ 16), **todas `0.0` exatamente**. Exercita o caso **C4** sem nova aquisição.
+
+Observado no AAMP nativo (WebView2): importação concluída, interface responsiva, tela Integridade
+renderizada, **ausência visual de `NaN`/`Infinity`**, MS-08 apresentado como **PISO −300,0 dBFS**,
+sessão rotulada **"Medição confiável"**; SNR e Dynamic Range indisponíveis no pacote mínimo
+(sem ST-03/ST-08 as famílias sequer são calculadas). **Evidência direta: capturas de tela.**
+
+> **Nota de método.** A importação de um `.aamp` ocorre **integralmente no frontend**
+> (`ingest()` → `fromAamp()` → `LabEngine.run()`) e **não produz eventos no `diag_log.txt`**.
+> Nenhuma sessão de log evidencia o gate; o papel do log aqui é **exclusivamente a proveniência do
+> binário** (§G.8).
+
+### G.5 A sentinela `−300` permanece temporariamente necessária
+
+O campo numérico de `NoiseFloor_dBFS` **conserva o *clamp* −300 dBFS** mesmo quando
+`valuePresent = false`. Isso é **deliberado e temporário**:
+
+`AnalysisEngine::dynamicRange()` localiza `NoiseFloor_dBFS` **por chave** e testa apenas a presença
+da chave — **ignora `nf.quality`**. Substituir o campo por outro valor alteraria o Dynamic Range,
+o que está **fora do escopo do P1-002**. TC-039 fixa essa não-regressão: em silêncio digital o
+MS-09 continua `Normal`, com `DynamicRange_dB > 200`.
+
+> **Condição de remoção:** a sentinela só poderá sair do campo quando o MS-09 passar a honrar
+> `nf.quality` — o que pertence a **P1-003 / P1-004**. Até lá, `−300` permanece no contrato interno
+> e é neutralizado na exportação por `valuePresent = false`. Relacionado a **DV-5** e a **F6**.
+
+### G.6 Divergências — estado final
+
+| ID | Divergência | Estado |
+|---|---|:--:|
+| **DV-1** | Observação inexistente (`fr2 == 0`) reportada como medição válida | ✅ **Resolvida** |
+| **DV-2** | Piso não-mensurável (`integFull == 0`) reportado como valor | ✅ **Resolvida** |
+| **DV-3** | Observação insuficiente não sinalizada | ✅ **Resolvida** |
+| **DV-4** | **Silêncio sujo não detectado** | 🔴 **Aberto — Pilar 2** |
+| **DV-5** | Sentinela `−300` ambígua no campo numérico | 🟡 Mitigada na exportação; ver §G.5 |
+| **DV-6** | **CC-A: ST-09 ausente — C++ emite `Error`, JS omite a família** | 🔴 **Aberto** |
+| **DV-7** | CC-B: estado fixo `'Normal'` no caminho da evidência | ✅ **Resolvida** (escopo MS-08) |
+| **DV-8** | **Apresentação consome a sentinela e a exibe como valor científico** | 🔴 **Aberto — Pilar 2** |
+
+**DV-4 — Aberto (Pilar 2).** Excluída do P1-002 por decisão: detectar sinal intencional exige um
+critério quantitativo, e **N4 atribui limiares ao Pilar 2**. O MS-08 ainda pode reportar um nível de
+sinal como "Noise Floor" se o ST-09 estiver contaminado.
+
+**DV-6 — Aberto.** Unificar o contrato faria surgir uma família nova no *payload* da UI, o que a
+decisão de escopo (não alterar comportamento de interface) veda. **CC-A está satisfeita nas
+condições degeneradas, mas não nesta.**
+
+**DV-8 — Aberto (Pilar 2) · confirmado no WebView nativo.** `LAB.getMetric()` (`html:2647`) e
+`val()` (`html:2210`) filtram **apenas por finitude** — `e.value != null && isFinite(e.value)` — e
+**não consultam `valuePresent` nem `quality`**. O contrato interno do MS-08 chega íntegro
+(`quality = NotApplicable`, `valuePresent = false`), mas a camada de apresentação consome a
+**sentinela numérica −300** e a exibe como valor científico válido, inclusive na frase
+interpretativa do painel lateral. **Defeito de apresentação; não corrigido.** Relacionado a **V2**.
+
+**V1 / P1-008 — Aberto · confirmado no WebView nativo.** Registrado em Seção D (V1).
+
+### G.7 Matriz de rastreabilidade — P1-002
+
+| Requisito / origem | Documento normativo | Implementação | Evidência | Estado |
+|---|---|---|---|:--:|
+| Validade condicionada a observação suficiente | `noise-floor-definition.md` §7 (Estabilidade) | `fr2 == 0` → `NotApplicable`; `fr2 < 16` → `LowConfidence` | TC-039 (C1, C2, C3) | ✅ |
+| Piso não-mensurável sinalizado | **N4** ("piso não-mensurável") | `integFull == 0` → `NotApplicable` | TC-039 (C4) | ✅ |
+| Condição declarada junto ao número | `noise-floor-definition.md` §7 (Rastreabilidade) | `NoiseFloor_frames` sempre válido | TC-039 (C1 × C4) | ✅ |
+| Propagação de estados de qualidade | princípio **D4** | `r.quality` deixa de ser incondicional | TC-039 · CSV | ✅ |
+| ST-09 ausente → falha | comportamento preexistente | `Error` preservado | TC-039 (C0) | ✅ |
+| `NotApplicable` não exportado como medição | decisão de escopo (Q3) | `valuePresent = false` | CSV real → `N/A` | ✅ |
+| MS-09 inalterado | decisão de escopo (Q4) | *clamp* conservado no campo | TC-039 (C4) · §G.5 | ✅ |
+| **CC-A** — C++ ↔ JS | Plano Mestre | `computeMS08()` espelhado | 5 condições idênticas | ⚠️ parcial (**DV-6**) |
+| **CC-B** — estado no caminho da evidência | V2 | fim do `'Normal'` literal | montagem `mr08` | ✅ escopo MS-08 |
+| Regressão permanente | critério de aceite | TC-039 | controle negativo (7 falhas) | ✅ |
+| Silêncio sujo | **N4** | — | — | 🔴 **DV-4 → Pilar 2** |
+
+### G.8 Proveniência das sessões (rastreabilidade factual)
+
+Duas sessões distintas do **mesmo binário**, ambas com
+`CommitFull = 18f64abb3db6dcb9505e4ee2aae65075ef5b3c38`, `GitDirty: false`, `BuildConfig: Release`,
+`ExecutablePath = C:\aamp\build\windows-ninja\aamp_app_artefacts\Release\AAMP.exe`, WebView2 ativo
+em runtime (Chromium 151 via Edg/151):
+
+| Sessão | Conteúdo | Encerramento |
+|---|---|---|
+| `20260807_102309-14344-1` | **Nova caracterização física da Helix** com preset completamente limpo (sem blocos de efeito): 16 capturas via ASIO Helix, 10:29:51–10:31:38. Realizada **intencionalmente** para gerar sessão e log atuais desta etapa. | rodapé não capturado (log copiado com a aplicação aberta) |
+| `20260807_111503-20508-1` | Sessão de aplicação, 11:15:03–11:16:04 | **`Exit: Normal`**, `Elapsed 00:01:01.603` |
+
+> **Registro explícito, para evitar conflação futura:** a caracterização das 10:29 **não é** o gate
+> visual do P1-002 e **não é utilizada** para reabrir ou reinterpretar o P1-001, nem para antecipar
+> o P1-003. Ela consta apenas como fato de rastreabilidade desta etapa. A evidência do gate são as
+> **capturas de tela**; a do encerramento normal é a sessão `…-20508-1`.
+
+### G.9 Encerramento
+
+**P1-002 APROVADO e CONCLUÍDO** no escopo autorizado de **cálculo, contrato semântico e
+exportação**. Permanecem abertos e explicitamente rastreados: **DV-4** e **DV-8** (Pilar 2),
+**DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5, condicionada a
+P1-003/P1-004). Nenhum deles foi corrigido neste item.
 
 ---
 
