@@ -862,17 +862,27 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     // tempo e NAO e detectavel num espectro restrito a banda.
     const int N = 4096;                     // mesma janela do MS-08; NAO reduzir para obter quadros
     double lmaxDb = 0.0; bool haveCeil = false;
+    // ---- P1-009 (estagio 1): fatos primarios para derivar a NATUREZA da estimativa ----
+    // Sao os DOIS unicos fatos necessarios, ambos ja produzidos pelo laco: o indice do degrau
+    // selecionado (s*) e o indice do PRIMEIRO degrau rejeitado por saturacao (min(C)). Nada e
+    // recomputado -- nem alinhamento, nem segmentacao, nem espectro, nem clipping -- e nenhum
+    // escalar publico e criado para eles (isso pertence ao estagio 2, nao autorizado).
+    int selectedStepIndex = -1;             // s*
+    int firstClippedIndex = -1;             // min(C); -1 quando C == vazio
     for (int s = 0; s < 8; ++s) {
         std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg + lag), static_cast<std::size_t>((s + 1) * seg + lag));
         if (part.empty()) continue;
-        if (peak(part) >= 1.0) continue;                       // (3) gate TEMPORAL, sinal bruto
+        if (peak(part) >= 1.0) {                               // (3) gate TEMPORAL, sinal bruto
+            if (firstClippedIndex < 0) firstClippedIndex = s;   // varredura ascendente => min(C)
+            continue;
+        }
         if (static_cast<int>(part.size()) < N) continue;
         const int off = (static_cast<int>(part.size()) - N) / 2;  // quadro CENTRADO no degrau
         const std::vector<double> frame = slice(part, static_cast<std::size_t>(off), static_cast<std::size_t>(off + N));
         const double bp = inBandPower(frame, N, m_fs, Window::Hann);   // (4) nivel in-band
         if (bp <= 0.0) continue;                                // degrau sem energia na banda
         const double lvl = 10.0 * std::log10(bp);
-        if (!haveCeil || lvl > lmaxDb) { lmaxDb = lvl; haveCeil = true; }
+        if (!haveCeil || lvl > lmaxDb) { lmaxDb = lvl; haveCeil = true; selectedStepIndex = s; }
     }
     if (!haveCeil) {   // nenhum degrau valido (todos clipados/vazios) -> nao caracterizavel
         r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
@@ -891,7 +901,21 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     // ---- P1-004: propagacao de LowConfidence do piso ----
     // DR = teto - piso; uma limitacao de confianca do piso limita a confianca do derivado.
     const Quality drQuality = (nfQuality == Quality::LowConfidence) ? Quality::LowConfidence : Quality::Normal;
-    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", drQuality, true});
+    // ---- P1-009 (estagio 1): NATUREZA da estimativa (dynamic-range-definition.md sec.6) ----
+    // O teto normativo e o INICIO DA SATURACAO. So ha estimativa PONTUAL quando a saturacao foi
+    // efetivamente demonstrada IMEDIATAMENTE acima do maior degrau valido -- so entao o inicio da
+    // saturacao esta encaixotado entre s* e min(C). Em qualquer outra situacao sabe-se apenas que a
+    // cadeia SUPORTA AO MENOS o nivel de s*, o que sustenta `DR >= X` e nao `DR = X`:
+    //   C == vazio e s* == ultimo degrau   -> censura pelo limite superior do ensaio
+    //   C != vazio e min(C) >  s* + 1      -> saturacao observada porem NAO encaixotada
+    //   C == vazio e s* <  ultimo degrau   -> degraus superiores invalidos por outra causa
+    //                                        (captura truncada / sem energia in-band)
+    // Derivada EXCLUSIVAMENTE de INDICES: nenhuma comparacao de double participa da classificacao,
+    // de modo que a regra permanece bem definida mesmo sob entrada nao-finita (F10 permanece
+    // aberto e NAO e corrigido aqui).
+    const bool saturacaoEncaixotada = (firstClippedIndex >= 0) && (firstClippedIndex == selectedStepIndex + 1);
+    const EstimateNature nature = saturacaoEncaixotada ? EstimateNature::Point : EstimateNature::LowerBound;
+    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", drQuality, true, nature});
     r.quality = drQuality;
     return r;
 }

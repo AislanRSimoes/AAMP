@@ -915,6 +915,18 @@ function computeMS07(signal){
    D-SAÍDA-OFICIAL: calcula apenas o escalar oficial (NoiseFloor_dBFS) — não reproduz a Curve "Noise Floor"
    nem os diagnósticos do Core (sem consumidor); a integração de banda é acumulada por quadro (sem array
    por-bin intermediário). */
+/* ESTIMATE — natureza LÓGICA da estimativa (P1-009, estágio 1). Espelha aamp::EstimateNature do Core.
+   TERCEIRO eixo do contrato, ORTOGONAL aos outros dois e não derivável deles:
+     quality       → validade / confiança da medição
+     valuePresent  → existência de um valor numericamente interpretável
+     estimateNature→ o que o valor AFIRMA sobre a grandeza (pontual ou unilateral)
+   Um limite inferior pode ser medição plenamente confiável e presente — apenas a QUANTIFICAÇÃO é
+   unilateral. Vedado representar unilateralidade por 'LowConfidence' ou por novo valor de quality. */
+const ESTIMATE={POINT:'Point',LOWER:'LowerBound',UPPER:'UpperBound'};
+/* Leitor com PADRÃO 'Point'. É o equivalente exato do inicializador padrão do membro adicionado ao
+   final de Scalar no C++: toda métrica que não se pronuncia continua sendo, por definição, uma
+   estimativa PONTUAL — sem precisar editar nenhuma das outras 14 famílias. */
+function estimateOf(s){return (s&&s.estimateNature)||ESTIMATE.POINT;}
 /* officialBandPower — POTÊNCIA integrada na banda pelo método oficial do Core (Hann + normalização
    ENBW/Parseval + soma dos bins dentro de [bandLo, bandHi]). Espelha AnalysisEngine::inBandPower,
    que por sua vez reutiliza noisePowerSpectrum.
@@ -996,31 +1008,46 @@ function computeMS09(signal, officialNoiseFloor, stepSource){
   // temporal por necessidade física: saturação não é detectável num espectro restrito à banda.
   const NFFT=4096, BAND_LO=20, BAND_HI=20000;                            // mesma janela do MS-08
   let lmaxDb=0, have=false;
+  // P1-009 (estágio 1) — fatos primários para derivar a NATUREZA da estimativa. São os DOIS únicos
+  // fatos necessários, ambos já produzidos pelo laço; nada é recomputado e nenhum escalar público é
+  // criado para eles (estágio 2, não autorizado). Espelha AnalysisEngine::dynamicRange.
+  let selectedStepIndex=-1, firstClippedIndex=-1;                        // s*  e  min(C)
   for(let s=0;s<8;s++){
     const a=s*seg+lag; if(a>=samples.length) continue;                   // segmento vazio -> ignora (slice do Core)
     const part=samples.slice(a, Math.min((s+1)*seg+lag, samples.length));
     if(part.length===0) continue;
     let pk=0;
     for(let i=0;i<part.length;i++){const av=Math.abs(part[i]); if(av>pk)pk=av;}
-    if(pk>=1.0) continue;                                                // gate de clipping: descarta pico ≥ 1.0
+    if(pk>=1.0){                                                         // gate de clipping: descarta pico ≥ 1.0
+      if(firstClippedIndex<0) firstClippedIndex=s;                       // varredura ascendente => min(C)
+      continue;
+    }
     if(part.length<NFFT) continue;
     const off=(part.length-NFFT)>>1;                                     // quadro CENTRADO no degrau
     const bp=officialBandPower(part, off, NFFT, fs, BAND_LO, BAND_HI);
     if(bp<=0) continue;                                                  // degrau sem energia na banda
     const lvl=10*Math.log10(bp);
-    if(!have || lvl>lmaxDb){lmaxDb=lvl; have=true;}
+    if(!have || lvl>lmaxDb){lmaxDb=lvl; have=true; selectedStepIndex=s;}
   }
   if(!have)                                                              // todos os degraus clipados/vazios
-    return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};
+    return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false, estimateNature:ESTIMATE.POINT};
   // P1-004 / D3 (dynamic-range-definition.md §7) — degeneração teto ≤ piso: o sinal não se eleva
   // acima do ruído, não há extensão útil, a grandeza NÃO EXISTE. A especificação veda tanto valor
   // positivo espúrio quanto número negativo; inclui o caso-limite teto == piso. Sem zero, abs()
   // ou clamp — o valor simplesmente não é interpretável.
-  if(lmaxDb<=nf) return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};
+  if(lmaxDb<=nf) return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false, estimateNature:ESTIMATE.POINT};
   // P1-004 — propagação de LowConfidence do piso: DR = teto − piso, logo uma limitação de
   // confiança do piso limita a confiança do derivado (o valor permanece presente e utilizável).
   const q = (officialNoiseFloor.quality==='LowConfidence') ? 'LowConfidence' : 'Normal';
-  return {quality:q, dynamicrange_db: lmaxDb - nf, valuePresent:true};   // maior nível in-band − piso oficial da MS-08
+  // P1-009 (estágio 1) — NATUREZA da estimativa (dynamic-range-definition.md §6). MESMA regra do
+  // Core: o teto normativo é o INÍCIO DA SATURAÇÃO, logo só há estimativa PONTUAL quando a saturação
+  // foi demonstrada IMEDIATAMENTE acima do maior degrau válido — só então o início está encaixotado
+  // entre s* e min(C). Nos demais casos sabe-se apenas que a cadeia SUPORTA AO MENOS o nível de s*,
+  // o que sustenta `DR ≥ X` e não `DR = X`. Derivada EXCLUSIVAMENTE de ÍNDICES: nenhuma comparação
+  // de ponto flutuante participa da classificação.
+  const encaixotada = (firstClippedIndex>=0) && (firstClippedIndex===selectedStepIndex+1);
+  const nature = encaixotada ? ESTIMATE.POINT : ESTIMATE.LOWER;
+  return {quality:q, dynamicrange_db: lmaxDb - nf, valuePresent:true, estimateNature:nature};
 }
 /* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
    razão de potências RMS temporais entre o tom de 1 kHz (ST-03) e o ruído (ST-09):
@@ -1432,7 +1459,8 @@ const LabEngine={
       // válida com confiança reduzida — o mesmo contrato do Core (Scalar::valuePresent).
       const present=m09.valuePresent===true;                           // traduz Normal/LowConfidence/NotApplicable/Error -> contrato
       const mr09={id:'MS-09',name:'Dynamic Range',quality:m09.quality,scalars:[
-        {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,valuePresent:present}],curves:[]};
+        {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,
+         valuePresent:present,estimateNature:estimateOf(m09)}],curves:[]};   // P1-009: 3º eixo do contrato
       byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     if(st03&&st03.wav&&st09&&st09.wav){   // MS-10: duas capturas científicas (ST-03 tom + ST-09 ruído)

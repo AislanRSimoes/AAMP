@@ -6,7 +6,11 @@
 #include "../src/analysis/Fft.h"
 #include "../src/analysis/Deconvolution.h"
 #include "../src/common/Constants.h"
+#include "../src/export/ExportEngine.h"          // TC-047: prova de invariancia da exportacao
+#include "../src/dashboard/DashboardModel.h"     // TC-047: prova de invariancia do view-model
 #include <cmath>
+#include <fstream>
+#include <sstream>
 
 using namespace aamp;
 static const double FS = k::REF_SAMPLE_RATE;
@@ -756,6 +760,223 @@ TEST_CASE("TC-046 MS-09 condicoes nao caracterizaveis de Dynamic Range (P1-004)"
             //       nunca divergem de estado.
             CHECK(coerente(b));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// TC-047 -- P1-009 (estagio 1): NATUREZA DA ESTIMATIVA do MS-09.
+//
+// IDENTIFICADOR: reconfirmado livre imediatamente antes da edicao (TC-044/045/046 ocupados;
+// 047/048/049 livres).
+//
+// O contrato passa a ter TRES eixos INDEPENDENTES:
+//     quality        -> validade / confianca da medicao
+//     valuePresent   -> existencia de um valor numericamente interpretavel
+//     estimate       -> o que o valor AFIRMA sobre a grandeza (Point / LowerBound / UpperBound)
+//
+// Regra do MS-09 (dynamic-range-definition.md sec.6). Com V = degraus de estimativa valida,
+// C = degraus rejeitados por saturacao, s* = selecionado e min(C) = primeiro saturado:
+//     C != vazio e min(C) == s*+1  -> Point       (saturacao demonstrada e ENCAIXOTADA)
+//     C == vazio e s* == ultimo    -> LowerBound  (censura pelo limite superior do ensaio)
+//     C != vazio e min(C) >  s*+1  -> LowerBound  (saturacao observada, NAO encaixotada)
+//     V == vazio                   -> NotApplicable / valuePresent=false (natureza sem significado)
+//
+// O que este teste IMPEDE de reintroduzir: (i) publicar uma estimativa unilateral como se fosse
+// pontual; (ii) representar unilateralidade via Quality ou valuePresent; (iii) deixar o novo campo
+// escapar para a exportacao, o relatorio ou o dashboard; (iv) alterar o valor numerico do MS-09.
+TEST_CASE("TC-047 MS-09 natureza da estimativa: Point vs LowerBound (P1-009)") {
+    AnalysisEngine eng(FS);
+    const int seg = static_cast<int>(0.100 * FS + 0.5);
+
+    auto drScalar = [](const ResultBundle& b) -> const Scalar* {
+        const MetricResult* m = b.find("MS-09");
+        if (m == nullptr) return nullptr;
+        for (const Scalar& s : m->scalars) if (s.key == "DynamicRange_dB") return &s;
+        return nullptr;
+    };
+    // Captura de ST-08 com ganho aplicado e saturacao no fundo de escala (cadeia real satura).
+    auto comGanho = [&](double g) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        for (double& v : cap.captured[StimulusId::ST08_DynamicStep])
+            v = std::max(-1.0, std::min(1.0, v * g));
+        return cap;
+    };
+
+    // ---- (1) ganho unitario: nenhum degrau satura -> teto CENSURADO pelo limite do ensaio ----
+    // Este e o REGIME NORMAL: o ST-08 tem pico maximo de -6 dBFS, logo uma cadeia de ganho unitario
+    // nunca demonstra saturacao. O numero e valido e confiavel; apenas afirma DR >= X, nao DR = X.
+    ResultBundle bUnit = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+    {
+        const Scalar* s = drScalar(bUnit);
+        CHECK(s != nullptr);
+        CHECK(s->estimate == EstimateNature::LowerBound);
+        // ORTOGONALIDADE: unilateral NAO rebaixa confianca nem remove o valor.
+        CHECK(s->quality == Quality::Normal);
+        CHECK(s->valuePresent);
+        // INVARIANCIA NUMERICA: identico ao estado anterior ao P1-009.
+        CHECK_NEAR(s->value, 86.789489, 0.001);
+    }
+
+    // ---- (2) ganho x2: satura o degrau 7, selecionado e o 6 -> saturacao ENCAIXOTADA -> Point ----
+    {
+        ResultBundle b = eng.computeAllMetrics(comGanho(2.0));
+        const Scalar* s = drScalar(b);
+        CHECK(s != nullptr && s->estimate == EstimateNature::Point);
+        CHECK(s->quality == Quality::Normal && s->valuePresent);
+    }
+
+    // ---- (3) ganho x4: satura a partir do degrau 5, selecionado e o 4 -> Point ----
+    {
+        ResultBundle b = eng.computeAllMetrics(comGanho(4.0));
+        const Scalar* s = drScalar(b);
+        CHECK(s != nullptr && s->estimate == EstimateNature::Point);
+        CHECK(s->quality == Quality::Normal && s->valuePresent);
+    }
+
+    // ---- (4) todos os degraus saturados -> sem valor; a natureza nao tem significado ----
+    {
+        ResultBundle b = eng.computeAllMetrics(comGanho(100.0));
+        const Scalar* s = drScalar(b);
+        CHECK(s != nullptr);
+        CHECK(s->quality == Quality::NotApplicable && !s->valuePresent);
+    }
+
+    // ---- (5) saturacao observada porem NAO encaixotada -> LowerBound ----
+    // Constroi-se a partir do caso x4 (min(C)=5, s*=4) zerando o degrau 4: ele passa a ser invalido
+    // por AUSENCIA DE ENERGIA IN-BAND, nao por saturacao. Resulta s*=3 e min(C)=5 > s*+1: sabe-se
+    // que houve saturacao, mas o inicio dela NAO esta encaixotado acima do degrau selecionado.
+    {
+        CapturedSet cap = comGanho(4.0);
+        std::vector<double>& st08 = cap.captured[StimulusId::ST08_DynamicStep];
+        for (int i = 4 * seg; i < 5 * seg && i < static_cast<int>(st08.size()); ++i)
+            st08[static_cast<std::size_t>(i)] = 0.0;
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drScalar(b);
+        CHECK(s != nullptr && s->estimate == EstimateNature::LowerBound);
+        CHECK(s->quality == Quality::Normal && s->valuePresent);
+        // discrimina do caso (3): o teto caiu um degrau (-6 dB), provando que s* mudou de 4 p/ 3
+        ResultBundle b4 = eng.computeAllMetrics(comGanho(4.0));
+        const Scalar* s4 = drScalar(b4);
+        CHECK(s4 != nullptr && s->value > 0.0 && s4->value - s->value > 5.0);
+    }
+
+    // ---- (6) ORTOGONALIDADE PLENA: LowerBound + LowConfidence + valuePresent=true ----
+    // Prova que os tres eixos sao realmente independentes: um teto censurado (unilateral) sobre um
+    // piso de observacao insuficiente (confianca reduzida) mantem o valor presente.
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence] =
+            harness::deterministicNoise(static_cast<std::size_t>(4096 + 4 * 2048), -95.0);  // 5 quadros
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drScalar(b);
+        CHECK(s != nullptr);
+        CHECK(s->estimate == EstimateNature::LowerBound);
+        CHECK(s->quality == Quality::LowConfidence);
+        CHECK(s->valuePresent);
+    }
+
+    // ---- (7) PADRAO: toda métrica que nao se pronuncia continua sendo estimativa PONTUAL ----
+    // Nenhum escalar de nenhuma outra familia foi tocado; o inicializador padrao do membro
+    // acrescentado ao final de Scalar garante Point sem edicao alguma nas outras 14 familias.
+    {
+        int verificados = 0;
+        for (const MetricResult& m : bUnit.metrics) {
+            for (const Scalar& s : m.scalars) {
+                if (m.id == "MS-09" && s.key == "DynamicRange_dB") continue;   // o unico que se pronuncia
+                CHECK(s.estimate == EstimateNature::Point);
+                ++verificados;
+            }
+        }
+        CHECK(verificados > 100);   // guarda: a varredura precisa ter sido efetiva
+    }
+
+    // ---- (8) INVARIANCIA DE EXPORTACAO: o novo campo NAO escapa para nenhuma saida ----
+    // Dois bundles identicos exceto pela natureza (LowerBound x Point) devem produzir:
+    //   CSV escalar BYTE-IDENTICO, ReportModel identico e DashboardModel identico.
+    {
+        ResultBundle bLower = bUnit;                      // MS-09 em LowerBound (caso 1)
+        ResultBundle bPoint = bUnit;
+        bool trocou = false;
+        for (MetricResult& m : bPoint.metrics)
+            if (m.id == "MS-09")
+                for (Scalar& s : m.scalars)
+                    if (s.key == "DynamicRange_dB") { s.estimate = EstimateNature::Point; trocou = true; }
+        CHECK(trocou);   // a unica diferenca entre os dois bundles
+
+        ExportEngine ex;
+        const std::string pL = "/tmp/aamp_p1009_lower.csv";
+        const std::string pP = "/tmp/aamp_p1009_point.csv";
+        CHECK(ex.exportScalarsCSV(bLower, pL).ok);
+        CHECK(ex.exportScalarsCSV(bPoint, pP).ok);
+        auto slurp = [](const std::string& p) {
+            std::ifstream f(p, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); return ss.str();
+        };
+        const std::string csvL = slurp(pL), csvP = slurp(pP);
+        CHECK(!csvL.empty());
+        CHECK(csvL == csvP);                                        // BYTE-IDENTICO
+        CHECK(csvL.find("LowerBound") == std::string::npos);        // nenhuma linha/campo novo
+        CHECK(csvL.find("nature")     == std::string::npos);
+        CHECK(csvL.find("estimate")   == std::string::npos);
+        CHECK(csvL.find("DynamicRange_dB=86.789") != std::string::npos);  // numero puro, sem ">="
+        CHECK(csvL.find(">=") == std::string::npos);
+
+        // ReportModel (PDF) identico
+        const ReportModel rL = ex.buildReportModel(bLower), rP = ex.buildReportModel(bPoint);
+        CHECK(rL.sections.size() == rP.sections.size());
+        bool relIgual = true;
+        for (std::size_t i = 0; i < rL.sections.size() && i < rP.sections.size(); ++i) {
+            if (rL.sections[i].title != rP.sections[i].title) relIgual = false;
+            if (rL.sections[i].lines != rP.sections[i].lines) relIgual = false;
+        }
+        CHECK(relIgual);
+
+        // DashboardModel identico
+        const DashboardModel dL = buildDashboardModel(bLower), dP = buildDashboardModel(bPoint);
+        CHECK(dL.sections.size() == dP.sections.size());
+        bool dashIgual = true;
+        for (std::size_t i = 0; i < dL.sections.size() && i < dP.sections.size(); ++i) {
+            if (dL.sections[i].items.size() != dP.sections[i].items.size()) { dashIgual = false; continue; }
+            for (std::size_t j = 0; j < dL.sections[i].items.size(); ++j) {
+                const DashboardItem& a = dL.sections[i].items[j];
+                const DashboardItem& c = dP.sections[i].items[j];
+                if (a.label != c.label || a.value != c.value || a.unit != c.unit || a.state != c.state)
+                    dashIgual = false;
+            }
+        }
+        CHECK(dashIgual);
+    }
+
+    // ---- (9) CONTROLE: a classificacao NAO depende de comparacao de double ----
+    // A natureza e funcao exclusiva de s* e min(C), ambos INTEIROS. Prova-se pela via observavel:
+    // duas capturas com o MESMO padrao de saturacao mas niveis in-band bem diferentes produzem a
+    // MESMA natureza -- o valor numerico do teto nao participa da decisao.
+    // (F10/NaN permanece ABERTO e NAO e corrigido aqui; este caso nao sanitiza entrada alguma.)
+    {
+        ResultBundle b2 = eng.computeAllMetrics(comGanho(2.0));
+        const Scalar* s2 = drScalar(b2);
+        CHECK(s2 != nullptr && s2->estimate == EstimateNature::Point);
+
+        // (a) MESMO padrao de saturacao, TETO DESLOCADO: atenua em 6 dB apenas os degraus NAO
+        //     saturados. O degrau 7 continua saturando e o 6 continua sendo o selecionado -- os
+        //     indices s* e min(C) NAO mudam --, mas o NIVEL in-band do teto cai ~6 dB. Se a
+        //     classificacao dependesse do valor, a natureza mudaria. Ela NAO pode mudar.
+        CapturedSet capAten = comGanho(2.0);
+        std::vector<double>& z = capAten.captured[StimulusId::ST08_DynamicStep];
+        for (int k = 0; k < 7; ++k)
+            for (int i = k * seg; i < (k + 1) * seg && i < static_cast<int>(z.size()); ++i)
+                z[static_cast<std::size_t>(i)] *= 0.5;
+        ResultBundle bA = eng.computeAllMetrics(capAten);
+        const Scalar* sA = drScalar(bA);
+        CHECK(sA != nullptr);
+        CHECK(sA->estimate == s2->estimate);                       // natureza INVARIANTE ao nivel
+        CHECK(s2->value - sA->value > 5.0);                        // ...com o teto ~6 dB MENOR
+
+        // (b) padroes de saturacao em degraus DIFERENTES (x2 e x4), ambos encaixotados: tetos
+        //     distintos, MESMA natureza.
+        ResultBundle b4 = eng.computeAllMetrics(comGanho(4.0));
+        const Scalar* s4 = drScalar(b4);
+        CHECK(s4 != nullptr && s4->estimate == s2->estimate);
+        CHECK(std::fabs(s4->value - s2->value) > 1.0);             // valores distintos, natureza igual
     }
 }
 
