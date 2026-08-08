@@ -105,6 +105,9 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
   nesse regime que a relação `Dynamic Range ≥ SNR` perde qualquer garantia.
   *Este princípio está **registrado**; a sinalização do estado, a exportação, a apresentação e o
   cálculo **não** foram alterados nesta etapa.*
+  *Situação após o **P1-004** (2026-08-08): continua **sem implementação**, agora como **item próprio
+  e aberto** — desmembrado por fronteira arquitetural, não abandonado nem implicitamente
+  implementado.*
 - **Exportação.** O Dynamic Range é exportado como um **escalar em dB**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz), da **ausência de ponderação** e da **condição** (teto sem saturação; piso em
   silêncio). É **homogêneo** com as demais métricas expressas em dB.
@@ -132,6 +135,7 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
   ruído), a faixa dinâmica é **não caracterizável** (faixa não utilizável) — condição que deve ser
   **sinalizada** como não caracterizável, e **nunca** reportada como valor positivo espúrio **nem como
   número negativo** (decisão **D3**). Inclui o caso-limite `teto = piso`.
+  *(Implementado no **P1-004** — commit `6ed71e8`, protegido por **TC-046**.)*
 
 ---
 
@@ -160,3 +164,17 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 > limite superior do ensaio** e o Dynamic Range é um **limite inferior**. Nenhuma alteração de
 > cálculo, estado de qualidade, exportação, interface ou estímulo acompanha esta ratificação.
 > Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — F2*.
+>
+> **Conformidade de implementação (P1-004 — núcleo semântico), 2026-08-08.** A **§7 (Tratamento da
+> degeneração)** passou a ser **efetivamente implementada**: `teto ≤ piso` — **inclusive o
+> caso-limite `teto = piso`** — é sinalizado como **não caracterizável** (`NotApplicable`, valor
+> ausente), **nunca** como valor positivo espúrio nem como número negativo, e sem `abs()`, `clamp`
+> ou substituição por zero. Implementada também a **dependência unidirecional da §6**: o estado do
+> **Noise Floor** governa o do Dynamic Range — piso não caracterizável torna o DR não
+> caracterizável, e piso de confiança reduzida rebaixa o DR a `LowConfidence` **preservando o
+> valor**. A medição normal permanece numericamente inalterada. Commit `6ed71e8`, protegido por
+> **TC-046**, validado independentemente no Windows.
+> **A decisão D (teto censurado, §6) continua SEM implementação** — foi **desmembrada por fronteira
+> arquitetural** em item próprio e aberto, por se ter demonstrado que qualquer escalar novo é
+> exportado automaticamente e que `MetricResult` não possui superfície para metadados internos.
+> Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-004*.

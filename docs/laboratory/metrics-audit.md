@@ -742,10 +742,17 @@ O campo numérico de `NoiseFloor_dBFS` **conserva o *clamp* −300 dBFS** mesmo 
 da chave — **ignora `nf.quality`**. Substituir o campo por outro valor alteraria o Dynamic Range,
 o que está **fora do escopo do P1-002**. TC-039 fixa essa não-regressão: em silêncio digital o
 MS-09 continua `Normal`, com `DynamicRange_dB > 200`.
+*(Guarda **retirada no P1-004**, o item autorizado a alterar o MS-09; a condição passou a ser
+protegida normativamente pelo **TC-046**, caso (5) — ver §K.3.)*
 
 > **Condição de remoção:** a sentinela só poderá sair do campo quando o MS-09 passar a honrar
 > `nf.quality` — o que pertence a **P1-003 / P1-004**. Até lá, `−300` permanece no contrato interno
 > e é neutralizado na exportação por `valuePresent = false`. Relacionado a **DV-5** e a **F6**.
+>
+> **Atualização (P1-004, 2026-08-08).** A condição está **cumprida**: o MS-09 passou a honrar
+> `quality`/`valuePresent` do piso. A sentinela **permanece deliberadamente no campo do MS-08**
+> (decisão **D3** do P1-004) — o que mudou é que **nenhum consumidor normativo a interpreta mais
+> como medição**. Ver *Registro de Encerramento — P1-004* → §K.1.
 
 ### G.6 Divergências — estado final
 
@@ -755,7 +762,7 @@ MS-09 continua `Normal`, com `DynamicRange_dB > 200`.
 | **DV-2** | Piso não-mensurável (`integFull == 0`) reportado como valor | ✅ **Resolvida** |
 | **DV-3** | Observação insuficiente não sinalizada | ✅ **Resolvida** |
 | **DV-4** | **Silêncio sujo não detectado** | 🔴 **Aberto — Pilar 2** |
-| **DV-5** | Sentinela `−300` ambígua no campo numérico | 🟡 Mitigada na exportação; ver §G.5 |
+| **DV-5** | Sentinela `−300` ambígua no campo numérico | ✅ **Resolvida no P1-004** — nenhum consumidor normativo a lê como medição; sentinela conservada no campo por **D3** (§K.1) |
 | **DV-6** | **CC-A: ST-09 ausente — C++ emite `Error`, JS omite a família** | 🔴 **Aberto** |
 | **DV-7** | CC-B: estado fixo `'Normal'` no caminho da evidência | ✅ **Resolvida** (escopo MS-08) |
 | **DV-8** | **Apresentação consome a sentinela e a exibe como valor científico** | 🔴 **Aberto — Pilar 2** |
@@ -816,6 +823,7 @@ em runtime (Chromium 151 via Edg/151):
 exportação**. Permanecem abertos e explicitamente rastreados: **DV-4** e **DV-8** (Pilar 2),
 **DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5, condicionada a
 P1-003/P1-004). Nenhum deles foi corrigido neste item.
+*(A pendência da sentinela foi posteriormente fechada pelo **P1-004** — §K.1.)*
 
 ---
 
@@ -864,7 +872,7 @@ Constatado na evidência: o pico do ST-08 retornou a **−8,3 dBFS**, com o ST-0
 | Item | Impacto |
 |---|---|
 | **P1-003** | Limitar a banda **não corrige** F9 — a contaminação é temporal (F9 foi resolvido à parte, em `cfb95fa`). Restrição que **permanece**: 100 ms = 4800 amostras comporta **uma única** janela de 4096 ⇒ estimativa espectral de um só quadro, sem média. |
-| **P1-004** | Teto enviesado ~0,32 dB para baixo aproxima marginalmente a degeneração. A decisão **D**, se um dia implementada, acrescenta um segundo caso (teto censurado). |
+| **P1-004** | Teto enviesado ~0,32 dB para baixo aproxima marginalmente a degeneração. A decisão **D**, se um dia implementada, acrescenta um segundo caso (teto censurado). *(Executado: o **núcleo semântico** tratou a degeneração `teto ≤ piso`; a decisão **D** foi **desmembrada** e permanece aberta — §K.6.)* |
 | **P1-005** | **Nenhum sobre F2** — os pisos já coincidem em 0,0002 dB. Confirmado empiricamente que F2 **não** é problema de piso. |
 | **P1-006** | **Mitiga parcialmente:** isolar a energia do tom remove do numerador a contaminação de 0,95 % e o ruído/distorção ⇒ referência **diminui**, favorecendo `DR ≥ SNR`. |
 | **CC-A** | **Preservado.** `computeMS09`/`computeMS10` replicam a mesma segmentação e o mesmo recorte ⇒ **carregam o mesmo viés**. Não há descompasso entre implementações. |
@@ -1099,12 +1107,210 @@ Teto ideal do degrau mais alto (seno de 1 kHz a −6 dBFS de pico): **−9,0103 
 - 🔴 **Decisão D / teto censurado — não implementada.** Nenhum escalar novo foi criado; índice do
   degrau e `algumDegrauClipou` **não** são expostos. A arquitetura dessa representação será decidida
   separadamente, com o **P1-004**.
+  *(Situação no P1-004: **desmembrada por fronteira arquitetural** — continua **não resolvida**,
+  agora como **item próprio e separado**. Ver §K.6.)*
 - 🔴 **DV-5 / sentinela `−300` — aberta.** O MS-09 continua lendo `NoiseFloor_dBFS` por chave,
-  ignorando `nf.quality`.
-- ⬜ **P1-004 e P1-005 — não iniciados.**
+  ignorando `nf.quality`. *(**Fechada no P1-004** — §K.1.)*
+- ⬜ **P1-004 e P1-005 — não iniciados.** *(**P1-004: núcleo semântico concluído** e validado no
+  Windows — §K. **P1-005** segue não iniciado.)*
 
 Também inalterados: **MS-10**, **MS-13**, **ST-08**, `ENABLE_SYNC_ALIGNMENT`, Noise Floor,
 exportação, Evidence Package e apresentação.
+
+---
+
+## Registro de Encerramento — P1-004 (Núcleo Semântico do MS-09) — **NORMATIVO**
+
+> **Estado: NÚCLEO SEMÂNTICO CONCLUÍDO — validado independentemente no Windows.**
+> **Qualificador obrigatório:** este registro encerra **exclusivamente o núcleo semântico** do
+> P1-004. A **representação do teto censurado (decisão D) permanece item aberto e separado** —
+> ver §K.6. Nenhuma menção a "P1-004 encerrado" pode ser feita sem esse qualificador.
+> **Referência normativa:** `dynamic-range-definition.md` §7 (*Tratamento da degeneração*) e §6
+> (dependência unidirecional do Noise Floor) · decisão **D3** · divergência **DV-5**.
+> **Pré-requisitos cumpridos:** **F9** (`cfb95fa`) e **P1-003** (`ffa739c`).
+
+### K.1 O que o P1-004 resolveu
+
+O Dynamic Range **deriva** do Noise Floor (`DR = teto − piso`). O MS-09 lia o piso **apenas por
+chave** e ignorava `quality`/`valuePresent` do escalar do MS-08 — de modo que um piso **não
+caracterizável** entregava a sentinela `−300 dBFS` como se fosse medida. O núcleo do P1-004
+estabelece:
+
+- o MS-09 **não pode** interpretar o valor sentinela `−300 dBFS` do MS-08 como medição válida;
+- piso `NotApplicable` / sem valor → MS-09 `NotApplicable`, `valuePresent = false`;
+- piso `LowConfidence` → MS-09 `LowConfidence`, **mantendo presente o valor calculado**;
+- ausência de degrau válido → `NotApplicable`, sem valor;
+- `teto ≤ piso` → `NotApplicable`, sem valor;
+- **nenhum** Dynamic Range negativo é apresentado como medição;
+- **nenhum** `abs()`, `clamp` ou substituição artificial por zero;
+- a medição normal permanece **numericamente inalterada** (`≈ 86,789489 dB` no banco validado);
+- **C++ e JS preservam o mesmo contrato**.
+
+**Contrato implementado (decisão D1, Alternativa II)** — idêntico no Core e no LabEngine:
+
+| Estado do **piso** (MS-08) | Estado do **DR** (MS-09) | `valuePresent` |
+|---|:--:|:--:|
+| `Error` | `Error` | *(família não emite escalar)* |
+| `NotApplicable` / sem valor | `NotApplicable` | `false` |
+| `LowConfidence` | `LowConfidence` | **`true`** — medição válida com confiança reduzida |
+| *(piso válido)* nenhum degrau válido | `NotApplicable` | `false` |
+| *(piso válido)* `teto ≤ piso` | `NotApplicable` | `false` |
+| *(piso válido)* medição normal | `Normal` | `true` |
+
+A sentinela `−300 dBFS` **permanece no campo do MS-08** (decisão **D3** desta etapa). O que mudou é
+que o MS-09 **nunca mais a interpreta como medição**. A matemática do MS-08 **não** foi tocada;
+`MetricResult` e o enum `Quality` permanecem **inalterados**; a **exportação não foi alterada** —
+`ExportEngine::formatScalar` já rendia `N/A` para valor ausente e o sufixo `*` para baixa confiança,
+o que foi conferido em CSV real.
+
+No LabEngine, a **presença do valor passa a ser decidida pela família** (`valuePresent`) em vez de
+inferida de `quality === 'Normal'` — inferência que descartava silenciosamente o valor de uma
+medição `LowConfidence`.
+
+### K.2 Caso-limite `teto = piso`
+
+O operador implementado é `<=`, exatamente como a §7 exige (*"inclui o caso-limite `teto = piso`"*).
+Registra-se a **observação** de que a igualdade exata **não é construível em ponto flutuante**: ela é
+um conjunto de medida nula, e qualquer realização cai de um dos lados por ~`1e-15` dB. O TC-046
+delimita o ponto por um **par de casos a ±1e-6 dB** — nove ordens de grandeza acima do ruído
+numérico e muito abaixo de qualquer degeneração fisicamente distinguível —, obtidos pela
+**homogeneidade exata do estimador** (multiplicar o ST-09 por `g` escala a potência por `g²` e
+desloca o piso em exatamente `20·log10(g)` dB). Isto é propriedade da aritmética de precisão dupla,
+**não** defeito da regra.
+
+### K.3 Proteção permanente — TC-046
+
+**Identificador:** o `TC-045` autorizado **já estava ocupado** por `tests/e2e/E2E_Specs.cpp`
+("TC-045 Tooltip multi-curva"); a reconfirmação exigida imediatamente antes da edição detectou a
+colisão e adotou-se o próximo identificador livre da mesma faixa — **TC-046**, mesmo procedimento
+aplicado antes em `TC-042 → TC-043`.
+
+Cobre **10 condições** — referência normal (com asserção de não-regressão numérica em
+`86,789489 dB`), ST-08 ausente, piso `Error`, piso `NotApplicable` por ausência de observação, piso
+`NotApplicable` por silêncio digital bit-exato, piso `LowConfidence`, todos os degraus saturados,
+degeneração franca (piso 40 dB acima do teto) e os dois casos-limite a ±1e-6 dB — mais **3
+controles negativos independentes**, que varrem os 10 pacotes com critérios que **não dependem** da
+classificação esperada de cada caso:
+
+| Controle | O que impede de reintroduzir |
+|---|---|
+| **CN-1** | nenhum DR **negativo** jamais apresentado como valor (**D6**) |
+| **CN-2** | nenhum DR acima de 200 dB — a sentinela `−300` nunca volta a virar medição (**DV-5**) |
+| **CN-3** | estado da família e do escalar nunca divergem; valor ausente nunca vem rotulado `Normal` |
+
+**Retirada da guarda Q4 do TC-039.** O TC-039 carregava uma asserção que travava o MS-09 no
+comportamento anterior (`Normal`, `> 200 dB`) em silêncio digital. Ela existia **especificamente**
+para impedir que o **P1-002** alterasse o MS-09 por efeito colateral — era **proteção temporária de
+escopo daquele item**, não propriedade do MS-08. O **P1-004 é justamente o item autorizado a alterar
+esse comportamento**, de modo que a retirada está correta; a condição passou a ser protegida
+**normativamente pelo TC-046, caso (5)**. Todas as asserções do TC-039 sobre o MS-08 permanecem
+intactas, inclusive a de que a sentinela `−300` sobrevive no campo.
+
+### K.4 Convergência C++ ↔ JS (CC-A)
+
+Verificada sobre **entradas bit-idênticas** — o Core exportou os vetores de amostras exatos e as
+funções do LabEngine foram executadas sobre eles —, comparando **valor, `quality` e `valuePresent`**:
+
+| Condição | C++ | JS |
+|---|---|---|
+| normal | `Normal` · presente · `86.789489300` | `Normal` · presente · `86.789489300` |
+| piso `LowConfidence` | `LowConfidence` · presente · `86.825010854` | `LowConfidence` · presente · `86.825010854` |
+| piso `NotApplicable` (silêncio digital) | `NotApplicable` · ausente | `NotApplicable` · ausente |
+| piso `NotApplicable` (ST-09 vazio) | `NotApplicable` · ausente | `NotApplicable` · ausente |
+| todos os degraus saturados | `NotApplicable` · ausente | `NotApplicable` · ausente |
+| `teto < piso` (−40 dB) | `NotApplicable` · ausente | `NotApplicable` · ausente |
+| `piso = teto + 1e-6 dB` | `NotApplicable` · ausente | `NotApplicable` · ausente |
+| `piso = teto − 1e-6 dB` | `Normal` · presente · `0.000001000` | `Normal` · presente · `0.000001000` |
+
+Convergência integral nas **oito condições comparáveis**. A nona — **fonte ST-08 ausente** — é a
+**assimetria legítima preservada** (decisão **D5**): o Core **regenera** o estímulo
+deterministicamente, tornando o ramo inalcançável nativamente (`Normal`), enquanto o LabEngine o lê
+do Evidence Package e pode não encontrá-lo (`NotApplicable`). Está documentada no código de ambos os
+lados e **não** foi corrigida.
+
+### K.5 Validação independente no Windows — **APROVADO**
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| Commit validado | `6ed71e80cc3e5b6859ce60e960f9f769569a1f43` |
+| Plataforma / *toolchain* | Windows · MSVC x64 |
+| Configuração · `GitDirty` | `Release` · **`false`** |
+| Configuração e build | **0 warnings, 0 erros** |
+| Executável | `AAMP.exe` · **4.659.712 bytes** |
+| SHA-256 | `52EEE03C1E52389182C909860B1989F0C59F7D562AEF2F0228F63E937A814079` |
+| `aamp_headless_suite` | **588 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 aprovados** |
+| Casos confirmados | **TC-030 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043 · TC-046** |
+
+### K.6 Decisão D / teto censurado — **DESMEMBRADA, NÃO RESOLVIDA**
+
+É essencial distinguir:
+
+| | Estado |
+|---|---|
+| **P1-004 — núcleo semântico** | ✅ **RESOLVIDO E VALIDADO** |
+| **Representação de teto censurado (decisão D)** | 🔴 **NÃO RESOLVIDA — item próprio e aberto** |
+
+Durante a implementação **demonstrou-se uma fronteira arquitetural**:
+
+- `ExportEngine::exportScalarsCSV` itera **todos** os escalares de **todas** as famílias **sem
+  filtro** (apenas ignora chave vazia) ⇒ **qualquer escalar novo é exportado automaticamente**;
+- `MetricResult` possui somente `id`, `name`, `quality`, `scalars`, `curves` — **não há superfície
+  para metadados internos**.
+
+Logo, representar a decisão **D** sem alterar a exportação ou o contrato estrutural **não é possível
+na arquitetura atual**. A decisão **D foi desmembrada por fronteira arquitetural — não abandonada,
+nem implicitamente implementada**. A verificação foi feita mecanicamente sobre o próprio *diff* de
+`6ed71e8`: **nenhuma chave de escalar nova**, **nenhuma ocorrência** de termo de censura/limite
+inferior, **nenhum arquivo de exportação, contrato ou cabeçalho alterado**.
+
+Sua solução futura exigirá **decisão explícita** entre pelo menos:
+
+1. **evolução do contrato/exportação**;
+2. **extensão estrutural de `MetricResult`**;
+3. **superfície própria de metadados**.
+
+Restrições já fixadas para esse item: **não criar novo valor no enum `Quality`**; **não recomputar
+alinhamento, segmentação ou espectro posteriormente apenas para redescobrir a censura** — a solução
+deverá **preservar os fatos primários já disponíveis durante o MS-09** e decidir como transportá-los
+**sem ambiguidade**.
+
+### K.7 Rastreabilidade histórica dos Evidence Packages
+
+> Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** da captura original — nenhum
+> item do Pilar 1 alterou o áudio preservado, e **o formato do Evidence Package não foi alterado**.
+>
+> Entretanto, **o reprocessamento de um pacote antigo por versões posteriores do AAMP pode produzir
+> um `MS-09` diferente daquele originalmente calculado/exportado**, por três causas cumulativas: as
+> correções **científicas** **F9** (alinhamento temporal) e **P1-003** (banda do teto), e agora as
+> correções **semânticas** do **P1-004** — que podem converter um número outrora reportado como
+> `Normal` em `NotApplicable`, ou rebaixá-lo a `LowConfidence`. O `MS-08` já podia divergir por
+> **P1-001** (ENBW).
+>
+> **Isto não é inconsistência da evidência: é evolução do estimador e da semântica sobre a mesma
+> observação.** Todo resultado histórico deve ser interpretado **junto da versão/commit que o
+> produziu**, o que a infraestrutura de diagnóstico (`CommitFull`, `BuildConfig`, `GitDirty`) torna
+> rastreável.
+
+### K.8 Achados que permanecem abertos — registrados, **não corrigidos**
+
+| ID | Achado | Estado |
+|---|---|:--:|
+| **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | 🔴 **Aberto — item próprio** (§K.6) |
+| **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura contendo `NaN` propaga-se pelo estimador e chega ao contrato rotulada como medição válida | 🔴 **Aberto** (decisão **D4**: registrar, não corrigir) |
+| **DV-9** | **Assimetria legítima da fonte ST-08** entre Core (regenera ⇒ ramo inalcançável) e reprocessamento (lê do pacote ⇒ pode faltar) | 🟡 **Legítima e preservada** (decisão **D5**) |
+| **DV-8** | Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300` | 🔴 **Aberto — Pilar 2** |
+| **V1 / P1-008** | Impacto na **Trust Ladder**: a propagação de `LowConfidence` do MS-08 alcança agora o contrato do MS-09; o efeito na escada de confiança e na apresentação **não foi avaliado nem alterado** | 🔴 **Aberto — P1-008** |
+| **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792`, que ainda afirma que a sentinela permanece "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | 🟡 **Registrado, não alterado** — corrigi-lo modificaria o código já validado |
+
+### K.9 Encerramento
+
+**P1-004 — NÚCLEO SEMÂNTICO CONCLUÍDO e validado independentemente no Windows** (`6ed71e8`).
+A **representação de teto censurado permanece item aberto e separado**. Permanecem inalterados:
+**MS-08** (matemática), **MS-10**, **MS-13**, **ST-08**, `ENABLE_SYNC_ALIGNMENT`, `MetricResult`,
+enum `Quality`, exportação, Evidence Package e apresentação.
 
 ---
 

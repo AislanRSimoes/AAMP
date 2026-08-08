@@ -22,7 +22,7 @@
 | ~~**P1-001**~~ ✅ | MS-08 | N1-R1 / **AR-01** | algoritmo | Moderado | ~~Normalização por **ganho coerente** (calibrada para tom); ruído de banda larga **enviesado** por offset ~constante da janela (Apêndice B)~~ | **CONCLUÍDO** — normalização energeticamente correta para ruído (ENBW/Parseval) implementada em C++ e JS, preservando a grandeza normativa do Noise Floor | **AR-01** → **SATISFEITA** |
 | ~~**P1-002**~~ ✅ | MS-08 | N4 / D4 (princípio) | validação | Baixo | ~~Só `Normal`/`Error`; silêncio vazio/curto → piso degenerado reportado como `Normal`~~ | **CONCLUÍDO** — `NotApplicable` para não caracterizável, `LowConfidence` para observação insuficiente, `Error` preservado. Silêncio **"sujo"** (DV-4) **excluído do escopo → Pilar 2** (exige limiar) | P1-001 ✅ |
 | ~~**P1-003**~~ ✅ | MS-09 | **D2** | algoritmo | Moderado | ~~Teto = RMS **banda larga no tempo** (inclui DC/fora de banda) — Apêndice C, MS09-A2~~ | **CONCLUÍDO** — teto = nível RMS **in-band 20–20 k**, pelo **mesmo estimador do MS-08** (Hann, N=4096, ENBW/Parseval), quadro centrado no degrau. **Validado independentemente no Windows** | AR-01 ✅, P1-001 ✅, **F9** ✅ |
-| **P1-004** | MS-09 | **D3** | validação / trat. de erro | Baixo | `teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4 | `teto ≤ piso` → **não caracterizável** (nunca valor positivo espúrio nem negativo) | P1-003 |
+| ~~**P1-004**~~ ✅ *(núcleo)* | MS-09 | **D3** | validação / trat. de erro | Baixo | ~~`teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4~~ | **NÚCLEO SEMÂNTICO CONCLUÍDO** — `teto ≤ piso` → **não caracterizável**; estados do piso propagados ao DR; sentinela `−300` deixa de ser lida como medição. **Validado independentemente no Windows.** A **representação do teto censurado (decisão D) foi desmembrada e permanece item aberto** | P1-003 ✅ |
 | **P1-005** | MS-10 | **D1** | algoritmo | Moderado | `pn` do SNR = `meanSquare` no tempo (banda larga), separado do MS-08 — Apêndice B.5 | `pn` = **Noise Floor band-limited** (reúso da definição MS-08); checagem fora-de-banda fica na Integridade | AR-01, P1-001 |
 | **P1-006** | MS-10 | **D2/V8** | algoritmo | Moderado | Numerador = bloco de 1 kHz **inteiro** (S+D+N) | **S/N estrito** (energia do tom isolada) | Coordenar com **TC-033** |
 | **P1-007** | MS-10 | **D4** | validação / arquitetura | Moderado | SNR sempre `Normal`/`Error`; saturação `pn≈0` (200 dB) não rebaixada; SNR baixo não reduz confiança | Propagação de estados de qualidade; SNR insuficiente reduz confiança. **Item aberto (D4):** definir o estado para `pn≈0` **durante a execução** | P1-005; **decisão aberta `pn≈0`** |
@@ -122,7 +122,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - ✅ **Regressão permanente:** TC-039, com controle negativo (7 falhas)
 - ✅ **Gate visual** no WebView nativo com *fixture* sintético mínimo (caso C4)
 
-**Dynamic Range (MS-09)** — P1-003 ✅ · P1-004 ⬜
+**Dynamic Range (MS-09)** — P1-003 ✅ · P1-004 ✅ *(núcleo semântico)*
 - ✅ **P1-003:** teto na **banda 20–20 k**, pelo **mesmo estimador do MS-08** (Hann, N=4096,
   ENBW/Parseval), quadro de 4096 **centrado** no degrau de 4800; F9 aplicado antes da segmentação;
   gate de clipping preservado no sinal **temporal bruto**
@@ -130,8 +130,19 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - ✅ **Regressão permanente:** TC-043; ✅ C++ ↔ JS convergentes; ✅ MS-08 bit-idêntico após a
   extração de `officialBandPower()`; ✅ MS-13 inalterado
 - ✅ CTest completo: `aamp_headless_suite` 517 · `aamp_scientific_validation` 8 · 2/2
-- ⬜ **P1-004:** `teto ≤ piso` → **não caracterizável** — **não iniciado**
-- 🔴 **Decisão D / teto censurado — não implementada** (nenhum escalar novo criado)
+- ✅ **P1-004 (núcleo semântico):** `teto ≤ piso` → **não caracterizável**, sem valor; piso
+  `NotApplicable`/sem valor → DR `NotApplicable`; piso `LowConfidence` → DR `LowConfidence` com o
+  valor **presente**; nenhum DR negativo apresentado como medição; sem `abs()`, `clamp` ou zero
+  artificial; medição normal **numericamente inalterada** (`≈86,789489 dB`)
+- ✅ A sentinela `−300` do MS-08 **deixa de ser interpretada como medição** pelo MS-09 (**DV-5**),
+  permanecendo no campo por decisão **D3**
+- ✅ **Regressão permanente:** TC-046 (10 condições + 3 controles negativos); guarda Q4 do TC-039
+  retirada por ser proteção temporária de escopo do P1-002
+- ✅ C++ ↔ JS convergentes em valor, `quality` **e** `valuePresent`; `MetricResult`, enum `Quality`
+  e exportação **inalterados**
+- ✅ CTest completo: `aamp_headless_suite` 588 · `aamp_scientific_validation` 8 · 2/2
+- 🔴 **Decisão D / teto censurado — NÃO RESOLVIDA.** Desmembrada por **fronteira arquitetural** em
+  **item próprio e separado** (nenhum escalar novo criado)
 
 **SNR (MS-10)** — P1-005, P1-006, P1-007
 - ✓ `pn` = **Noise Floor band-limited** (D1)
@@ -158,7 +169,8 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
 | **P1-003** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Teto restrito à banda 20–20 k pelo mesmo estimador do MS-08 (`ffa739c`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-003*. |
-| **P1-004** | ⬜ Não iniciado | Próximo na ordem. Herda a **decisão D / teto censurado**, ainda não implementada, e a **DV-5 / sentinela `−300`**, ainda aberta. |
+| **P1-004** | ✅ **NÚCLEO SEMÂNTICO CONCLUÍDO — validado independentemente no Windows** | Estados do piso propagados ao MS-09; `teto ≤ piso` → não caracterizável; **DV-5 fechada** (`6ed71e8`). **Qualificador obrigatório:** encerra **apenas o núcleo semântico**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-004*. |
+| **Teto censurado (decisão D)** | 🔴 **ABERTO — item próprio, não iniciado** | Desmembrado do P1-004 por **fronteira arquitetural** demonstrada. Ver §K.6 do `metrics-audit.md`. |
 | P1-005 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
@@ -205,10 +217,15 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | ~~**F9**~~ ✅ | Segmentação temporal do ST-08 — **RESOLVIDO** pela alternativa **A2** (`cfb95fa`), como **item próprio e pré-requisito** do P1-003. **Validado independentemente no Windows — APROVADO** | — (pré-requisito cumprido) | — |
 | **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
+| **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura com `NaN` chega ao contrato rotulada como medição válida | — (registrar, **não corrigir** — decisão **D4** do P1-004) | — |
+| **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792` afirmando que a sentinela existe "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | — (corrigi-lo modificaria código já validado) | — |
+| **Decisão D** | **Representação do teto censurado** — desmembrada do P1-004 por fronteira arquitetural; **item próprio, não iniciado** | — (**item próprio**; ver `metrics-audit.md` §K.6) | — |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
+| ~~**DV-5**~~ ✅ | Sentinela `−300` lida como medição pelo MS-09 — **RESOLVIDA no P1-004** (sentinela conservada no campo por **D3**; nenhum consumidor normativo a interpreta) | — (fechada) | — |
 | **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família | — | — |
 | **DV-8** | Apresentação ignora `valuePresent`/`quality` e exibe a sentinela `−300` | — (**Pilar 2**) | — |
-| **V1** | Trust Ladder rotula "Medição confiável" com única métrica `NotApplicable` | — (**P1-008**) | — |
+| **DV-9** | **Assimetria legítima da fonte ST-08** — Core **regenera** o estímulo (ramo inalcançável) × reprocessamento lê do pacote (pode faltar). **Preservada por decisão D5**, documentada nos dois lados | — (legítima; **não** corrigir) | — |
+| **V1** | Trust Ladder rotula "Medição confiável" com única métrica `NotApplicable`. **Impacto novo, não avaliado:** a propagação de `LowConfidence` do MS-08 alcança agora o contrato do MS-09 | — (**P1-008**) | — |
 
 **F1** e **F5** foram encerrados. Detalhamento de todos em [`metrics-audit.md`](./metrics-audit.md) →
 *Registro de Encerramento — P1-001* → §E.10.
@@ -227,6 +244,15 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 > **Permanece em aberto:** se a decisão **D** (teto censurado) passa a ser sinalizada, o que
 > alcançaria **P1-004** e a exportação. A ordem do Plano Mestre permanece **inalterada**.
 >
+> **Atualização (P1-004, 2026-08-08).** A questão foi levada até a fronteira e **desmembrada**: o
+> **núcleo semântico** do P1-004 está concluído e validado, enquanto a **representação do teto
+> censurado** passou a ser **item próprio, aberto e não iniciado**, por ter-se demonstrado que
+> qualquer escalar novo de `MetricResult` é **exportado automaticamente** e que `MetricResult` **não
+> possui superfície para metadados internos**. Sua solução exigirá decisão explícita entre evolução
+> do contrato/exportação, extensão estrutural de `MetricResult` ou superfície própria de metadados —
+> **sem** criar novo valor no enum `Quality` e **sem** recomputar alinhamento, segmentação ou
+> espectro apenas para redescobrir a censura.
+>
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
 > Pilar 2 e no P1-008.
 
@@ -244,12 +270,38 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
   **DV-5 / sentinela `−300`** aberta; MS-10, MS-13, ST-08, `ENABLE_SYNC_ALIGNMENT`, Noise Floor,
   exportação, Evidence Package e apresentação intactos.
 
+### P1-004 — síntese do encerramento *(núcleo semântico)*
+
+> **Qualificador obrigatório:** o P1-004 só pode ser denominado "encerrado" com a ressalva explícita
+> de que se trata do **núcleo semântico**. A **representação de teto censurado permanece item aberto
+> e separado**.
+
+- **Escopo entregue:** tratamento das condições **não caracterizáveis** do Dynamic Range. O MS-09
+  passou a **honrar o estado do piso** (`quality`/`valuePresent`) em vez de ler apenas o número, e a
+  degeneração `teto ≤ piso` passou a ser sinalizada como não caracterizável — nunca valor positivo
+  espúrio, nunca número negativo, sem `abs()`, `clamp` ou zero artificial.
+- **Em cadeia limpa o valor não muda** — `DynamicRange_dB = 86,789489 dB`, idêntico ao anterior.
+- **Sentinela `−300` conservada no campo do MS-08** (decisão **D3**); o que mudou é que nenhum
+  consumidor normativo a interpreta como medição — **DV-5 fechada**.
+- **Commit:** `6ed71e80cc3e5b6859ce60e960f9f769569a1f43` · **regressão:** TC-046 (10 condições +
+  3 controles negativos independentes) · **validação independente Windows: APROVADO**
+  (`AAMP.exe` 4.659.712 bytes; SHA-256 `52EEE03C…4079`; `Release`, `GitDirty=false`;
+  588 + 8 checks; CTest 2/2).
+- **Preservados sem alteração:** matemática do **MS-08**, `MetricResult`, enum `Quality`,
+  exportação, Evidence Package, estímulos, MS-10, MS-13 e apresentação.
+- **Fronteira arquitetural demonstrada:** `ExportEngine::exportScalarsCSV` exporta **automaticamente**
+  qualquer escalar novo e `MetricResult` **não tem superfície de metadados internos** ⇒ a decisão
+  **D** foi **desmembrada, não abandonada nem implicitamente implementada**.
+
 ### Rastreabilidade histórica dos Evidence Packages
 
-Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** — nenhum item do Pilar 1
-alterou o áudio preservado. Mas o **reprocessamento com uma versão posterior do AAMP pode produzir
-`MS-09` diferente do relatório originalmente exportado**, porque a ciência do teto foi corrigida
-(banda, em P1-003; alinhamento, em F9) — assim como o `MS-08` já podia divergir por P1-001 (ENBW).
+Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** da captura original — nenhum
+item do Pilar 1 alterou o áudio preservado, e **o formato do Evidence Package não foi alterado**.
+Mas o **reprocessamento por versões posteriores do AAMP pode produzir `MS-09` diferente do relatório
+originalmente calculado/exportado**, por causas cumulativas: as correções **científicas** do teto
+(**banda**, em P1-003; **alinhamento**, em **F9**) e as correções **semânticas** do **P1-004** — que
+podem converter um número outrora reportado como `Normal` em `NotApplicable`, ou rebaixá-lo a
+`LowConfidence`. O `MS-08` já podia divergir por **P1-001** (ENBW).
 **Todo resultado histórico deve ser interpretado junto da versão/commit que o produziu**, o que a
 infraestrutura de diagnóstico (`CommitFull`, `BuildConfig`, `GitDirty`) torna rastreável.
 
