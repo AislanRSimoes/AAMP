@@ -350,14 +350,15 @@ TEST_CASE("TC-039 MS-08 estados de qualidade em silencio degenerado") {
         // discrimina C4 de C1/C2: houve observacao (quadros > 0), o piso e que e nulo
         CHECK(f != nullptr && f->value > 0.0);
 
-        // Q4 -- NAO-REGRESSAO DO MS-09: o DV-2 nao pode alterar o Dynamic Range neste item.
-        // O MS-09 le NoiseFloor_dBFS por chave e ignora nf.quality; deve continuar produzindo
-        // exatamente o mesmo resultado de antes do P1-002 (clamp -300 dBFS preservado no campo).
-        const MetricResult* dr = b.find("MS-09");
-        CHECK(dr != nullptr && dr->quality == Quality::Normal);
+        // D3 (P1-004): a sentinela -300 dBFS PERMANECE no campo do MS-08 -- nao foi removida.
         CHECK(v != nullptr && std::fabs(v->value - (-300.0)) < 1e-9);
-        for (const Scalar& s : dr->scalars)
-            if (s.key == "DynamicRange_dB") CHECK(s.value > 200.0);   // teto - (-300)
+
+        // Guarda Q4 do P1-002 -- RETIRADA pelo P1-004, que e o item autorizado a alterar o MS-09.
+        // Ela travava o Dynamic Range no comportamento anterior (Normal, > 200 dB) apenas para
+        // impedir que o P1-002 o alterasse por efeito colateral; era uma restricao de ESCOPO
+        // TEMPORAL daquele item, nao uma propriedade do MS-08. O contrato vigente do MS-09 para
+        // esta mesma condicao esta verificado em TC-046 caso (5). O objeto do TC-039 -- os estados
+        // de qualidade do MS-08 -- permanece integralmente verificado acima.
     }
 }
 
@@ -535,6 +536,226 @@ TEST_CASE("TC-043 MS-09 teto restrito a banda 20 Hz-20 kHz (P1-003)") {
         const double tetoEsperado = 20.0 * std::log10(std::sqrt(0.5) * 4.0 * dbfsToLinear(-16.0));
         CHECK_NEAR(tetoDe(b), tetoEsperado, 0.01);
         CHECK(tetoDe(b) < tetoIdeal + 6.0);   // nao pegou um degrau saturado
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// TC-046 -- MS-09: condicoes NAO CARACTERIZAVEIS de Dynamic Range (P1-004).
+//
+// IDENTIFICADOR: o TC-045 autorizado ja estava OCUPADO (tests/e2e/E2E_Specs.cpp, "TC-045 Tooltip
+// multi-curva"). A reconfirmacao exigida antes da edicao detectou a colisao; adotou-se o proximo
+// identificador LIVRE da mesma faixa, TC-046 (mesmo procedimento aplicado em TC-042 -> TC-043).
+//
+// Contrato verificado (decisao D1, Alternativa II) -- estado do PISO -> estado do DR:
+//     piso Error            -> MS-09 Error,           sem escalar
+//     piso NotApplicable    -> MS-09 NotApplicable,   valuePresent = false
+//     piso LowConfidence    -> MS-09 LowConfidence,   valuePresent = TRUE  (medicao valida)
+//     nenhum degrau valido  -> MS-09 NotApplicable,   valuePresent = false
+//     teto <= piso (D3/D6)  -> MS-09 NotApplicable,   valuePresent = false
+//     medicao normal        -> MS-09 Normal,          valuePresent = true
+//
+// O que este teste IMPEDE de reintroduzir: (i) interpretar a sentinela -300 dBFS do piso como
+// medicao (produzia DR ~ +291 dB em estado Normal); (ii) reportar DR NEGATIVO quando o teto nao
+// supera o piso; (iii) descartar o valor de uma medicao LowConfidence; (iv) substituir a
+// degeneracao por zero, abs() ou clamp.
+TEST_CASE("TC-046 MS-09 condicoes nao caracterizaveis de Dynamic Range (P1-004)") {
+    AnalysisEngine eng(FS);
+
+    // Acesso ao escalar do MS-09 (nullptr quando a familia nao emite escalar -- caso Error).
+    auto drSc = [](const ResultBundle& b) -> const Scalar* {
+        const MetricResult* m = b.find("MS-09");
+        if (m == nullptr) return nullptr;
+        for (const Scalar& s : m->scalars) if (s.key == "DynamicRange_dB") return &s;
+        return nullptr;
+    };
+    auto q09 = [](const ResultBundle& b) {
+        const MetricResult* m = b.find("MS-09");
+        return m == nullptr ? Quality::Error : m->quality;
+    };
+    // Coerencia estrutural exigida em TODOS os casos: o estado da familia e o estado do escalar
+    // nao podem divergir, e um valor ausente jamais pode vir rotulado como Normal.
+    auto coerente = [&](const ResultBundle& b) {
+        const Scalar* s = drSc(b);
+        if (s == nullptr) return q09(b) == Quality::Error;          // Error nao emite escalar
+        if (s->quality != q09(b)) return false;
+        if (!s->valuePresent && s->quality == Quality::Normal) return false;
+        return true;
+    };
+
+    // Cada caso avaliado abaixo e ACUMULADO aqui e reaproveitado pelos controles negativos,
+    // que varrem o conjunto inteiro com criterios independentes da classificacao esperada.
+    std::vector<ResultBundle> todos;
+
+    // ---- (1) REFERENCIA: medicao normal -- valor NAO pode mudar por causa do P1-004 ----
+    ResultBundle bRef = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+    todos.push_back(bRef);
+    {
+        const Scalar* s = drSc(bRef);
+        CHECK(q09(bRef) == Quality::Normal);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        // valor medido ANTES do P1-004 na mesma cadeia limpa (86,789489 dB): nao-regressao numerica
+        CHECK_NEAR(s->value, 86.789489, 0.001);
+        CHECK(coerente(bRef));
+    }
+    // teto e piso de referencia, usados adiante para posicionar o piso com precisao
+    double T0 = 0.0, P0 = 0.0;
+    {
+        const Scalar* nfv = nfScalar(bRef, "NoiseFloor_dBFS");
+        P0 = nfv->value; T0 = P0 + drSc(bRef)->value;
+        CHECK_NEAR(T0, 20.0 * std::log10(std::sqrt(0.5) * dbfsToLinear(-6.0)), 0.01);
+    }
+
+    // ---- (2) ST-08 ausente -> nao ha o que caracterizar -> Error (comportamento preservado) ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured.erase(StimulusId::ST08_DynamicStep);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        CHECK(q09(b) == Quality::Error);
+        CHECK(drSc(b) == nullptr);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (3) piso em Error (ST-09 ausente) -> DR em Error ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured.erase(StimulusId::ST09_Silence);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        CHECK(b.find("MS-08")->quality == Quality::Error);
+        CHECK(q09(b) == Quality::Error);
+        CHECK(drSc(b) == nullptr);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (4) piso NotApplicable por AUSENCIA DE OBSERVACAO (ST-09 vazio) -> DR NotApplicable ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence].clear();
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drSc(b);
+        CHECK(b.find("MS-08")->quality == Quality::NotApplicable);
+        CHECK(q09(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (5) piso NotApplicable por SILENCIO DIGITAL bit-exato -> DR NotApplicable ----
+    // Condicao efetivamente observada em hardware (Helix em preset vazio). Este e o caso que,
+    // antes do P1-004, produzia DR = +290,99 dB em estado Normal (DV-5).
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& st09 = cap.captured[StimulusId::ST09_Silence];
+        std::fill(st09.begin(), st09.end(), 0.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drSc(b);
+        const Scalar* nfv = nfScalar(b, "NoiseFloor_dBFS");
+        CHECK(q09(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        // D3: a sentinela -300 dBFS PERMANECE no campo do MS-08 -- o que mudou e que o MS-09
+        // nunca mais a interpreta como medicao.
+        CHECK(nfv != nullptr && std::fabs(nfv->value - (-300.0)) < 1e-9 && !nfv->valuePresent);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (6) piso LowConfidence -> DR LowConfidence, com o VALOR PRESERVADO ----
+    // Observacao aquem da linha de base reduz a CONFIANCA; nao invalida a medicao.
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence] =
+            harness::deterministicNoise(static_cast<std::size_t>(4096 + 4 * 2048), -95.0);   // 5 quadros
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drSc(b);
+        const Scalar* nfv = nfScalar(b, "NoiseFloor_dBFS");
+        CHECK(b.find("MS-08")->quality == Quality::LowConfidence);
+        CHECK(q09(b) == Quality::LowConfidence);
+        CHECK(s != nullptr && s->quality == Quality::LowConfidence && s->valuePresent);
+        // o valor continua sendo teto - piso, com o MESMO teto da cadeia de referencia
+        CHECK(nfv != nullptr);
+        if (nfv != nullptr && s != nullptr) CHECK_NEAR(s->value, T0 - nfv->value, 1e-9);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (7) nenhum degrau valido (todos saturados) -> NotApplicable ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& st08 = cap.captured[StimulusId::ST08_DynamicStep];
+        for (double& v : st08) v = std::max(-1.0, std::min(1.0, v * 100.0));   // ate o degrau -40 dBFS satura
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drSc(b);
+        CHECK(q09(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- (8)(9)(10) DEGENERACAO teto <= piso (D3/D6) ----
+    // O piso e posicionado com precisao explorando a HOMOGENEIDADE EXATA do estimador: multiplicar
+    // o ST-09 por g escala a potencia por g^2, logo desloca o piso em exatamente 20.log10(g) dB.
+    // Nao ha aproximacao envolvida -- as verificacoes abaixo conferem o piso obtido.
+    auto comPiso = [&](double alvoDb) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        const double g = std::pow(10.0, (alvoDb - P0) / 20.0);
+        for (double& v : cap.captured[StimulusId::ST09_Silence]) v *= g;
+        return eng.computeAllMetrics(cap);
+    };
+    {
+        // (8) degeneracao franca: piso 40 dB ACIMA do teto
+        ResultBundle b = comPiso(T0 + 40.0);
+        const Scalar* s = drSc(b);
+        CHECK(b.find("MS-08")->quality == Quality::Normal);                  // o piso em si e valido
+        CHECK_NEAR(nfScalar(b, "NoiseFloor_dBFS")->value, T0 + 40.0, 1e-6);  // posicionamento conferido
+        CHECK(q09(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+    {
+        // (9) CASO-LIMITE, lado nao caracterizavel: piso apenas 1e-6 dB acima do teto.
+        // O ponto teto == piso exato nao e construivel em ponto flutuante (a igualdade e um
+        // conjunto de medida nula: qualquer realizacao cai de um dos lados por ~1e-15 dB). O
+        // operador implementado e "<=", e este par de casos o delimita com folga de 1e-6 dB --
+        // nove ordens de grandeza acima do ruido numerico e muito abaixo de qualquer degeneracao
+        // fisicamente distinguivel.
+        ResultBundle b = comPiso(T0 + 1e-6);
+        const Scalar* s = drSc(b);
+        CHECK(q09(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+    {
+        // (10) CASO-LIMITE, lado caracterizavel: piso 1e-6 dB ABAIXO do teto -> faixa util
+        // minuscula porem REAL. Prova que a rejeicao nao e larga demais e que uma faixa de
+        // 1e-6 dB e reportada como medida, sem clamp e sem arredondamento para zero.
+        ResultBundle b = comPiso(T0 - 1e-6);
+        const Scalar* s = drSc(b);
+        CHECK(q09(b) == Quality::Normal);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK(s->value > 0.0);
+        CHECK_NEAR(s->value, 1e-6, 1e-9);
+        CHECK(coerente(b));
+        todos.push_back(b);
+    }
+
+    // ---- CONTROLES NEGATIVOS INDEPENDENTES ----
+    // Varrem TODOS os casos acima de uma so vez, com criterios que NAO dependem da classificacao
+    // esperada de cada caso: falham se a logica defeituosa for reintroduzida por outro caminho.
+    {
+        CHECK(todos.size() == 10);   // referencia + 9 condicoes; guarda contra caso perdido
+        for (const ResultBundle& b : todos) {
+            const Scalar* s = drSc(b);
+            // CN-1: nenhum Dynamic Range NEGATIVO e jamais apresentado como valor (D6).
+            CHECK(!(s != nullptr && s->valuePresent && s->value < 0.0));
+            // CN-2: nenhum DR absurdo -- a sentinela -300 dBFS nunca volta a virar medicao (DV-5).
+            CHECK(!(s != nullptr && s->valuePresent && s->value > 200.0));
+            // CN-3: valor ausente nunca vem rotulado como medicao normal, e familia/escalar
+            //       nunca divergem de estado.
+            CHECK(coerente(b));
+        }
     }
 }
 

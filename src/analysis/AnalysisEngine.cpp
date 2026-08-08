@@ -814,10 +814,23 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     MetricResult nf = noiseFloor(cap);
     // Piso de ruido lido por CHAVE: apos a observacao integral, noiseFloor passou a empilhar
     // NoiseFloor_frames por ultimo, entao .back() nao e mais o dBFS. Ler explicitamente a chave.
-    double lnf = 0.0; bool haveNf = false;
+    double lnf = 0.0; bool haveNf = false, nfPresent = false;
+    Quality nfQuality = Quality::Error;
     for (const auto& sc : nf.scalars)
-        if (sc.key == "NoiseFloor_dBFS") { lnf = sc.value; haveNf = true; break; }
+        if (sc.key == "NoiseFloor_dBFS") { lnf = sc.value; haveNf = true; nfPresent = sc.valuePresent; nfQuality = sc.quality; break; }
     if (step == cap.captured.end() || !haveNf) { r.quality = Quality::Error; return r; }
+
+    // ---- P1-004 / DV-5: o MS-09 passa a HONRAR o estado do piso ----
+    // Antes, o piso era lido apenas POR CHAVE e `nf.quality`/`valuePresent` eram ignorados: um piso
+    // NAO CARACTERIZAVEL entregava a sentinela -300 dBFS como se fosse medida, produzindo um DR
+    // espurio de ~+291 dB em estado Normal. Sem piso nao existe a grandeza: DR = teto - piso e
+    // indefinido. A sentinela permanece no campo do MS-08 (D3 desta etapa) -- o que muda e que o
+    // MS-09 nunca mais a interpreta como medicao.
+    if (!nfPresent || nfQuality == Quality::NotApplicable) {
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
 
     // ---- F9: alinhamento temporal local (MESMA convencao ja empregada pelo MS-13) ----
     // A latencia da cadeia desloca a captura; fatiar a partir da amostra 0 faz cada janela de
@@ -866,8 +879,20 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
         r.quality = Quality::NotApplicable;
         return r;
     }
-    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", Quality::Normal, true});
-    r.quality = Quality::Normal;
+    // ---- P1-004 / D3 (dynamic-range-definition.md sec.7): degeneracao teto <= piso ----
+    // O sinal nao se eleva acima do ruido: nao ha extensao util, logo a grandeza NAO EXISTE.
+    // A especificacao veda reportar valor positivo espurio E numero negativo; inclui o caso-limite
+    // teto == piso. Nao se aplica zero, abs() nem clamp -- o valor simplesmente nao e interpretavel.
+    if (lmaxDb <= lnf) {
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+    // ---- P1-004: propagacao de LowConfidence do piso ----
+    // DR = teto - piso; uma limitacao de confianca do piso limita a confianca do derivado.
+    const Quality drQuality = (nfQuality == Quality::LowConfidence) ? Quality::LowConfidence : Quality::Normal;
+    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", drQuality, true});
+    r.quality = drQuality;
     return r;
 }
 

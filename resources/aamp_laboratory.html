@@ -967,19 +967,26 @@ function computeMS08(signal){
    PURA, agnóstica. RMS/pico/segmentação são PRIMITIVAS aritméticas privadas da família (não abstração).
    D-DEPENDÊNCIA-DE-FAMÍLIA: a segunda entrada é o RESULTADO CIENTÍFICO OFICIAL da MS-08 (objeto), não o
    contrato/UI — a família não conhece apresentação. Reproduz internamente a semântica do Core
-   (Normal/NotApplicable/Error); a tradução para o contrato é feita pelo LabEngine. */
+   (Normal/LowConfidence/NotApplicable/Error) e a PRESENÇA do valor (valuePresent); a tradução para o
+   contrato é feita pelo LabEngine. */
 function computeMS09(signal, officialNoiseFloor, stepSource){
   const samples=signal.samples, fs=signal.sampleRate;
   const nf = officialNoiseFloor && officialNoiseFloor.noisefloor_dbfs;   // dependência: resultado oficial da MS-08
   if(!samples || !samples.length || nf==null || !isFinite(nf))
-    return {quality:'Error', dynamicrange_db:null};                      // pré-condição científica ausente
+    return {quality:'Error', dynamicrange_db:null, valuePresent:false};  // pré-condição científica ausente
+  // P1-004 / DV-5 — o MS-09 passa a HONRAR o ESTADO do piso, não apenas seu número (espelha
+  // AnalysisEngine::dynamicRange). Antes, um piso NÃO CARACTERIZÁVEL entregava a sentinela
+  // −300 dBFS como se fosse medida e produzia um DR espúrio de ~+291 dB em estado Normal.
+  // Sem piso a grandeza não existe: DR = teto − piso fica indefinido.
+  if(officialNoiseFloor.valuePresent===false || officialNoiseFloor.quality==='NotApplicable')
+    return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};
   // F9 — alinhamento temporal local, MESMA convenção do computeMS13 (espelha AnalysisEngine::dynamicRange).
   // A latência da cadeia desloca a captura; fatiar a partir de 0 mistura degraus adjacentes e enviesa
   // o teto para baixo. O lag atua SÓ sobre índices de leitura — nenhum buffer é deslocado ou filtrado,
   // e nada da definição espectral do teto (P1-003) muda aqui.
   const src = stepSource && stepSource.samples;
   if(!src || !src.length)                                                // sem referência temporal das
-    return {quality:'NotApplicable', dynamicrange_db:null};              // fronteiras: não caracterizável
+    return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};  // fronteiras: não caracterizável
   const maxLag=Math.round(0.050*fs);                                     // mesma política de latência da MS-13/14
   const lag=bestLag(officialEnvelope(src,fs), officialEnvelope(samples,fs), maxLag);
   const seg=Math.round(0.100*fs);
@@ -1003,8 +1010,17 @@ function computeMS09(signal, officialNoiseFloor, stepSource){
     const lvl=10*Math.log10(bp);
     if(!have || lvl>lmaxDb){lmaxDb=lvl; have=true;}
   }
-  if(!have) return {quality:'NotApplicable', dynamicrange_db:null};      // todos os degraus clipados/vazios
-  return {quality:'Normal', dynamicrange_db: lmaxDb - nf};               // maior nível in-band − piso oficial da MS-08
+  if(!have)                                                              // todos os degraus clipados/vazios
+    return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};
+  // P1-004 / D3 (dynamic-range-definition.md §7) — degeneração teto ≤ piso: o sinal não se eleva
+  // acima do ruído, não há extensão útil, a grandeza NÃO EXISTE. A especificação veda tanto valor
+  // positivo espúrio quanto número negativo; inclui o caso-limite teto == piso. Sem zero, abs()
+  // ou clamp — o valor simplesmente não é interpretável.
+  if(lmaxDb<=nf) return {quality:'NotApplicable', dynamicrange_db:null, valuePresent:false};
+  // P1-004 — propagação de LowConfidence do piso: DR = teto − piso, logo uma limitação de
+  // confiança do piso limita a confiança do derivado (o valor permanece presente e utilizável).
+  const q = (officialNoiseFloor.quality==='LowConfidence') ? 'LowConfidence' : 'Normal';
+  return {quality:q, dynamicrange_db: lmaxDb - nf, valuePresent:true};   // maior nível in-band − piso oficial da MS-08
 }
 /* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
    razão de potências RMS temporais entre o tom de 1 kHz (ST-03) e o ruído (ST-09):
@@ -1411,7 +1427,10 @@ const LabEngine={
       const src08=(session.stimuli||[]).find(x=>x.stimulus==='ST-08');   // F9: fonte emitida (D-EVIDENCE-DOMÍNIO)
       const m09=computeMS09({samples:st08.wav.samples, sampleRate:st08.wav.sampleRate}, m08result,
                             (src08&&src08.wav)?{samples:src08.wav.samples, sampleRate:src08.wav.sampleRate}:null);
-      const present=m09.quality==='Normal';                            // traduz Normal/NotApplicable/Error -> contrato
+      // P1-004: a presença do valor é decidida pela FAMÍLIA (valuePresent), não inferida do estado.
+      // `quality==='Normal'` descartaria o valor de uma medição LowConfidence, que é uma medição
+      // válida com confiança reduzida — o mesmo contrato do Core (Scalar::valuePresent).
+      const present=m09.valuePresent===true;                           // traduz Normal/LowConfidence/NotApplicable/Error -> contrato
       const mr09={id:'MS-09',name:'Dynamic Range',quality:m09.quality,scalars:[
         {key:'DynamicRange_dB',value:present?m09.dynamicrange_db:null,unit:'dB',quality:m09.quality,valuePresent:present}],curves:[]};
       byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
