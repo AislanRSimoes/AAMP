@@ -21,7 +21,7 @@
 |----|--------|----------------|------|:----:|----------------|-------------------|--------------|
 | ~~**P1-001**~~ ✅ | MS-08 | N1-R1 / **AR-01** | algoritmo | Moderado | ~~Normalização por **ganho coerente** (calibrada para tom); ruído de banda larga **enviesado** por offset ~constante da janela (Apêndice B)~~ | **CONCLUÍDO** — normalização energeticamente correta para ruído (ENBW/Parseval) implementada em C++ e JS, preservando a grandeza normativa do Noise Floor | **AR-01** → **SATISFEITA** |
 | ~~**P1-002**~~ ✅ | MS-08 | N4 / D4 (princípio) | validação | Baixo | ~~Só `Normal`/`Error`; silêncio vazio/curto → piso degenerado reportado como `Normal`~~ | **CONCLUÍDO** — `NotApplicable` para não caracterizável, `LowConfidence` para observação insuficiente, `Error` preservado. Silêncio **"sujo"** (DV-4) **excluído do escopo → Pilar 2** (exige limiar) | P1-001 ✅ |
-| **P1-003** | MS-09 | **D2** | algoritmo | Moderado | Teto = RMS **banda larga no tempo** (inclui DC/fora de banda) — Apêndice C, MS09-A2 | Teto medido na **mesma banda** do Noise Floor (20–20 k) | AR-01, P1-001 |
+| ~~**P1-003**~~ ✅ | MS-09 | **D2** | algoritmo | Moderado | ~~Teto = RMS **banda larga no tempo** (inclui DC/fora de banda) — Apêndice C, MS09-A2~~ | **CONCLUÍDO** — teto = nível RMS **in-band 20–20 k**, pelo **mesmo estimador do MS-08** (Hann, N=4096, ENBW/Parseval), quadro centrado no degrau. **Validado independentemente no Windows** | AR-01 ✅, P1-001 ✅, **F9** ✅ |
 | **P1-004** | MS-09 | **D3** | validação / trat. de erro | Baixo | `teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4 | `teto ≤ piso` → **não caracterizável** (nunca valor positivo espúrio nem negativo) | P1-003 |
 | **P1-005** | MS-10 | **D1** | algoritmo | Moderado | `pn` do SNR = `meanSquare` no tempo (banda larga), separado do MS-08 — Apêndice B.5 | `pn` = **Noise Floor band-limited** (reúso da definição MS-08); checagem fora-de-banda fica na Integridade | AR-01, P1-001 |
 | **P1-006** | MS-10 | **D2/V8** | algoritmo | Moderado | Numerador = bloco de 1 kHz **inteiro** (S+D+N) | **S/N estrito** (energia do tom isolada) | Coordenar com **TC-033** |
@@ -122,11 +122,16 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - ✅ **Regressão permanente:** TC-039, com controle negativo (7 falhas)
 - ✅ **Gate visual** no WebView nativo com *fixture* sintético mínimo (caso C4)
 
-**Dynamic Range (MS-09)** — P1-003, P1-004
-- ✓ Teto na **banda 20–20 k** (mesma do Noise Floor)
-- ✓ `teto ≤ piso` → **não caracterizável**
-- ✓ Conforme a `dynamic-range-definition.md` (D1 já conforme; D2/D3 implementados)
-- ✓ C++ ↔ JS consistentes; ✓ testes passam
+**Dynamic Range (MS-09)** — P1-003 ✅ · P1-004 ⬜
+- ✅ **P1-003:** teto na **banda 20–20 k**, pelo **mesmo estimador do MS-08** (Hann, N=4096,
+  ENBW/Parseval), quadro de 4096 **centrado** no degrau de 4800; F9 aplicado antes da segmentação;
+  gate de clipping preservado no sinal **temporal bruto**
+- ✅ DC, subsônicos e ultrassônicos **excluídos do teto** (§5) — verificado com controle negativo
+- ✅ **Regressão permanente:** TC-043; ✅ C++ ↔ JS convergentes; ✅ MS-08 bit-idêntico após a
+  extração de `officialBandPower()`; ✅ MS-13 inalterado
+- ✅ CTest completo: `aamp_headless_suite` 517 · `aamp_scientific_validation` 8 · 2/2
+- ⬜ **P1-004:** `teto ≤ piso` → **não caracterizável** — **não iniciado**
+- 🔴 **Decisão D / teto censurado — não implementada** (nenhum escalar novo criado)
 
 **SNR (MS-10)** — P1-005, P1-006, P1-007
 - ✓ `pn` = **Noise Floor band-limited** (D1)
@@ -152,8 +157,9 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 |---|:--:|---|
 | **P1-001** | ✅ **ENCERRADO** | Encerrado técnica, analítica, sintética e fisicamente (2026-08-05). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-001*. |
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
-| **P1-003** | ⬜ Não iniciado | Próximo na ordem. **F2 decidido** e **F9 resolvido/validado** — pré-requisitos cumpridos. Aguarda autorização específica para a fase de análise. |
-| P1-004 … P1-008 | ⬜ Não iniciados | — |
+| **P1-003** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Teto restrito à banda 20–20 k pelo mesmo estimador do MS-08 (`ffa739c`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-003*. |
+| **P1-004** | ⬜ Não iniciado | Próximo na ordem. Herda a **decisão D / teto censurado**, ainda não implementada, e a **DV-5 / sentinela `−300`**, ainda aberta. |
+| P1-005 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
 
@@ -223,6 +229,29 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 >
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
 > Pilar 2 e no P1-008.
+
+---
+
+### P1-003 — síntese do encerramento
+
+- **Escopo entregue:** banda do teto. Teto = nível RMS **in-band 20 Hz–20 kHz**, pelo **mesmo
+  estimador espectral do MS-08**; quadro de 4096 centrado no degrau; F9 preservado antes da
+  segmentação; gate de clipping mantido no sinal temporal bruto.
+- **Em cadeia limpa o valor não muda** — a correção só atua onde há energia fora da banda.
+- **Commit:** `ffa739c04d20d9c4aeccab45cc97556e0500da29` · **regressão:** TC-043 com controle negativo
+  independente · **validação independente Windows: APROVADO** (SHA-256 `DFE1E17F…EFD0`; CTest 2/2).
+- **Preservados sem alteração:** decisão **D** (teto censurado) **não implementada**;
+  **DV-5 / sentinela `−300`** aberta; MS-10, MS-13, ST-08, `ENABLE_SYNC_ALIGNMENT`, Noise Floor,
+  exportação, Evidence Package e apresentação intactos.
+
+### Rastreabilidade histórica dos Evidence Packages
+
+Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** — nenhum item do Pilar 1
+alterou o áudio preservado. Mas o **reprocessamento com uma versão posterior do AAMP pode produzir
+`MS-09` diferente do relatório originalmente exportado**, porque a ciência do teto foi corrigida
+(banda, em P1-003; alinhamento, em F9) — assim como o `MS-08` já podia divergir por P1-001 (ENBW).
+**Todo resultado histórico deve ser interpretado junto da versão/commit que o produziu**, o que a
+infraestrutura de diagnóstico (`CommitFull`, `BuildConfig`, `GitDirty`) torna rastreável.
 
 ---
 

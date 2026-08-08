@@ -145,6 +145,15 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 > **Referência de embasamento:** [`noise-floor-definition.md`](./noise-floor-definition.md) — o piso do
 > Dynamic Range.
 >
+> **Conformidade de implementação (P1-003), 2026-08-07.** A exigência da **§4** — teto e piso na
+> **mesma banda** — e a exclusão da **§5** — DC, subsônicos e ultrassônicos fora do teto — passaram a
+> ser **efetivamente implementadas**: o teto é o **nível RMS in-band 20 Hz–20 kHz**, medido pelo
+> **mesmo estimador espectral do Noise Floor** (Hann, N = 4096, ENBW/Parseval), sobre um quadro
+> centrado no degrau e após o alinhamento temporal. O gate de saturação permanece no **sinal temporal
+> bruto**. Commit `ffa739c`, protegido por **TC-043**, validado independentemente no Windows.
+> **A §7 (Tratamento da degeneração) e a decisão D (teto censurado) continuam sem implementação.**
+> Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-003*.
+>
 > **Ratificação complementar (Registro de Decisão — F2), 2026-08-07.** Precisada a §6 com duas
 > decisões: **B** — `Dynamic Range ≥ SNR` é **propriedade condicional** de `referência ≤ teto`, nunca
 > invariante imposta; **D** — quando o ST-08 não alcança a saturação, o teto está **censurado pelo

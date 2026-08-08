@@ -985,6 +985,129 @@ por F9 — notadamente a convivência com o **teto censurado** (decisão **D**) 
 
 ---
 
+## Registro de Encerramento — P1-003 (Banda do Teto do MS-09) — **NORMATIVO**
+
+> **Estado: CONCLUÍDO — validado independentemente no Windows.**
+> **Referência normativa:** `dynamic-range-definition.md` §4 (teto e piso na **mesma banda**) e §5
+> (DC, subsônicos e ultrassônicos excluídos **também no teto**) · achado **MS09-A2** · decisão **D2**.
+> **Pré-requisito cumprido:** **F9** (segmentação temporal) encerrado em `cfb95fa`.
+
+### J.1 Solução técnica
+
+Antes, o teto era o **RMS de banda larga no tempo**, enquanto o piso (MS-08) já era band-limited
+20–20 k com normalização ENBW/Parseval — bandas distintas tornavam a subtração `teto − piso`
+dimensionalmente incoerente e deixavam energia fora da banda inflar o teto.
+
+| Elemento | Estado após P1-003 |
+|---|---|
+| Grandeza do teto | **nível RMS in-band 20 Hz–20 kHz** |
+| Estimador | **o mesmo do MS-08**: Hann, `N = 4096`, mesma integração de bins, mesma compensação **ENBW/Parseval** |
+| Quadro de análise | **4096 amostras centradas** no degrau de 4800 (352 de margem de cada lado) |
+| Alinhamento temporal | **F9 aplicado antes** da segmentação — ordem obrigatória preservada |
+| Gate de clipping | **preservado no sinal temporal bruto**, antes da estimativa espectral |
+| Energia fora da banda | **DC, subsônica e ultrassônica excluídas do teto** |
+| C++ ↔ JS | **convergentes** |
+| MS-08 | **numericamente preservado** após a extração de `officialBandPower()` |
+| MS-13 | **inalterado** |
+
+**Ordem obrigatória:** alinhar (F9) → segmentar o degrau → gate temporal no sinal bruto → só então
+estimar o nível in-band. O gate permanece temporal por **necessidade física**: saturação é fenômeno
+de amplitude no tempo e **não é detectável num espectro restrito à banda**.
+
+**Coerência metrológica por construção:** mesmo `N`, mesma janela, mesmas bordas de bin e mesma
+normalização em teto e piso ⇒ `DR = teto − piso` passa a ser a diferença de dois níveis medidos pelo
+**mesmo estimador**, e não uma coincidência numérica.
+
+**Extração da primitiva no frontend.** A matemática Hann + ENBW/Parseval + integração 20–20 k foi
+promovida a primitiva científica compartilhada `officialBandPower()`, **extraída mecanicamente** do
+`computeMS08` — nenhuma operação, ordem de soma ou constante alterada. Consumidores: **MS-08** (piso,
+média de Welch sobre quadros) e **MS-09** (teto, quadro único centrado). **Identidade numérica do
+MS-08 provada bit-a-bit** antes/depois em três níveis de ruído (−60 / −95 / −120 dBFS): mesmos
+dígitos e mesmos 233 quadros.
+
+**Commit:** `ffa739c04d20d9c4aeccab45cc97556e0500da29`.
+
+### J.2 Resultados quantitativos
+
+Teto ideal do degrau mais alto (seno de 1 kHz a −6 dBFS de pico): **−9,0103 dBFS**.
+
+| Caso | **Teto P1-003** | Oráculo banda larga *(controle negativo)* | Viés do estimador antigo |
+|---|---:|---:|---:|
+| limpo, offset 0 | **−9,0103** | −9,0103 | — |
+| limpo, offset 913 | **−9,0103** | −9,3260 | *(efeito F9)* |
+| limpo, offset 2400 | **−9,0103** | −9,8962 | *(efeito F9)* |
+| + DC 0,02 | **−9,0103** | −8,9965 | **+0,0138 dB** |
+| + 5 Hz a −20 dBFS | **−9,0089** | −8,8408 | **+0,1695 dB** |
+| + 22 kHz a −20 dBFS | **−9,0103** | −8,8408 | **+0,1695 dB** |
+| ganho 4× → saturação | **−6,9691** | −6,9691 | gate rejeitou os degraus saturados |
+
+> **Em cadeia limpa o valor não muda.** A correção atua **exclusivamente** onde existe energia fora
+> da banda — exatamente o que a §5 determina.
+
+**CC-A:** `computeMS09()` do frontend reproduz os **sete** casos com os **mesmos valores** do C++.
+
+### J.3 Proteção permanente — TC-043
+
+`TC-043 — MS-09 teto restrito a banda 20 Hz-20 kHz (P1-003)` cobre:
+
+| Verificação | Conteúdo |
+|---|---|
+| ST-08 limpo | teto ≈ **−9,0103 dBFS** (tolerância 0,01) |
+| Invariância a offsets | **0, 913, 2400** amostras — não-regressão de **F9** |
+| Rejeição de **DC** | componente contínua não eleva o teto |
+| Rejeição de **5 Hz** | subsônica não eleva o teto |
+| Rejeição de **22 kHz** | ultrassônica não eleva o teto |
+| **Controle negativo** | oráculo **independente**, implementado no próprio teste, reproduzindo o viés do estimador de banda larga anterior; verifica também que o viés é efetivamente não-nulo (impede aprovação por acaso) |
+| Gate temporal de clipping | sob ganho 4×, o degrau saturado continua rejeitado e o teto vem do degrau 5 |
+| MS-13 | sem regressão na cadeia limpa |
+
+### J.4 Validação independente no Windows — **APROVADO**
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| HEAD local = remoto | `ffa739c04d20d9c4aeccab45cc97556e0500da29` |
+| Plataforma / *toolchain* | Windows · MSVC 14.51.36231 x64 |
+| Configuração · `GitDirty` | `Release` · **`false`** |
+| Build | **0 warnings, 0 erros** |
+| Executável | `C:\aamp\build\windows-ninja\aamp_app_artefacts\Release\AAMP.exe` |
+| SHA-256 | `DFE1E17F5D95DF470AD03E45FD2DF40787E59BADE6BBE2EE376993B7B569EFD0` |
+| `aamp_headless_suite` | **517 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 aprovados** |
+| Casos confirmados | **TC-030 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043** |
+
+### J.5 Rastreabilidade histórica dos Evidence Packages
+
+> **Pacotes `.aamp` anteriores continuam integralmente válidos como evidência bruta** — o áudio
+> preservado não foi alterado por nenhum item do Pilar 1.
+>
+> Entretanto, **o reprocessamento científico de um pacote antigo com uma versão posterior do AAMP
+> pode produzir um `MS-09` diferente do relatório originalmente exportado**, porque a ciência do teto
+> foi corrigida (banda, em P1-003) — assim como o `MS-08` já podia divergir por P1-001 (ENBW) e o
+> `MS-09` por F9 (alinhamento). **Isto não é inconsistência da evidência: é evolução do estimador
+> sobre a mesma observação.**
+>
+> **Um resultado histórico deve sempre ser interpretado junto da versão/commit que o produziu.** A
+> infraestrutura de diagnóstico (`DiagLog`, commit `8fb6849`) registra `CommitFull`, `BuildConfig` e
+> `GitDirty` no cabeçalho de cada sessão exatamente para tornar essa distinção rastreável.
+
+### J.6 Encerramento e itens explicitamente preservados
+
+**P1-003 CONCLUÍDO — validado independentemente no Windows.** Permanecem, sem alteração:
+
+- 🔴 **Decisão D / teto censurado — não implementada.** Nenhum escalar novo foi criado; índice do
+  degrau e `algumDegrauClipou` **não** são expostos. A arquitetura dessa representação será decidida
+  separadamente, com o **P1-004**.
+- 🔴 **DV-5 / sentinela `−300` — aberta.** O MS-09 continua lendo `NoiseFloor_dBFS` por chave,
+  ignorando `nf.quality`.
+- ⬜ **P1-004 e P1-005 — não iniciados.**
+
+Também inalterados: **MS-10**, **MS-13**, **ST-08**, `ENABLE_SYNC_ALIGNMENT`, Noise Floor,
+exportação, Evidence Package e apresentação.
+
+---
+
 ## Encadeamento com os pilares
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
@@ -1277,6 +1400,7 @@ ST-09 ──► MS-08 ──► NoiseFloor_dBFS = lnf  (piso — dBFS, banda 20�
 | **MS09-A7** | Estados de qualidade limitados a `Error` / `NotApplicable` / `Normal`; sem `LowConfidence` | `cpp:758,768-774` | Paralelo a V2 (propagação de qualidade) | Alta |
 
 > **Estado pós-Registro de Decisão MS-09:** **MS09-A1 → resolvido por D1** (critério de teto confirmado);
-> **MS09-A2 → resolvido por D2** (banda normativa decidida; alinhamento de implementação → Pilar 1);
+> **MS09-A2 → resolvido por D2** e **implementado no P1-003** (`ffa739c`), com validação independente
+> no Windows;
 > **MS09-A4 → resolvido por D3** (caracterização decidida; comportamento → Pilar 1). A3, A5, A6, A7
 > permanecem como registro descritivo (fora do escopo das decisões D1–D3).
