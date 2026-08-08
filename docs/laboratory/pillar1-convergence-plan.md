@@ -27,6 +27,7 @@
 | **P1-006** | MS-10 | **D2/V8** | algoritmo | Moderado | Numerador = bloco de 1 kHz **inteiro** (S+D+N) | **S/N estrito** (energia do tom isolada) | Coordenar com **TC-033** |
 | **P1-007** | MS-10 | **D4** | validação / arquitetura | Moderado | SNR sempre `Normal`/`Error`; saturação `pn≈0` (200 dB) não rebaixada; SNR baixo não reduz confiança | Propagação de estados de qualidade; SNR insuficiente reduz confiança. **Item aberto (D4):** definir o estado para `pn≈0` **durante a execução** | P1-005; **decisão aberta `pn≈0`** |
 | **P1-008** | MS-10 | **V1** (via D4) | interface / validação | Moderado | Trust ladder só testa teto (clipping/pico) + `lowConf`; captura silenciosa lê "Confiável" | **Porta inferior**: sinal que não se eleva acima do piso (via SNR) **nunca** lê "Confiável" | P1-005, P1-006, P1-007 |
+| **P1-009** | MS-09 *(transversal)* | **D** (teto censurado) | contrato / semântica | Moderado | Uma estimativa **unilateral** é publicada como se fosse pontual: `DynamicRange_dB` afirma `DR = X` mesmo quando o ensaio só sustenta `DR ≥ X`. O mesmo ocorre no MS-10 (`pn≤0` → `200 dB`) | **Natureza da estimativa** tipada no nível de `Scalar` (`Point`/`LowerBound`/`UpperBound`), ortogonal a `Quality` e `valuePresent`; padrão `Point` | **P1-004** ✅ |
 
 **Restrições transversais (aplicáveis a todos os itens):**
 - **CC-A (V6):** cada correção deve ser aplicada **consistentemente nas duas implementações** — C++
@@ -44,6 +45,7 @@
 - **Normalização Espectral (FFT / ENBW)** — P1-001
 - **Noise Floor (MS-08)** — P1-002 *(consome a normalização)*
 - **Dynamic Range (MS-09)** — P1-003, P1-004
+- **Natureza da estimativa (contrato transversal)** — P1-009 *(origem no MS-09; consumido por MS-10/P1-007)*
 - **SNR (MS-10)** — P1-005, P1-006, P1-007
 - **Trust Ladder** — P1-008
 - **Export** — verificação de conformidade (Noise Floor dBFS + banda/condição; DR dB + `NotApplicable`;
@@ -65,7 +67,13 @@
              ┌─────────────┴─────────────┐
              ▼                           ▼
    Dynamic Range (MS-09)          SNR (MS-10)
-   P1-003, P1-004                 P1-005, P1-006, P1-007
+   P1-003, P1-004                 P1-005 → P1-006
+             │                           │
+             ▼                           │
+   Natureza da estimativa                │
+   P1-009 (estágio 1) ───────────────────┤
+                                         ▼
+                                     P1-007
                                          │
                                          ▼
                                   Trust Ladder ── P1-008
@@ -87,7 +95,11 @@
         ↓
 3  Dynamic Range (MS-09)                      [P1-003, P1-004]     ┐ paralelizáveis
         ↓                                                          │ após o Noise Floor
-4  SNR (MS-10)                                [P1-005..P1-007]     ┘
+4  SNR (MS-10)                                [P1-005 → P1-006]    ┘
+        ↓
+4b Natureza da estimativa                     [P1-009 estágio 1]   — paralelo a 4
+        ↓
+4c SNR: estados de qualidade                  [P1-007]             — consome 4b
         ↓
 5  Trust Ladder                               [P1-008]
         ↓
@@ -97,6 +109,12 @@
 **Justificativa da ordem (apenas dependências técnicas):** AR-01 exige normalização validada **antes** de
 qualquer reúso espectral de banda larga; Noise Floor consome essa normalização; Dynamic Range e SNR
 consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; Export verifica todas.
+
+**Inserção do P1-009 (2026-08-08).** O item nasce no MS-09 (decisão **D**) mas o contrato que cria é
+**transversal**. Ele **não bloqueia P1-005 nem P1-006** — a dependência é unidirecional
+(MS-09 → MS-08, MS-10 → MS-08) e **o MS-10 não lê o MS-09**. É, porém, **pré-requisito de P1-007**:
+a decisão **D4** (estado para `pn≈0`) é o mesmo fenômeno de estimativa unilateral, e executá-la antes
+da taxonomia produziria uma segunda solução incompatível.
 
 ---
 
@@ -170,7 +188,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
 | **P1-003** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Teto restrito à banda 20–20 k pelo mesmo estimador do MS-08 (`ffa739c`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-003*. |
 | **P1-004** | ✅ **NÚCLEO SEMÂNTICO CONCLUÍDO — validado independentemente no Windows** | Estados do piso propagados ao MS-09; `teto ≤ piso` → não caracterizável; **DV-5 fechada** (`6ed71e8`). **Qualificador obrigatório:** encerra **apenas o núcleo semântico**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-004*. |
-| **Teto censurado (decisão D)** | 🔴 **ABERTO — item próprio, não iniciado** | Desmembrado do P1-004 por **fronteira arquitetural** demonstrada. Ver §K.6 do `metrics-audit.md`. |
+| **P1-009** | 🟡 **ARQUITETURA RATIFICADA — implementação não iniciada** | Desmembrado do P1-004 (decisão **D**). Estudo aprovado; taxonomia `Point`/`LowerBound`/`UpperBound` decidida; regra formal dos casos do MS-09 fixada. **Pré-requisito de P1-007**; **não bloqueia P1-005/P1-006**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*; estudo em [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md). |
 | P1-005 … P1-008 | ⬜ Não iniciados | — |
 
 ### P1-001 — síntese do encerramento
@@ -219,7 +237,7 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura com `NaN` chega ao contrato rotulada como medição válida | — (registrar, **não corrigir** — decisão **D4** do P1-004) | — |
 | **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792` afirmando que a sentinela existe "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | — (corrigi-lo modificaria código já validado) | — |
-| **Decisão D** | **Representação do teto censurado** — desmembrada do P1-004 por fronteira arquitetural; **item próprio, não iniciado** | — (**item próprio**; ver `metrics-audit.md` §K.6) | — |
+| **Decisão D** | **Representação do teto censurado** — arquitetura **ratificada em P1-009**; implementação não iniciada | — (**P1-009**; pré-requisito de P1-007) | P1-005, P1-006 |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
 | ~~**DV-5**~~ ✅ | Sentinela `−300` lida como medição pelo MS-09 — **RESOLVIDA no P1-004** (sentinela conservada no campo por **D3**; nenhum consumidor normativo a interpreta) | — (fechada) | — |
 | **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família | — | — |
@@ -252,6 +270,14 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 > do contrato/exportação, extensão estrutural de `MetricResult` ou superfície própria de metadados —
 > **sem** criar novo valor no enum `Quality` e **sem** recomputar alinhamento, segmentação ou
 > espectro apenas para redescobrir a censura.
+>
+> **Atualização (P1-009, 2026-08-08) — arquitetura ratificada.** O item recebeu identificador
+> próprio (**P1-009**) e a decisão foi tomada: **qualificador tipado no nível de `Scalar`**
+> (`Point`/`LowerBound`/`UpperBound`, padrão `Point`), ortogonal a `Quality` e `valuePresent`.
+> Nenhuma das três opções enunciadas acima foi adotada na forma em que estavam: a investigação
+> **refinou a premissa** — um **membro** novo de `Scalar` não é exportado automaticamente, ao
+> contrário de um **escalar** novo. **Implementação não iniciada.** Registro completo em
+> [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*.
 >
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
 > Pilar 2 e no P1-008.
@@ -292,6 +318,30 @@ consomem o Noise Floor (paralelizáveis entre si); Trust Ladder consome o SNR; E
 - **Fronteira arquitetural demonstrada:** `ExportEngine::exportScalarsCSV` exporta **automaticamente**
   qualquer escalar novo e `MetricResult` **não tem superfície de metadados internos** ⇒ a decisão
   **D** foi **desmembrada, não abandonada nem implicitamente implementada**.
+
+### P1-009 — síntese da ratificação arquitetural *(sem implementação)*
+
+- **Arquitetura aprovada:** **D + A em dois estágios**.
+  **Estágio 1 (D)** — qualificador **tipado no nível de `Scalar`**, ortogonal a `Quality` e
+  `valuePresent`, taxonomia `Point` · `LowerBound` · `UpperBound`, **padrão `Point`**.
+  **Estágio 2 (A)** — `DynamicRange_stepIndex` e `DynamicRange_firstClippedIndex` preservados como
+  **proposta futura**, sem implementação e **sem autorização de exportação**; diferível ao Pilar 3.
+- **Regra formal dos casos do MS-09** (`V` = degraus válidos, `C` = saturados, `s*` = selecionado):
+
+  | Condição | Natureza |
+  |---|:--:|
+  | `C ≠ ∅` e `min(C) = s* + 1` — saturação demonstrada logo acima | **`Point`** |
+  | `C = ∅` e `s* = último degrau` — censura pelo limite do ensaio | **`LowerBound`** |
+  | `C ≠ ∅` e `min(C) > s* + 1` — saturação não encaixotada | **`LowerBound`** |
+  | `V = ∅` — sem valor | *(irrelevante)* — `NotApplicable`, `valuePresent = false` |
+
+- **O regime censurado é o NORMAL.** O ST-08 tem pico máximo de **−6 dBFS**: cadeias de ganho
+  unitário ou inferior a +6 dB **nunca** demonstram saturação. `86,789489 dB` é, fisicamente,
+  `DR ≥ 86,789489 dB`. Isto completa a explicação de **F2**.
+- **Vedado:** criar `Quality::LowerBound`; usar `LowConfidence` para unilateralidade; transformar
+  ausência de valor em `LowerBound`; derivar a natureza de comparações de `double` (F10).
+- **Premissa refinada:** escalar novo é exportado automaticamente; **membro novo de `Scalar` não é**
+  — provado por compilação, mantendo as 76 inicializações agregadas existentes.
 
 ### Rastreabilidade histórica dos Evidence Packages
 

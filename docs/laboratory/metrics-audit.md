@@ -1266,11 +1266,24 @@ nem implicitamente implementada**. A verificação foi feita mecanicamente sobre
 `6ed71e8`: **nenhuma chave de escalar nova**, **nenhuma ocorrência** de termo de censura/limite
 inferior, **nenhum arquivo de exportação, contrato ou cabeçalho alterado**.
 
+> **Premissa REFINADA (P1-009, 2026-08-08) — o texto acima é preservado, não corrigido por
+> substituição.** A conclusão permanece **correta para a alternativa então considerada**, que era
+> acrescentar um **escalar**. A investigação arquitetural posterior examinou uma superfície não
+> considerada nesta etapa — o próprio `Scalar` — e estabeleceu que **um membro novo de `Scalar` NÃO é
+> exportado automaticamente** pelo `ExportEngine` atual, enquanto **um escalar novo é**. Existe,
+> portanto, caminho para transportar a natureza da estimativa sem alterar CSV, PDF ou dashboard.
+> **A fronteira é mais estreita do que se registrou aqui.** Ver §L.5.
+
 Sua solução futura exigirá **decisão explícita** entre pelo menos:
 
 1. **evolução do contrato/exportação**;
 2. **extensão estrutural de `MetricResult`**;
 3. **superfície própria de metadados**.
+
+> **Resolvido em P1-009 (2026-08-08).** A decisão foi tomada e ratificada: **qualificador tipado no
+> nível de `Scalar`** (estágio 1, arquitetura **D**), com os fatos primários preservados como
+> proposta futura (estágio 2, arquitetura **A**). Nenhuma das três opções acima foi adotada na forma
+> em que estavam enunciadas. Ver §L.
 
 Restrições já fixadas para esse item: **não criar novo valor no enum `Quality`**; **não recomputar
 alinhamento, segmentação ou espectro posteriormente apenas para redescobrir a censura** — a solução
@@ -1298,7 +1311,7 @@ deverá **preservar os fatos primários já disponíveis durante o MS-09** e dec
 
 | ID | Achado | Estado |
 |---|---|:--:|
-| **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | 🔴 **Aberto — item próprio** (§K.6) |
+| **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | 🟡 **Arquitetura decidida em P1-009** (§L); **implementação não iniciada** |
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura contendo `NaN` propaga-se pelo estimador e chega ao contrato rotulada como medição válida | 🔴 **Aberto** (decisão **D4**: registrar, não corrigir) |
 | **DV-9** | **Assimetria legítima da fonte ST-08** entre Core (regenera ⇒ ramo inalcançável) e reprocessamento (lê do pacote ⇒ pode faltar) | 🟡 **Legítima e preservada** (decisão **D5**) |
 | **DV-8** | Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300` | 🔴 **Aberto — Pilar 2** |
@@ -1311,6 +1324,173 @@ deverá **preservar os fatos primários já disponíveis durante o MS-09** e dec
 A **representação de teto censurado permanece item aberto e separado**. Permanecem inalterados:
 **MS-08** (matemática), **MS-10**, **MS-13**, **ST-08**, `ENABLE_SYNC_ALIGNMENT`, `MetricResult`,
 enum `Quality`, exportação, Evidence Package e apresentação.
+
+---
+
+## Registro de Decisão — P1-009 (Natureza da Estimativa / Limites Unilaterais) — **NORMATIVO**
+
+> **Status: DECISÕES RATIFICADAS.** Documentação apenas — **nenhum** código, teste, estímulo,
+> frontend, exportação, Evidence Package, contrato (`MetricResult`/`Scalar`) ou `Quality` foi
+> alterado. Nenhuma nova caracterização física foi realizada.
+> **Origem:** decisão **D** do MS-09 (teto censurado), desmembrada do **P1-004** por fronteira
+> arquitetural, mais a necessidade transversal evidenciada pelo **MS-10 / P1-007**.
+> **Base:** [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md),
+> aprovado como base da decisão. O texto pré-decisão daquele estudo está preservado; o desfecho
+> normativo está isolado na §15 dele.
+
+### L.1 Arquitetura aprovada — **D + A em dois estágios**
+
+**Estágio 1 — D: natureza da estimativa.** Qualificador **tipado no nível de `Scalar`**, ortogonal a
+`Quality` e a `valuePresent`. Taxonomia inicial aprovada:
+
+| Valor | Significado |
+|---|---|
+| **`Point`** | estimativa pontual — o valor é a grandeza |
+| **`LowerBound`** | o valor é um **limite inferior** — a grandeza é *pelo menos* isso |
+| **`UpperBound`** | o valor é um **limite superior** — a grandeza é *no máximo* isso |
+
+**`Point` é o padrão**, para preservar integralmente o comportamento das demais métricas.
+
+O teto censurado do MS-09 passa a ser representado como:
+
+```
+quality      = Normal
+valuePresent = true
+estimate     = LowerBound
+```
+
+**Vedado criar `Quality::LowerBound`. Vedado usar `LowConfidence` para representar
+unilateralidade** — confiança e unilateralidade são dimensões distintas.
+
+**Estágio 2 — A: fatos primários auditáveis.** `DynamicRange_stepIndex` e
+`DynamicRange_firstClippedIndex` ficam **preservados como proposta futura**. **Não implementar** e
+**não autorizar sua exportação agora.** O estágio 2 dependerá de decisão explícita sobre
+contrato/exportação e **pode ser diferido ao Pilar 3**.
+
+### L.2 Regra formal dos casos do MS-09
+
+Sejam `V` o conjunto de degraus com estimativa in-band válida, `C` o dos rejeitados por saturação
+(`peak ≥ 1.0`), `s*` o degrau selecionado e `min(C)` o primeiro saturado.
+
+| # | Condição | Natureza | Fundamento |
+|:--:|---|:--:|---|
+| 1 | `C ≠ ∅` **e** `min(C) = s* + 1` | **`Point`** | **teto observado** — a saturação foi demonstrada imediatamente após o maior degrau válido, o que permite tratar o valor como estimativa pontual segundo o contrato atual |
+| 2 | `C = ∅` **e** `s* = último degrau` | **`LowerBound`** | **teto censurado pelo limite superior do ensaio** — representação científica `Dynamic Range ≥ X dB`, **não** `= X dB` |
+| 3 | `C ≠ ∅` **e** `min(C) > s* + 1` | **`LowerBound`** | saturação observada porém **não encaixotada** — ver L.3 |
+| 4 | `V = ∅` | *(irrelevante)* | `quality = NotApplicable`, `valuePresent = false`. **Ausência de valor nunca vira `LowerBound`** |
+
+### L.3 Terceiro caso — decisão explícita
+
+Para `C ≠ ∅` e `min(C) > s* + 1` — existe saturação observada, mas **não** adjacente ao maior degrau
+válido — a estimativa é classificada como **`LowerBound`**. Fundamento:
+
+- sabe-se que o DUT **suporta ao menos** o nível associado a `s*`;
+- portanto `DR ≥ X` permanece uma afirmação **verdadeira**;
+- **não** há evidência suficiente para afirmar `DR = X`;
+- **não** é `NotApplicable`, pois existe informação quantitativa válida;
+- **não** é `LowConfidence`, pois unilateralidade e confiança são dimensões diferentes.
+
+Registrado que este caso **poderá** futuramente admitir representação mais rica — por exemplo um
+**intervalo** —, mas **essa taxonomia não é introduzida agora**, por falta de necessidade
+demonstrada.
+
+### L.4 O regime censurado é o NORMAL, não a exceção
+
+O ST-08 é uma escada de 8 degraus cujo pico máximo é **−6 dBFS**. Uma cadeia de ganho unitário
+**nunca satura**, logo recai sempre no caso 2. Observação registrada (sonda descartável fora do
+produto, sem alterar código):
+
+```
+ganho x1     s*=7  C=∅              -> TETO CENSURADO   (LowerBound)
+ganho x2     s*=6  min(C)=7          -> teto observado   (Point)
+ganho x4     s*=4  min(C)=5          -> teto observado   (Point)
+ganho x100   V=∅   min(C)=0          -> sem valor        (NotApplicable)
+```
+
+**Fica explicitamente registrado que o teto censurado é o regime normal para cadeias de ganho
+unitário ou inferior a +6 dB com o ST-08 atual — e não um caso raro.** O valor `86,789489 dB`
+preservado como não-regressão do P1-004 é, fisicamente, `DR ≥ 86,789489 dB`.
+
+Isto também completa a explicação de **F2** (`DR = 80,1` < `SNR = 80,4`): é exatamente o regime que a
+decisão **D** previu, e a inversão observada era o sintoma esperado de teto censurado — **não** viés
+de estimador.
+
+### L.5 Correção formal da fronteira arquitetural registrada no P1-004
+
+| Afirmação | Estado |
+|---|---|
+| Novo **escalar** em `MetricResult::scalars` → **exportado automaticamente** | ✅ **Confirmada** |
+| Novo **membro de `Scalar`** → **não** é exportado automaticamente pelo `ExportEngine` atual | ✅ **Estabelecida pela investigação arquitetural** |
+
+Prova registrada:
+
+- um membro acrescentado **ao final** de `Scalar`, com inicializador padrão, **mantém válidas as 76
+  inicializações agregadas existentes** em `AnalysisEngine.cpp` — verificado por compilação com
+  `-Wall -Wextra -Werror`, C++17, sobre cópia do cabeçalho **fora do repositório**;
+- os consumidores atuais (`exportScalarsCSV`, `buildReportModel`, `DashboardModel`,
+  `SessionSerializer`) leem campos **explicitamente nomeados** e **ignoram** o membro novo até
+  optarem por utilizá-lo;
+- portanto **existe caminho para transportar a natureza da estimativa sem alterar CSV, PDF ou
+  dashboard na primeira etapa**.
+
+> **Preservação do histórico.** A conclusão registrada no P1-004 (§K.6) — *"representar a decisão D
+> sem alterar a exportação ou o contrato estrutural não é possível na arquitetura atual"* — **não é
+> apagada**. Ela permanece **correta para a alternativa então considerada**, que era acrescentar um
+> **escalar**. É aqui **refinada** por investigação arquitetural posterior, que examinou uma
+> superfície não considerada na ocasião: o próprio `Scalar`. **Premissa refinada, não invalidada.**
+
+### L.6 Escopo do P1-009 — estágio 1 (registro de escopo futuro)
+
+Quando autorizado, o estágio 1 deverá conter **exatamente**:
+
+- extensão **tipada** de `Scalar` com a natureza da estimativa, padrão `Point`;
+- MS-09 produzindo `Point` ou `LowerBound` conforme **L.2**;
+- espelhamento equivalente no **LabEngine JS** (**CC-A**);
+- **derivação por índices/estado do laço**, nunca por comparação de valores `double` (ver L.8).
+
+E **nenhuma** das seguintes: mudança numérica em `DynamicRange_dB`; mudança de `Quality`; mudança de
+`valuePresent`; mudança de CSV, PDF ou dashboard; mudança do Evidence Package; mudança do ST-08;
+**nenhum novo escalar público**.
+
+### L.7 MS-10 / P1-007 — dependência conceitual
+
+Registrada **apenas** a dependência: `snrDb()` retornando `200 dB` quando `pn <= 0`
+(`AnalysisEngine.cpp:112`) é **candidato a `LowerBound`**, e não necessariamente a `LowConfidence`
+nem a um novo valor de `Quality`. **O comportamento do MS-10 não é decidido nem implementado agora.**
+
+**P1-007 deverá reutilizar a taxonomia criada por P1-009, não inventar uma segunda solução.**
+
+### L.8 F10 (NaN) e achados latentes
+
+**F10 permanece fora do P1-009.** Registrado como **requisito de implementação** do estágio 1: a
+natureza do MS-09 deve ser derivada de **índices e estado do laço**, nunca de comparação de valores
+`double` — um classificador numérico herdaria a propriedade de `NaN` de tornar toda comparação falsa
+e degradaria em silêncio para `Point`.
+
+Achados **latentes** levantados pelo estudo, registrados **sem correção e sem expansão de escopo**:
+`crosstalk` com `1e-30` nos dois lados; `SettlingTime_ms` em que "nunca estabilizou" e "estabilizou
+instantaneamente" produzem ambos `0 ms`; `bestLag` saturando no limite de busca de 50 ms. Nenhum foi
+verificado a fundo; nenhum será tratado por P1-009.
+
+### L.9 Exportação futura — registro, sem implementação
+
+O canal de máquina **deve preservar o número como número**. Conceito preferencial futuro:
+
+```
+DynamicRange_dB=86.789
+DynamicRange_dB_nature=LowerBound
+```
+
+**Não usar** `DynamicRange_dB=>=86.789` — quebra consumidores numéricos. Interfaces **humanas**
+poderão futuramente renderizar `≥ 86.8 dB` com explicação apropriada. **Nada disso é autorizado
+nesta etapa.**
+
+### L.10 F11 — comentário residual
+
+O comentário em `AnalysisEngine.cpp:790-792` **não é alterado agora**. Permanece como **dívida
+textual**, a ser corrigida quando uma intervenção **funcional** futura tocar a região correspondente.
+**Nunca em commit isolado** — alterar código validado sem gate funcional é churn sobre binário
+auditado.
 
 ---
 

@@ -108,6 +108,42 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
   *Situação após o **P1-004** (2026-08-08): continua **sem implementação**, agora como **item próprio
   e aberto** — desmembrado por fronteira arquitetural, não abandonado nem implicitamente
   implementado.*
+
+  **Natureza da estimativa — ratificação P1-009 (2026-08-08).** A representação do teto censurado
+  está **decidida** (implementação **não** iniciada). Um resultado de Dynamic Range passa a admitir
+  uma **natureza** própria, **ortogonal** à qualidade da medição e à presença do valor:
+
+  | Natureza | Significado |
+  |---|---|
+  | **`Point`** | estimativa pontual — `Dynamic Range = X dB` |
+  | **`LowerBound`** | limite inferior — `Dynamic Range ≥ X dB` |
+  | **`UpperBound`** | limite superior — reservado; sem uso no MS-09 |
+
+  Um teto censurado é `quality = Normal`, `valuePresent = true`, natureza `LowerBound`: a medição é
+  **plenamente confiável**, o valor **existe**, e apenas a *quantificação lógica* é unilateral.
+  É **vedado** representar unilateralidade por `LowConfidence` — confiança e unilateralidade são
+  dimensões distintas — e é **vedado** criar um valor novo de `Quality` para isso.
+
+  Regra formal, com `V` = degraus de estimativa válida, `C` = degraus rejeitados por saturação e
+  `s*` = degrau selecionado:
+
+  | Condição | Natureza |
+  |---|:--:|
+  | `C ≠ ∅` e `min(C) = s* + 1` — saturação demonstrada imediatamente acima | **`Point`** |
+  | `C = ∅` e `s* = último degrau` — censura pelo limite superior do ensaio | **`LowerBound`** |
+  | `C ≠ ∅` e `min(C) > s* + 1` — saturação observada mas **não encaixotada** | **`LowerBound`** |
+  | `V = ∅` — sem valor | *(irrelevante)* — `NotApplicable`, `valuePresent = false` |
+
+  A **ausência de valor nunca é convertida em `LowerBound`**. O terceiro caso poderá futuramente
+  admitir representação mais rica (intervalo); essa taxonomia **não** é introduzida agora.
+
+  **Registro de regime.** Com o ST-08 atual — escada de 8 degraus com pico máximo de **−6 dBFS** —,
+  cadeias de **ganho unitário ou inferior a +6 dB nunca demonstram saturação**. O teto censurado é,
+  portanto, o **regime normal** dessas medições, e **não** um caso raro. É este o regime em que a
+  propriedade condicional `Dynamic Range ≥ SNR` (decisão **B**) perde garantia.
+
+  Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*;
+  estudo em [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md).
 - **Exportação.** O Dynamic Range é exportado como um **escalar em dB**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz), da **ausência de ponderação** e da **condição** (teto sem saturação; piso em
   silêncio). É **homogêneo** com as demais métricas expressas em dB.
@@ -178,3 +214,11 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 > arquitetural** em item próprio e aberto, por se ter demonstrado que qualquer escalar novo é
 > exportado automaticamente e que `MetricResult` não possui superfície para metadados internos.
 > Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-004*.
+>
+> **Ratificação complementar (Registro de Decisão — P1-009), 2026-08-08.** Decidida a
+> **representação** do teto censurado da decisão **D**: uma **natureza da estimativa**
+> (`Point`/`LowerBound`/`UpperBound`, padrão `Point`) **ortogonal** a `Quality` e a `valuePresent`,
+> com a regra formal dos casos do MS-09 fixada na **§6**. Nenhuma alteração de cálculo, de estado de
+> qualidade, de exportação, de interface, de contrato ou de estímulo acompanha esta ratificação — a
+> implementação **não** foi iniciada. Registro completo em
+> [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*.
