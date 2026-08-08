@@ -817,7 +817,34 @@ TEST_CASE("TC-047 MS-09 natureza da estimativa: Point vs LowerBound (P1-009)") {
         CHECK_NEAR(s->value, 86.789489, 0.001);
     }
 
+    // ---- (1b) nenhum clipping, mas s* ANTES do ultimo degrau -> LowerBound ----
+    // Mantem somente os degraus 0..3 do loopback unitario. Como todas as amostras presentes tem
+    // pico < 1.0, C e vazio; como os degraus 4..7 foram truncados, eles nao podem integrar V e o
+    // maior degrau valido selecionado e o 3. Logo C == vazio e s*=3 < 7, ramo distinto do caso (1).
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& st08 = cap.captured[StimulusId::ST08_DynamicStep];
+        CHECK(st08.size() == static_cast<std::size_t>(8 * seg));
+        st08.resize(static_cast<std::size_t>(4 * seg));
+
+        double picoDisponivel = 0.0;
+        for (double v : st08) picoDisponivel = std::max(picoDisponivel, std::fabs(v));
+        CHECK(picoDisponivel < 1.0);                              // nenhum indice pertence a C
+        CHECK(st08.size() == static_cast<std::size_t>(4 * seg)); // indices 4..7 estao ausentes
+
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = drScalar(b);
+        const Scalar* sUltimo = drScalar(bUnit);
+        CHECK(s != nullptr);
+        CHECK(s->quality == Quality::Normal);
+        CHECK(s->valuePresent);
+        CHECK(s->estimate == EstimateNature::LowerBound);
+        CHECK(sUltimo != nullptr);
+        CHECK_NEAR(sUltimo->value - s->value, 16.0, 0.1);        // s*=3, nao o ultimo indice 7
+    }
+
     // ---- (2) ganho x2: satura o degrau 7, selecionado e o 6 -> saturacao ENCAIXOTADA -> Point ----
+    // Controle negativo do caso (1b): C nao vazio e min(C)=s*+1 devem produzir Point.
     {
         ResultBundle b = eng.computeAllMetrics(comGanho(2.0));
         const Scalar* s = drScalar(b);
