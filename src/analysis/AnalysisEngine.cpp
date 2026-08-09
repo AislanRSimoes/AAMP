@@ -926,10 +926,48 @@ MetricResult AnalysisEngine::snr(const CapturedSet& cap) const {
     auto sig = cap.captured.find(StimulusId::ST03_PureSine);
     auto noi = cap.captured.find(StimulusId::ST09_Silence);
     if (sig == cap.captured.end() || noi == cap.captured.end()) { r.quality = Quality::Error; return r; }
+    // ---- P1-005 / D1: o denominador do SNR passa a ser o Noise Floor OFICIAL do MS-08 ----
+    // Antes, pn era meanSquare(ST-09) em BANDA LARGA, enquanto o MS-08 ja publicava o piso
+    // band-limited 20 Hz-20 kHz: as duas familias discordavam sobre o MESMO silencio (ate 52,8 dB
+    // com conteudo ultrassonico). O MS-10 NAO recomputa o ST-09, NAO cria um segundo Welch e NAO
+    // usa meanSquare(ST-09) no caminho produtivo -- o resultado do MS-08 e a fonte de verdade.
+    // NoiseFloor_dBFS ja e 10*log10(potencia in-band), na MESMA escala absoluta de meanSquare
+    // (verificado: somado em toda a banda o estimador reproduz meanSquare com erro de 0,0022 dB),
+    // logo a conversao e direta, sem fator de correcao.
+    MetricResult nf = noiseFloor(cap);
+    double nfDb = 0.0; bool haveNf = false, nfPresent = false;
+    Quality nfQuality = Quality::Error;
+    for (const auto& sc : nf.scalars)
+        if (sc.key == "NoiseFloor_dBFS") { nfDb = sc.value; haveNf = true; nfPresent = sc.valuePresent; nfQuality = sc.quality; break; }
+    if (!haveNf) { r.quality = Quality::Error; return r; }
+
+    // ---- P1-005 / D3: contrato do operando (mesmo ja consolidado no P1-004 para o MS-09) ----
+    // Sem piso semanticamente presente nao existe a razao ps/pn. E VEDADO converter a sentinela
+    // -300 dBFS em potencia e trata-la como medicao: ela pertence ao contrato interno do MS-08 e
+    // NAO e operando valido quando valuePresent e false (produziria SNR ~ +291 dB em Normal).
+    if (!nfPresent || nfQuality == Quality::NotApplicable) {
+        r.scalars.push_back({"SNR_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+
+    // Numerador CONGELADO (P1-006): bloco de 1 kHz inteiro, meanSquare temporal, recorte [2 s,4 s).
     const int seg = static_cast<int>(2.0 * m_fs + 0.5);
     std::vector<double> tone = slice(sig->second, static_cast<std::size_t>(seg), static_cast<std::size_t>(2 * seg)); // 1 kHz
-    const double v = snrDb(tone, noi->second);
-    Quality q = Quality::Normal;
+    const double ps = meanSquare(tone);
+    const double pn = std::pow(10.0, nfDb / 10.0);
+
+    // Ramo preservado de snrDb() (pn <= 0 -> 200 dB), reproduzido AQUI sem reinterpretacao e
+    // alcancavel apenas apos o operando ter sido validado acima.
+    // FATO REGISTRADO: com o pn derivado do MS-08 este ramo e ESTRUTURALMENTE INALCANCAVEL para um
+    // operando valido -- NoiseFloor_dBFS = 10*log10(max(integFull, 1e-30)) tem minimo -300 dBFS,
+    // logo pn >= 1e-30 > 0; e o caso integFull == 0 ja retornou NotApplicable acima. Nenhum caso
+    // artificial foi inventado para exercita-lo, e snrDb() permanece intacta (D2/D4). A semantica
+    // fisica desse limite continua reservada ao P1-007.
+    const double v = (pn <= 0.0) ? 200.0 : 10.0 * std::log10(ps / pn);
+
+    // ---- P1-005 / D3: propagacao de LowConfidence do piso ----
+    const Quality q = (nfQuality == Quality::LowConfidence) ? Quality::LowConfidence : Quality::Normal;
     r.scalars.push_back({"SNR_dB", v, "dB", q, true});
     r.quality = q;
     return r;

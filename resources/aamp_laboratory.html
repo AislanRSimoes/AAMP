@@ -1050,23 +1050,40 @@ function computeMS09(signal, officialNoiseFloor, stepSource){
   return {quality:q, dynamicrange_db: lmaxDb - nf, valuePresent:true, estimateNature:nature};
 }
 /* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
-   razão de potências RMS temporais entre o tom de 1 kHz (ST-03) e o ruído (ST-09):
-       SNR_dB = 10·log10(ps/pn),  ps = meanSquare(tom),  pn = meanSquare(ruído).
-   PURA, agnóstica. Recebe DUAS CAPTURAS oficiais (D-ENTRADAS-CIENTÍFICAS): ST-03 (tom) e ST-09 (ruído) —
-   ambas entradas científicas EXPLÍCITAS na assinatura; NÃO há dependência de resultado de outra família
-   (o ruído aqui é RMS temporal de banda LARGA, não o piso PSD Welch da MS-08). Mesma classe observacional
-   temporal da MS-09; RMS é primitiva aritmética privada (D-PRIMITIVA-ARITMÉTICA) — inline, sem promoção. */
-function computeMS10(signal, noiseSignal){
+       SNR_dB = 10·log10(ps/pn),  ps = meanSquare(bloco de 1 kHz do ST-03),  pn = piso OFICIAL da MS-08.
+   PURA, agnóstica. P1-005: o denominador deixou de ser o RMS temporal de banda LARGA do ST-09 e passou
+   a ser o Noise Floor band-limited 20 Hz–20 kHz já calculado pela MS-08 — as duas famílias discordavam
+   sobre o MESMO silêncio (até 52,8 dB com conteúdo ultrassônico). A MS-10 NÃO recomputa o ST-09 e NÃO
+   cria um segundo Welch: o resultado da MS-08 é a fonte de verdade.
+   D-DEPENDÊNCIA-DE-FAMÍLIA (mesmo precedente da MS-09): a segunda entrada é o RESULTADO CIENTÍFICO
+   OFICIAL da MS-08 (objeto), não o contrato/UI — a família não conhece apresentação. Reproduz
+   internamente a semântica do Core (Normal/LowConfidence/NotApplicable/Error) e a PRESENÇA do valor.
+   O NUMERADOR permanece CONGELADO (bloco inteiro, meanSquare temporal, recorte [2 s,4 s)) — qualquer
+   questão do numerador pertence ao P1-006. RMS é primitiva aritmética privada, inline. */
+function computeMS10(signal, officialNoiseFloor){
   const fs=signal.sampleRate, seg=Math.round(2.0*fs);
+  const nf = officialNoiseFloor && officialNoiseFloor.noisefloor_dbfs;   // dependência: resultado oficial da MS-08
+  if(!signal.samples || !signal.samples.length || nf==null || !isFinite(nf))
+    return {quality:'Error', snr_db:null, valuePresent:false};           // pré-condição científica ausente
+  // P1-005 / D3 — contrato do operando (o mesmo já consolidado no P1-004 para a MS-09). Sem piso
+  // semanticamente presente não existe a razão ps/pn. É VEDADO converter a sentinela −300 dBFS em
+  // potência e tratá-la como medição: produziria SNR ≈ +291 dB em estado Normal.
+  if(officialNoiseFloor.valuePresent===false || officialNoiseFloor.quality==='NotApplicable')
+    return {quality:'NotApplicable', snr_db:null, valuePresent:false};
   // Recorte [2 s, 4 s): região ESTACIONÁRIA do estímulo oficial (mesma convenção do Core e de MS-05/06).
   // NÃO é otimização — é a definição científica do trecho analisável do ST-03.
   const tone=signal.samples.slice(seg, 2*seg);
   const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
-  const ps=ms(tone), pn=ms(noiseSignal.samples);   // potências RMS temporais (aritmética inline privada)
-  // REGRA CIENTÍFICA da métrica (NÃO tratamento de erro): ruído nulo satura o SNR em 200 dB. Produz
-  // normalmente o escalar oficial 200.0 — não altera quality nem valuePresent.
-  if(pn<=0) return {snr_db:200};
-  return {snr_db:10*Math.log10(ps/pn)};            // fórmula oficial, sem proteção adicional (ps==0 -> -Infinity, idêntico ao Core)
+  const ps=ms(tone);                               // numerador congelado (P1-006)
+  const pn=Math.pow(10, nf/10);                    // piso oficial da MS-08 em potência linear
+  // Ramo preservado do Core (pn ≤ 0 → 200 dB), reproduzido sem reinterpretação e alcançável apenas
+  // após o operando ter sido validado acima. FATO REGISTRADO: com o pn derivado da MS-08 ele é
+  // ESTRUTURALMENTE INALCANÇÁVEL para operando válido (o piso tem mínimo −300 dBFS ⇒ pn ≥ 1e-30 > 0,
+  // e integFull == 0 já retornou NotApplicable). A semântica física desse limite é do P1-007.
+  const v = (pn<=0) ? 200 : 10*Math.log10(ps/pn);  // ps==0 -> -Infinity, idêntico ao Core
+  // P1-005 / D3 — propagação de LowConfidence do piso.
+  const q = (officialNoiseFloor.quality==='LowConfidence') ? 'LowConfidence' : 'Normal';
+  return {quality:q, snr_db:v, valuePresent:true};
 }
 /* MS-12 (Latency) — SÉTIMA família nativa. Método oficial (AnalysisEngine::latency): round-trip = posição
    do PICO do impulso capturado (ST-06, cru) menos a posição do impulso EMITIDO. PURA, agnóstica.
@@ -1463,11 +1480,15 @@ const LabEngine={
          valuePresent:present,estimateNature:estimateOf(m09)}],curves:[]};   // P1-009: 3º eixo do contrato
       byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
     }
-    if(st03&&st03.wav&&st09&&st09.wav){   // MS-10: duas capturas científicas (ST-03 tom + ST-09 ruído)
-      const m10=computeMS10({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate},
-                            {samples:st09.wav.samples, sampleRate:st09.wav.sampleRate});
-      const mr10={id:'MS-10',name:'SNR',quality:'Normal',scalars:[
-        {key:'SNR_dB',value:m10.snr_db,unit:'dB',quality:'Normal',valuePresent:true}],curves:[]};
+    if(st03&&st03.wav&&st09&&st09.wav){   // MS-10: captura de ST-03 (tom) + resultado oficial da MS-08 (piso)
+      // P1-005: a segunda entrada deixa de ser a captura crua do ST-09 e passa a ser o RESULTADO
+      // OFICIAL da MS-08 — mesma dependência de família já usada pela MS-09.
+      const m10=computeMS10({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate}, m08result);
+      // P1-005/CC-B: os estados deixam de ser literais 'Normal'/true e passam a vir da própria
+      // família — sem isto o contrato do operando não alcançaria o resultado JS.
+      const present10=m10.valuePresent===true;
+      const mr10={id:'MS-10',name:'SNR',quality:m10.quality,scalars:[
+        {key:'SNR_dB',value:present10?m10.snr_db:null,unit:'dB',quality:m10.quality,valuePresent:present10}],curves:[]};
       byId[mr10.id]=mr10; mr10.scalars.forEach(s=>{scalars[s.key]=s;});
     }
     const st06=(session.captures||[]).find(c=>c.stimulus==='ST-06');   // localização = responsabilidade do LabEngine

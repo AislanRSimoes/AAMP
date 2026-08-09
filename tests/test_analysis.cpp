@@ -1007,6 +1007,182 @@ TEST_CASE("TC-047 MS-09 natureza da estimativa: Point vs LowerBound (P1-009)") {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// TC-048 -- P1-005: o denominador do SNR passa a ser o Noise Floor BAND-LIMITED oficial do MS-08.
+//
+// IDENTIFICADOR: reconfirmado livre mecanicamente imediatamente antes da edicao (TC-045/046/047
+// ocupados; 048 livre).
+//
+// Antes, pn era meanSquare(ST-09) em BANDA LARGA enquanto o MS-08 ja publicava o piso in-band
+// 20 Hz-20 kHz: as duas familias discordavam sobre o MESMO silencio -- ate 52,8 dB de diferenca
+// com conteudo ultrassonico. O MS-10 passa a CONSUMIR o resultado oficial do MS-08 (fonte unica),
+// convertendo NoiseFloor_dBFS em potencia linear; nao recomputa o ST-09 nem cria um segundo Welch.
+//
+// O que este teste IMPEDE de reintroduzir: (i) voltar ao meanSquare de banda larga; (ii) rejeitar
+// ruido INDISCRIMINADAMENTE (o ruido in-band tem de continuar afetando o SNR); (iii) converter a
+// sentinela -300 dBFS em potencia e publicar ~+291 dB; (iv) perder a propagacao de estado do piso.
+//
+// FORA DE ESCOPO, deliberadamente: o numerador (P1-006) e a condicao pn~0 (P1-007).
+TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
+    AnalysisEngine eng(FS);
+
+    auto snrSc = [](const ResultBundle& b) -> const Scalar* {
+        const MetricResult* m = b.find("MS-10");
+        if (m == nullptr) return nullptr;
+        for (const Scalar& s : m->scalars) if (s.key == "SNR_dB") return &s;
+        return nullptr;
+    };
+    auto nfDe = [](const ResultBundle& b) -> double {
+        const Scalar* s = nfScalar(b, "NoiseFloor_dBFS");
+        return s != nullptr ? s->value : 0.0;
+    };
+    auto q10 = [](const ResultBundle& b) {
+        const MetricResult* m = b.find("MS-10");
+        return m == nullptr ? Quality::Error : m->quality;
+    };
+    // ORACULO INDEPENDENTE do teste: reproduz o metodo ANTIGO (meanSquare de banda larga do ST-09).
+    // Nao usa nenhuma funcao do produto -- e o controle negativo exigido.
+    auto snrAntigo = [](const CapturedSet& cap) {
+        auto ms = [](const std::vector<double>& x) {
+            if (x.empty()) return 0.0;
+            double a = 0.0; for (double v : x) a += v * v; return a / static_cast<double>(x.size());
+        };
+        const int seg = static_cast<int>(2.0 * FS + 0.5);
+        const std::vector<double>& t = cap.captured.at(StimulusId::ST03_PureSine);
+        std::vector<double> tone(t.begin() + seg, t.begin() + 2 * seg);
+        const double ps = ms(tone);
+        const double pn = ms(cap.captured.at(StimulusId::ST09_Silence));
+        return (pn <= 0.0) ? 200.0 : 10.0 * std::log10(ps / pn);
+    };
+    // ST-09 do loopback + um tom aditivo de -40 dBFS na frequencia indicada.
+    auto comTom = [&](double hz) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& z = cap.captured[StimulusId::ST09_Silence];
+        for (std::size_t i = 0; i < z.size(); ++i)
+            z[i] += 0.01 * std::sin(2.0 * 3.14159265358979 * hz * static_cast<double>(i) / FS);
+        return cap;
+    };
+
+    // ---- (a) ruido branco padrao: Normal, presente, e o valor NORMATIVO ----
+    // O piso in-band e ~0,80 dB menor que o de banda larga (fracao (20k-20)/24k = 0,8325), logo o
+    // SNR normativo e ~0,80 dB MAIOR que o antigo. A diferenca NAO e ruido: e a banda.
+    CapturedSet capRef = harness::makeLoopback(FS, 0, false);
+    ResultBundle bRef = eng.computeAllMetrics(capRef);
+    {
+        const Scalar* s = snrSc(bRef);
+        CHECK(s != nullptr);
+        CHECK(q10(bRef) == Quality::Normal && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 86.7895, 0.001);
+        CHECK_NEAR(snrAntigo(capRef), 85.9897, 0.001);          // oraculo: metodo antigo
+        CHECK(s->value - snrAntigo(capRef) > 0.5);              // a correcao e efetivamente nao-nula
+    }
+
+    // ---- (b) 22 kHz a -40 dBFS: FORA da banda -> SNR praticamente invariante ----
+    // (c) esta embutido: o oraculo independente demonstra que o metodo ANTIGO desabaria para ~34 dB.
+    {
+        CapturedSet cap = comTom(22000.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 86.7895, 0.001);                   // invariante em relacao a (a)
+        CHECK_NEAR(snrAntigo(cap), 34.0, 0.1);                  // CONTROLE NEGATIVO: o antigo desaba
+        CHECK(s->value - snrAntigo(cap) > 50.0);                // vies do metodo antigo: >50 dB
+    }
+
+    // ---- (d) 5 Hz a -40 dBFS: subsonico -> rejeicao PARCIAL, nao total ----
+    // O componente esta a 0,43 bin da resolucao de 11,72 Hz e o lobulo principal de Hann atravessa
+    // a borda de 20 Hz. A atenuacao medida e ~18,9 dB. Isto NAO e defeito do P1-005: e propriedade
+    // de resolucao do estimador oficial do MS-08, herdada por construcao (D5). O teste assere a
+    // rejeicao parcial EXPLICITAMENTE, sem exigir eliminacao completa.
+    {
+        CapturedSet cap = comTom(5.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 52.9384, 0.01);
+        CHECK(s->value - snrAntigo(cap) > 18.0);                // melhora substancial...
+        CHECK(s->value < 86.0);                                 // ...porem NAO ha eliminacao total
+    }
+
+    // ---- (e) 1 kHz a -40 dBFS: IN-BAND -> deve continuar afetando o SNR ----
+    // Controle contra rejeicao indiscriminada: se o novo metodo simplesmente ignorasse ruido, este
+    // caso passaria despercebido. Os dois metodos devem coincidir aqui.
+    {
+        CapturedSet cap = comTom(1000.0);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 34.0, 0.01);                       // degradado, como deve ser
+        CHECK_NEAR(s->value, snrAntigo(cap), 0.01);             // antigo e novo COINCIDEM in-band
+        CHECK(snrSc(bRef)->value - s->value > 50.0);            // muito abaixo do caso limpo
+    }
+
+    // ---- (f) piso LowConfidence -> SNR LowConfidence, com o valor PRESERVADO ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence] =
+            harness::deterministicNoise(static_cast<std::size_t>(4096 + 4 * 2048), -95.0);   // 5 quadros
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(b.find("MS-08")->quality == Quality::LowConfidence);
+        CHECK(q10(b) == Quality::LowConfidence);
+        CHECK(s != nullptr && s->quality == Quality::LowConfidence && s->valuePresent);
+        CHECK_NEAR(s->value, 86.8250, 0.001);
+    }
+
+    // ---- (g)(h) piso NotApplicable -> SNR NotApplicable, sem valor; a sentinela NAO volta ----
+    // Antes do P1-005 este caso produzia 200,0 em estado Normal. Ler NoiseFloor_dBFS por chave sem
+    // honrar o estado produziria +290,99 dB -- a DV-5 reencarnada no MS-10.
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& z = cap.captured[StimulusId::ST09_Silence];
+        std::fill(z.begin(), z.end(), 0.0);                     // silencio digital bit-exato
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(b.find("MS-08")->quality == Quality::NotApplicable);
+        CHECK(q10(b) == Quality::NotApplicable);
+        CHECK(s != nullptr && s->quality == Quality::NotApplicable && !s->valuePresent);
+        CHECK(!(s->valuePresent && s->value > 200.0));          // nunca ~+291 dB
+        CHECK(std::fabs(nfDe(b) - (-300.0)) < 1e-9);            // a sentinela segue no campo do MS-08
+    }
+
+    // ---- (i) piso Error (ST-09 ausente) -> MS-10 em Error, sem escalar (comportamento preservado) ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured.erase(StimulusId::ST09_Silence);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        CHECK(q10(b) == Quality::Error);
+        CHECK(snrSc(b) == nullptr);
+    }
+
+    // ---- (j) COERENCIA no mesmo bundle: fonte unica de verdade ----
+    // SNR_dB deve ser exatamente 10*log10(ps) - NoiseFloor_dBFS lidos do MESMO bundle. Se o MS-10
+    // recomputasse o piso por outro caminho, esta identidade quebraria.
+    {
+        auto ms = [](const std::vector<double>& x) {
+            double a = 0.0; for (double v : x) a += v * v; return a / static_cast<double>(x.size());
+        };
+        const int seg = static_cast<int>(2.0 * FS + 0.5);
+        const std::vector<double>& t = capRef.captured.at(StimulusId::ST03_PureSine);
+        const double ps = ms(std::vector<double>(t.begin() + seg, t.begin() + 2 * seg));
+        CHECK_NEAR(snrSc(bRef)->value, 10.0 * std::log10(ps) - nfDe(bRef), 1e-9);
+    }
+
+    // ---- (k) NAO-REGRESSAO das familias vizinhas ----
+    {
+        CHECK_NEAR(nfDe(bRef), -95.799789257, 1e-6);            // MS-08 numericamente inalterado
+        const MetricResult* m9 = bRef.find("MS-09");
+        CHECK(m9 != nullptr);
+        for (const Scalar& s : m9->scalars)
+            if (s.key == "DynamicRange_dB") {
+                CHECK_NEAR(s.value, 86.789489300, 1e-6);        // MS-09 inalterado
+                CHECK(s.estimate == EstimateNature::LowerBound);// EstimateNature intocado
+            }
+        const Scalar* s10 = snrSc(bRef);
+        CHECK(s10 != nullptr && s10->estimate == EstimateNature::Point);  // P1-005 nao cria LowerBound
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);
