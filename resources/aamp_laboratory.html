@@ -1480,10 +1480,25 @@ const LabEngine={
          valuePresent:present,estimateNature:estimateOf(m09)}],curves:[]};   // P1-009: 3º eixo do contrato
       byId[mr09.id]=mr09; mr09.scalars.forEach(s=>{scalars[s.key]=s;});
     }
-    if(st03&&st03.wav&&st09&&st09.wav){   // MS-10: captura de ST-03 (tom) + resultado oficial da MS-08 (piso)
+    {   // MS-10: captura de ST-03 (tom) + resultado oficial da MS-08 (piso)
       // P1-005: a segunda entrada deixa de ser a captura crua do ST-09 e passa a ser o RESULTADO
       // OFICIAL da MS-08 — mesma dependência de família já usada pela MS-09.
-      const m10=computeMS10({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate}, m08result);
+      //
+      // PRECEDÊNCIA ESTRUTURAL DO CORE (AnalysisEngine::snr, CC-A). O Core testa AMBAS as entradas
+      // requeridas ANTES de calcular — `if (sig == end || noi == end) { quality = Error; return; }` —
+      // e a família SEMPRE existe no bundle. Levantado empiricamente:
+      //     ST-03 e ST-09 presentes -> conforme o piso (Normal / LowConfidence / NotApplicable)
+      //     ST-09 ausente           -> Error
+      //     ST-03 ausente           -> Error
+      //     ambos ausentes          -> Error
+      // A montagem reproduz essa precedência integralmente, e não um `else` particular para o ST-09:
+      // QUALQUER ausência de entrada requerida produz a família em Error. É seguro emiti-la sempre
+      // porque `LabEngine.run` só é invocado por `fromEvidence` — o mesmo domínio de entrada do
+      // `computeAllMetrics` do Core (uma sessão de caracterização), nunca uma importação avulsa.
+      const temSt03=!!(st03&&st03.wav), temSt09=!!(st09&&st09.wav);
+      const m10=(temSt03&&temSt09)
+        ? computeMS10({samples:st03.wav.samples, sampleRate:st03.wav.sampleRate}, m08result)
+        : {quality:'Error', snr_db:null, valuePresent:false};   // ausência estrutural -> Error
       // P1-005/CC-B: os estados deixam de ser literais 'Normal'/true e passam a vir da própria
       // família — sem isto o contrato do operando não alcançaria o resultado JS.
       const present10=m10.valuePresent===true;

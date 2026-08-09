@@ -1146,13 +1146,29 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
         CHECK(std::fabs(nfDe(b) - (-300.0)) < 1e-9);            // a sentinela segue no campo do MS-08
     }
 
-    // ---- (i) piso Error (ST-09 ausente) -> MS-10 em Error, sem escalar (comportamento preservado) ----
+    // ---- (i) PRECEDENCIA ESTRUTURAL: ausencia de QUALQUER entrada requerida -> Error ----
+    // O Core testa AMBAS as entradas ANTES de calcular e a familia SEMPRE EXISTE no bundle. Esta e a
+    // referencia normativa que o LabEngine tem de reproduzir (CC-A): a divergencia detectada na
+    // validacao independente do P1-005 era o JS OMITIR a familia quando o ST-09 faltava, em vez de
+    // publica-la em Error. As tres combinacoes sao verificadas para que a regra fique fixada como
+    // PRECEDENCIA, e nao como um caso particular do ST-09.
     {
-        CapturedSet cap = harness::makeLoopback(FS, 0, false);
-        cap.captured.erase(StimulusId::ST09_Silence);
-        ResultBundle b = eng.computeAllMetrics(cap);
-        CHECK(q10(b) == Quality::Error);
-        CHECK(snrSc(b) == nullptr);
+        struct Caso { const char* nome; bool tirarSt03; bool tirarSt09; };
+        const Caso casos[3] = {
+            { "ST-09 ausente",  false, true  },
+            { "ST-03 ausente",  true,  false },
+            { "ambos ausentes", true,  true  },
+        };
+        for (const Caso& k : casos) {
+            CapturedSet cap = harness::makeLoopback(FS, 0, false);
+            if (k.tirarSt03) cap.captured.erase(StimulusId::ST03_PureSine);
+            if (k.tirarSt09) cap.captured.erase(StimulusId::ST09_Silence);
+            ResultBundle b = eng.computeAllMetrics(cap);
+            CHECK(b.find("MS-10") != nullptr);          // a familia EXISTE mesmo sem as entradas
+            CHECK(q10(b) == Quality::Error);
+            CHECK(snrSc(b) == nullptr);                 // Error nao emite escalar no Core
+            CHECK(b.metrics.size() == 15);              // o bundle continua completo
+        }
     }
 
     // ---- (j) COERENCIA no mesmo bundle: fonte unica de verdade ----
