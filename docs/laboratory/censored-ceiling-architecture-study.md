@@ -1,6 +1,7 @@
 # Estudo Arquitetural — Representação de Teto Censurado (MS-09)
 
-> **Status:** ESTUDO PRÉ-DECISÃO **concluído**, seguido de **DECISÃO RATIFICADA** (§15).
+> **Status:** ESTUDO PRÉ-DECISÃO **concluído**, **DECISÃO RATIFICADA** (§15) e **ESTÁGIO 1
+> IMPLEMENTADO E ENCERRADO** (§16). O **estágio 2 permanece aberto**.
 > **Escopo:** analisa *como* representar a natureza unilateral de uma estimativa de Dynamic Range
 > quando o ensaio não demonstra saturação. Não altera a definição normativa da grandeza, que
 > permanece em [`dynamic-range-definition.md`](./dynamic-range-definition.md).
@@ -8,11 +9,12 @@
 >
 > **Preservação do texto pré-decisão.** As §§1–14 registram a investigação **como foi conduzida,
 > antes da decisão**, e não devem ser reescritas retrospectivamente. A decisão normativa que dela
-> resultou está isolada na **§15**. Onde a investigação corrigiu uma premissa anterior, a correção
+> resultou está isolada na **§15**, e o desfecho de implementação na **§16**. Onde a investigação corrigiu uma premissa anterior, a correção
 > está registrada como tal — a premissa original é preservada, não apagada.
 >
-> **Nenhuma implementação acompanha este documento.** Nenhum código, teste, exportação, contrato,
-> estímulo ou Evidence Package foi alterado em qualquer momento do estudo.
+> **Nenhuma implementação acompanhou o estudo.** Nenhum código, teste, exportação, contrato,
+> estímulo ou Evidence Package foi alterado em qualquer momento da investigação (§§1–15). A
+> implementação do **estágio 1** veio depois, em item próprio, e está registrada na **§16**.
 
 ---
 
@@ -382,3 +384,52 @@ bloqueia P1-005 nem P1-006**.
 de `Scalar` não é**. A conclusão registrada no P1-004 fica **refinada, não invalidada**.
 
 **Nada foi implementado.** A ratificação é exclusivamente normativa e documental.
+
+---
+
+## 16. Encerramento do Estágio 1 — **IMPLEMENTADO E VALIDADO**
+
+> **As §§1–15 permanecem intactas** como registro pré-decisão e da ratificação. Esta seção acrescenta
+> **apenas o desfecho de implementação** e não reescreve nada do que veio antes.
+> Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento —
+> P1-009, Estágio 1*.
+
+**O que foi entregue.** A recomendação **D** da §9 foi implementada exatamente como ratificada:
+`Scalar` passou a possuir uma **natureza tipada da estimativa** — `Point` · `LowerBound` ·
+`UpperBound`, com **`Point` por padrão** —, **ortogonal** a `Quality` e a `valuePresent`. O MS-09
+declara `Point` apenas quando a saturação foi demonstrada **imediatamente acima** do maior degrau
+válido; em qualquer outra situação declara `LowerBound`.
+
+**Confirmação do achado que reordenou o problema.** A previsão registrada no início deste estudo —
+*"o teto censurado não é um caso de borda: é o regime dominante"* — foi confirmada na implementação:
+em cadeia de ganho unitário o resultado é `LowerBound`, e só passa a `Point` quando o ganho leva
+algum degrau ao fundo de escala.
+
+**A premissa refinada da §4.1 sustentou-se na prática.** O membro acrescentado ao final de `Scalar`
+**não escapou para nenhuma saída**: dois bundles que diferem apenas na natureza produzem CSV escalar
+**byte-idêntico**, `ReportModel` idêntico e `DashboardModel` idêntico — verificado por teste
+permanente. Foi essa distinção entre **campo novo** e **escalar novo** que tornou possível entregar a
+ciência sem tocar a exportação.
+
+**Arranjo adicional identificado na implementação.** A §1 havia enumerado três condições; a
+implementação revelou uma quarta — `C = ∅` **e** `s* <` último degrau, quando degraus superiores são
+inválidos por captura truncada ou ausência de energia in-band. Foi classificada como **`LowerBound`**
+por aplicação direta do princípio ratificado, e a lacuna foi fechada por evidência direta no commit
+de teste `a1751011db5f83c5e2258374adee713642bf24f9` (TC-047, caso 1b), com controle discriminante em
+ganho ×2. *Registro de honestidade metodológica: a enumeração original do estudo era incompleta.*
+
+**Testes.** As seis proteções propostas na §12 foram implementadas em **TC-047**, incluindo a
+invariância de exportação (§12.3) e o controle negativo relacionado a NaN (§12.5) — este último
+demonstrando que a classificação depende **apenas de índices**, nunca de comparação de `double`.
+**F10 permanece aberto e não foi corrigido**; nenhuma sanitização de entrada foi acrescentada.
+
+**Validação independente no Windows — APROVADO.** Commit
+`a1751011db5f83c5e2258374adee713642bf24f9`, `Release`, `dirty = false`, 0 warnings / 0 erros;
+`aamp_headless_suite` **773 checks / 0 falhas**; `aamp_scientific_validation` **8 checks / 0
+falhas**; CTest **2/2**; TC-030 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043 · TC-046 · TC-047.
+
+**Estágio 2 — ABERTO.** A recomendação **A** da §9 — `DynamicRange_stepIndex` e
+`DynamicRange_firstClippedIndex` como escalares públicos — **não foi implementada** e permanece como
+evolução futura, junto da eventual integração com exportação e interface (§10). A conclusão da §11
+sobre sequenciamento mantém-se: **P1-005 e P1-006 estão liberados; P1-007 deve reutilizar esta
+taxonomia em vez de criar outra.**

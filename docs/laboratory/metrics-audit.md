@@ -1311,7 +1311,7 @@ deverá **preservar os fatos primários já disponíveis durante o MS-09** e dec
 
 | ID | Achado | Estado |
 |---|---|:--:|
-| **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | 🟡 **Arquitetura decidida em P1-009** (§L); **implementação não iniciada** |
+| **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | ✅ **Estágio 1 CONCLUÍDO e validado no Windows** (§M); **Estágio 2 aberto** |
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura contendo `NaN` propaga-se pelo estimador e chega ao contrato rotulada como medição válida | 🔴 **Aberto** (decisão **D4**: registrar, não corrigir) |
 | **DV-9** | **Assimetria legítima da fonte ST-08** entre Core (regenera ⇒ ramo inalcançável) e reprocessamento (lê do pacote ⇒ pode faltar) | 🟡 **Legítima e preservada** (decisão **D5**) |
 | **DV-8** | Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300` | 🔴 **Aberto — Pilar 2** |
@@ -1332,6 +1332,9 @@ enum `Quality`, exportação, Evidence Package e apresentação.
 > **Status: DECISÕES RATIFICADAS.** Documentação apenas — **nenhum** código, teste, estímulo,
 > frontend, exportação, Evidence Package, contrato (`MetricResult`/`Scalar`) ou `Quality` foi
 > alterado. Nenhuma nova caracterização física foi realizada.
+> **Situação de implementação (2026-08-08):** o **Estágio 1** desta decisão está **CONCLUÍDO e
+> validado independentemente no Windows** — ver *Registro de Encerramento — P1-009, Estágio 1* (§M).
+> O **Estágio 2 continua aberto**.
 > **Origem:** decisão **D** do MS-09 (teto censurado), desmembrada do **P1-004** por fronteira
 > arquitetural, mais a necessidade transversal evidenciada pelo **MS-10 / P1-007**.
 > **Base:** [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md),
@@ -1377,6 +1380,7 @@ Sejam `V` o conjunto de degraus com estimativa in-band válida, `C` o dos rejeit
 | 1 | `C ≠ ∅` **e** `min(C) = s* + 1` | **`Point`** | **teto observado** — a saturação foi demonstrada imediatamente após o maior degrau válido, o que permite tratar o valor como estimativa pontual segundo o contrato atual |
 | 2 | `C = ∅` **e** `s* = último degrau` | **`LowerBound`** | **teto censurado pelo limite superior do ensaio** — representação científica `Dynamic Range ≥ X dB`, **não** `= X dB` |
 | 3 | `C ≠ ∅` **e** `min(C) > s* + 1` | **`LowerBound`** | saturação observada porém **não encaixotada** — ver L.3 |
+| 3b | `C = ∅` **e** `s* <` último degrau | **`LowerBound`** | degraus superiores inválidos por outra causa (captura truncada / sem energia in-band). *Arranjo não enumerado na ratificação original, identificado durante a implementação e resolvido por aplicação direta do princípio: sem saturação demonstrada não há estimativa pontual. Ratificado e coberto por TC-047 caso (1b) — ver §M.4.* |
 | 4 | `V = ∅` | *(irrelevante)* | `quality = NotApplicable`, `valuePresent = false`. **Ausência de valor nunca vira `LowerBound`** |
 
 ### L.3 Terceiro caso — decisão explícita
@@ -1441,6 +1445,9 @@ Prova registrada:
 
 ### L.6 Escopo do P1-009 — estágio 1 (registro de escopo futuro)
 
+> **EXECUTADO** (2026-08-08). O escopo abaixo foi implementado integralmente e sem excedentes;
+> a verificação item a item está no *Registro de Encerramento — P1-009, Estágio 1* (§M).
+
 Quando autorizado, o estágio 1 deverá conter **exatamente**:
 
 - extensão **tipada** de `Scalar` com a natureza da estimativa, padrão `Point`;
@@ -1491,6 +1498,143 @@ O comentário em `AnalysisEngine.cpp:790-792` **não é alterado agora**. Perman
 textual**, a ser corrigida quando uma intervenção **funcional** futura tocar a região correspondente.
 **Nunca em commit isolado** — alterar código validado sem gate funcional é churn sobre binário
 auditado.
+
+---
+
+## Registro de Encerramento — P1-009, Estágio 1 (Natureza da Estimativa) — **NORMATIVO**
+
+> **Estado: ESTÁGIO 1 CONCLUÍDO — validado independentemente no Windows.**
+> **Qualificador obrigatório:** este registro encerra **exclusivamente o Estágio 1**. O **Estágio 2**
+> (exposição/auditabilidade dos fatos primários) **continua aberto** — ver §M.7. Nenhuma menção a
+> "P1-009 encerrado" pode ser feita sem esse qualificador.
+> **Referência normativa:** `dynamic-range-definition.md` §6 (decisão **D** / natureza da estimativa)
+> · *Registro de Decisão — P1-009* (§L).
+> **Pré-requisitos cumpridos:** **P1-004 — núcleo semântico** (`6ed71e8`).
+
+### M.1 A solução do Estágio 1
+
+`Scalar` passa a possuir uma **natureza tipada da estimativa**, **ortogonal** a `Quality` e a
+`valuePresent` — o **terceiro eixo** do contrato:
+
+| Eixo | Responde a |
+|---|---|
+| `Quality` | a medição é **válida / confiável**? |
+| `valuePresent` | **existe** um valor numericamente interpretável? |
+| `EstimateNature` | o que o valor **afirma** sobre a grandeza? |
+
+Taxonomia: **`Point`** (`= X`) · **`LowerBound`** (`≥ X`) · **`UpperBound`** (`≤ X`).
+
+**`Point` é o padrão** e **preserva integralmente o comportamento das demais métricas**. O membro foi
+acrescentado **ao final** de `Scalar` com inicializador padrão: nenhuma das inicializações agregadas
+existentes precisou ser editada, e **toda métrica que não se pronuncia continua sendo, por definição,
+uma estimativa pontual**.
+
+### M.2 Regra do MS-09 — ratificada e implementada
+
+Com `V` = degraus de estimativa válida, `C` = degraus rejeitados por saturação, `s*` = selecionado e
+`min(C)` = primeiro saturado:
+
+| Condição | Resultado |
+|---|---|
+| teto observado / **encaixotado** — `C ≠ ∅` e `min(C) = s* + 1` | **`Point`** |
+| teto **não atingido** — `C = ∅` e `s* = último degrau` | **`LowerBound`** |
+| saturação observada mas **não encaixotada** — `C ≠ ∅` e `min(C) > s* + 1` | **`LowerBound`** |
+| `C = ∅` e `s* <` último degrau | **`LowerBound`** |
+| sem valor caracterizável — `V = ∅` | `NotApplicable` · `valuePresent = false` |
+
+### M.3 Combinações válidas e intencionais dos três eixos
+
+Registra-se **explicitamente** que
+
+```
+quality      = Normal
+valuePresent = true
+estimate     = LowerBound
+```
+
+é uma **combinação válida e intencional**: um teto censurado é uma medição **plenamente confiável**,
+com valor **existente**; apenas a *quantificação lógica* é unilateral.
+
+Registra-se também que
+
+```
+quality      = LowConfidence
+valuePresent = true
+estimate     = LowerBound
+```
+
+é **representável** — teto censurado sobre piso de observação insuficiente —, o que **comprova a
+independência dos três eixos**. Permanece **vedado** representar unilateralidade por `LowConfidence`
+ou por um valor novo de `Quality`.
+
+### M.4 Evidência que fechou a lacuna do quarto ramo
+
+Durante a implementação foi sinalizado um arranjo **não enumerado** na autorização original:
+`C = ∅` **e** `s* <` último degrau — degraus superiores inválidos por captura truncada ou ausência de
+energia in-band. Ele foi classificado como **`LowerBound`** por aplicação direta do princípio
+ratificado (sem saturação demonstrada não há estimativa pontual), e a regra passou a constar da §M.2.
+
+O commit de teste **`a1751011db5f83c5e2258374adee713642bf24f9`** fecha essa lacuna de forma
+**direta e específica**. O TC-047, caso (1b), demonstra:
+
+- preservação dos degraus **0..3** do loopback unitário;
+- **truncamento antes do degrau 4** (`resize(4·seg)`), verificado por asserção de tamanho;
+- **`peak < 1.0`** em todas as amostras presentes ⇒ **`C = ∅`**, verificado por asserção;
+- degraus **4..7 inexistentes**, logo impedidos de integrar `V`;
+- **`s* = 3`**, confirmado pela diferença de **≈ 16 dB** contra o caso (1) — exatamente a distância
+  entre o degrau 3 (−22 dBFS) e o degrau 7 (−6 dBFS);
+- resultado **`Normal` + `valuePresent = true` + `LowerBound`**.
+
+**Controle discriminante** registrado no mesmo teste, caso (2): ganho ×2 produz `C ≠ ∅` com
+`min(C) = s* + 1` ⇒ **`Point`**. Sem ele, o caso (1b) poderia passar por um classificador que
+devolvesse `LowerBound` incondicionalmente.
+
+### M.5 Validação independente no Windows — **APROVADO**
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| HEAD local = remoto | `a1751011db5f83c5e2258374adee713642bf24f9` |
+| Plataforma / configuração | Windows · **`Release`** · `dirty = false` |
+| Build | **0 warnings, 0 erros** |
+| `aamp_headless_suite` | **773 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 aprovados** |
+| Casos confirmados | **TC-030 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043 · TC-046 · TC-047** |
+
+### M.6 Não-regressões verificadas
+
+| Item | Estado |
+|---|---|
+| `DynamicRange_dB` na cadeia padrão | **≈ 86,789489300 dB — numericamente inalterado** |
+| CSV escalar | **invariável** — dois bundles que diferem apenas na natureza produzem saída **byte-idêntica** |
+| `ReportModel` (PDF) | **invariável** |
+| `DashboardModel` | **invariável** |
+| Evidence Package | **inalterado** |
+| Escalares públicos | **nenhum novo** |
+| `Quality` | **inalterado** |
+| Demais métricas | continuam **`Point` por padrão**, sem edição alguma |
+| **F10 / NaN** | **permanece ABERTO e não corrigido** — a classificação é derivada de índices, nunca de comparação de `double`, de modo que o problema **não foi ampliado** |
+
+### M.7 Estágio 2 — **CONTINUA ABERTO**
+
+| | Estado |
+|---|---|
+| **P1-009 — Estágio 1** | ✅ **CONCLUÍDO E VALIDADO INDEPENDENTEMENTE NO WINDOWS** |
+| **P1-009 — Estágio 2** | 🔴 **ABERTO** — evolução futura |
+
+O Estágio 2 permanece como evolução futura para **exposição/auditabilidade dos fatos primários** e
+**eventual integração com exportação/UI**. `DynamicRange_stepIndex` e
+`DynamicRange_firstClippedIndex` **não foram implementados** e **não estão autorizados**.
+
+### M.8 Sequenciamento confirmado
+
+- **P1-009 Estágio 1 — concluído.**
+- **P1-009 Estágio 1 continua sendo pré-requisito CUMPRIDO de P1-007.**
+- **P1-005 e P1-006 permanecem independentes** desta representação e **podem prosseguir**.
+- **P1-007 não deve iniciar** antes de **reutilizar a taxonomia de `EstimateNature`** — é vedado
+  inventar uma segunda solução para o mesmo fenômeno (`snrDb()` devolvendo `200 dB` quando `pn ≤ 0`
+  é candidato a `LowerBound`; ver §L.7).
 
 ---
 

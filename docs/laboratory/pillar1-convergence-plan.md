@@ -27,7 +27,7 @@
 | **P1-006** | MS-10 | **D2/V8** | algoritmo | Moderado | Numerador = bloco de 1 kHz **inteiro** (S+D+N) | **S/N estrito** (energia do tom isolada) | Coordenar com **TC-033** |
 | **P1-007** | MS-10 | **D4** | validação / arquitetura | Moderado | SNR sempre `Normal`/`Error`; saturação `pn≈0` (200 dB) não rebaixada; SNR baixo não reduz confiança | Propagação de estados de qualidade; SNR insuficiente reduz confiança. **Item aberto (D4):** definir o estado para `pn≈0` **durante a execução** | P1-005; **decisão aberta `pn≈0`** |
 | **P1-008** | MS-10 | **V1** (via D4) | interface / validação | Moderado | Trust ladder só testa teto (clipping/pico) + `lowConf`; captura silenciosa lê "Confiável" | **Porta inferior**: sinal que não se eleva acima do piso (via SNR) **nunca** lê "Confiável" | P1-005, P1-006, P1-007 |
-| **P1-009** | MS-09 *(transversal)* | **D** (teto censurado) | contrato / semântica | Moderado | Uma estimativa **unilateral** é publicada como se fosse pontual: `DynamicRange_dB` afirma `DR = X` mesmo quando o ensaio só sustenta `DR ≥ X`. O mesmo ocorre no MS-10 (`pn≤0` → `200 dB`) | **Natureza da estimativa** tipada no nível de `Scalar` (`Point`/`LowerBound`/`UpperBound`), ortogonal a `Quality` e `valuePresent`; padrão `Point` | **P1-004** ✅ |
+| ~~**P1-009**~~ ✅ *(estágio 1)* | MS-09 *(transversal)* | **D** (teto censurado) | contrato / semântica | Moderado | ~~Uma estimativa **unilateral** é publicada como se fosse pontual: `DynamicRange_dB` afirma `DR = X` mesmo quando o ensaio só sustenta `DR ≥ X`~~ *(o MS-10, `pn≤0` → `200 dB`, permanece — P1-007)* | **ESTÁGIO 1 CONCLUÍDO** — natureza da estimativa tipada no nível de `Scalar` (`Point`/`LowerBound`/`UpperBound`), ortogonal a `Quality` e `valuePresent`, padrão `Point`. **Validado independentemente no Windows.** **Estágio 2 (fatos primários / exportação) permanece aberto** | **P1-004** ✅ |
 
 **Restrições transversais (aplicáveis a todos os itens):**
 - **CC-A (V6):** cada correção deve ser aplicada **consistentemente nas duas implementações** — C++
@@ -45,7 +45,7 @@
 - **Normalização Espectral (FFT / ENBW)** — P1-001
 - **Noise Floor (MS-08)** — P1-002 *(consome a normalização)*
 - **Dynamic Range (MS-09)** — P1-003, P1-004
-- **Natureza da estimativa (contrato transversal)** — P1-009 *(origem no MS-09; consumido por MS-10/P1-007)*
+- **Natureza da estimativa (contrato transversal)** — P1-009 ✅ *estágio 1* *(origem no MS-09; a ser consumido por MS-10/P1-007)*
 - **SNR (MS-10)** — P1-005, P1-006, P1-007
 - **Trust Ladder** — P1-008
 - **Export** — verificação de conformidade (Noise Floor dBFS + banda/condição; DR dB + `NotApplicable`;
@@ -71,7 +71,7 @@
              │                           │
              ▼                           │
    Natureza da estimativa                │
-   P1-009 (estágio 1) ───────────────────┤
+   P1-009 (estágio 1) ✅ ────────────────┤
                                          ▼
                                      P1-007
                                          │
@@ -97,7 +97,7 @@
         ↓                                                          │ após o Noise Floor
 4  SNR (MS-10)                                [P1-005 → P1-006]    ┘
         ↓
-4b Natureza da estimativa                     [P1-009 estágio 1]   — paralelo a 4
+4b Natureza da estimativa                     [P1-009 estágio 1] ✅ — paralelo a 4 (CONCLUÍDO)
         ↓
 4c SNR: estados de qualidade                  [P1-007]             — consome 4b
         ↓
@@ -188,8 +188,11 @@ da taxonomia produziria uma segunda solução incompatível.
 | **P1-002** | ✅ **ENCERRADO** | Aprovado e concluído no escopo autorizado de **cálculo, contrato semântico e exportação** (2026-08-07). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-002*. |
 | **P1-003** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Teto restrito à banda 20–20 k pelo mesmo estimador do MS-08 (`ffa739c`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-003*. |
 | **P1-004** | ✅ **NÚCLEO SEMÂNTICO CONCLUÍDO — validado independentemente no Windows** | Estados do piso propagados ao MS-09; `teto ≤ piso` → não caracterizável; **DV-5 fechada** (`6ed71e8`). **Qualificador obrigatório:** encerra **apenas o núcleo semântico**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-004*. |
-| **P1-009** | 🟡 **ARQUITETURA RATIFICADA — implementação não iniciada** | Desmembrado do P1-004 (decisão **D**). Estudo aprovado; taxonomia `Point`/`LowerBound`/`UpperBound` decidida; regra formal dos casos do MS-09 fixada. **Pré-requisito de P1-007**; **não bloqueia P1-005/P1-006**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*; estudo em [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md). |
-| P1-005 … P1-008 | ⬜ Não iniciados | — |
+| **P1-009 — estágio 1** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Natureza tipada da estimativa em `Scalar`, ortogonal a `Quality` e `valuePresent` (`a175101`). **Qualificador obrigatório:** encerra **apenas o estágio 1**. **Pré-requisito de P1-007 — CUMPRIDO.** Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-009, Estágio 1*. |
+| **P1-009 — estágio 2** | 🔴 **ABERTO — não iniciado** | Exposição/auditabilidade dos fatos primários (`DynamicRange_stepIndex`, `DynamicRange_firstClippedIndex`) e eventual integração com exportação/UI. Diferível ao Pilar 3. |
+| **P1-005 · P1-006** | ⬜ Não iniciados — **liberados** | Independentes da representação de natureza; podem prosseguir. |
+| **P1-007** | ⬜ Não iniciado | **Não deve iniciar sem reutilizar a taxonomia de `EstimateNature`** — é vedado inventar segunda solução para o mesmo fenômeno. |
+| **P1-008** | ⬜ Não iniciado | — |
 
 ### P1-001 — síntese do encerramento
 
@@ -237,7 +240,7 @@ da taxonomia produziria uma segunda solução incompatível.
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura com `NaN` chega ao contrato rotulada como medição válida | — (registrar, **não corrigir** — decisão **D4** do P1-004) | — |
 | **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792` afirmando que a sentinela existe "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | — (corrigi-lo modificaria código já validado) | — |
-| **Decisão D** | **Representação do teto censurado** — arquitetura **ratificada em P1-009**; implementação não iniciada | — (**P1-009**; pré-requisito de P1-007) | P1-005, P1-006 |
+| ~~**Decisão D**~~ ✅ *(estágio 1)* | **Representação do teto censurado** — **estágio 1 CONCLUÍDO e validado no Windows** (`a175101`); **estágio 2 aberto** (fatos primários / exportação) | — (pré-requisito de P1-007 **cumprido**) | P1-005, P1-006 |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
 | ~~**DV-5**~~ ✅ | Sentinela `−300` lida como medição pelo MS-09 — **RESOLVIDA no P1-004** (sentinela conservada no campo por **D3**; nenhum consumidor normativo a interpreta) | — (fechada) | — |
 | **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família | — | — |
@@ -279,6 +282,13 @@ da taxonomia produziria uma segunda solução incompatível.
 > contrário de um **escalar** novo. **Implementação não iniciada.** Registro completo em
 > [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*.
 >
+> **Encerramento (P1-009 estágio 1, 2026-08-08).** Implementado e **validado independentemente no
+> Windows** (`a175101`): a natureza da estimativa é hoje um campo tipado de `Scalar`, e o MS-09
+> declara `LowerBound` sempre que a saturação não foi demonstrada imediatamente acima do maior
+> degrau válido — o que, com o ST-08 atual, é o **regime normal**. O **estágio 2** (fatos primários
+> e exportação) **permanece aberto**. **P1-005 e P1-006 estão liberados; P1-007 deve reutilizar a
+> taxonomia, não criar outra.**
+>
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução — serão tratados no
 > Pilar 2 e no P1-008.
 
@@ -319,7 +329,36 @@ da taxonomia produziria uma segunda solução incompatível.
   qualquer escalar novo e `MetricResult` **não tem superfície de metadados internos** ⇒ a decisão
   **D** foi **desmembrada, não abandonada nem implicitamente implementada**.
 
-### P1-009 — síntese da ratificação arquitetural *(sem implementação)*
+### P1-009 — síntese do encerramento *(estágio 1)*
+
+> **Qualificador obrigatório:** o P1-009 só pode ser denominado "encerrado" com a ressalva explícita
+> de que se trata do **estágio 1**. O **estágio 2 permanece aberto**.
+
+- **Escopo entregue:** `Scalar` passa a possuir **natureza tipada da estimativa**, o **terceiro eixo**
+  do contrato — `Quality` (validade/confiança), `valuePresent` (existência do valor) e
+  `EstimateNature` (o que o valor afirma). Taxonomia `Point` · `LowerBound` · `UpperBound`, com
+  **`Point` como padrão**, preservando integralmente o comportamento das demais métricas.
+- **Combinações registradas como válidas e intencionais:** `Normal + valuePresent=true + LowerBound`
+  (teto censurado é medição plenamente confiável) e `LowConfidence + valuePresent=true + LowerBound`
+  (comprova a **independência dos três eixos**).
+- **Regra do MS-09:** teto observado/encaixotado → `Point`; teto não atingido → `LowerBound`;
+  saturação observada mas não encaixotada → `LowerBound`; `C = ∅` com `s* <` último degrau →
+  `LowerBound`; sem valor caracterizável → `NotApplicable` / `valuePresent=false`.
+- **Lacuna fechada:** o commit de teste `a1751011db5f83c5e2258374adee713642bf24f9` demonstra
+  diretamente o quarto ramo (truncamento em `0..3`, `peak < 1.0` ⇒ `C = ∅`, `s* = 3` confirmado por
+  Δ ≈ 16 dB, resultado `Normal + presente + LowerBound`), com controle discriminante em ganho ×2
+  (`C ≠ ∅`, `min(C) = s*+1` ⇒ `Point`).
+- **Commit validado:** `a1751011db5f83c5e2258374adee713642bf24f9` · **validação independente
+  Windows: APROVADO** (`Release`, `dirty=false`, 0 warnings / 0 erros; **773 + 8 checks**; CTest 2/2;
+  TC-030/034/038/039/041/043/046/047).
+- **Não-regressões:** `DynamicRange_dB ≈ 86,789489300 dB` inalterado; CSV, `ReportModel` e
+  `DashboardModel` **invariáveis**; Evidence Package inalterado; nenhum escalar público novo;
+  `Quality` inalterado; **F10/NaN permanece aberto e não corrigido** — a natureza é derivada de
+  índices, nunca de comparação de `double`.
+- **Estágio 2 — ABERTO:** `DynamicRange_stepIndex` e `DynamicRange_firstClippedIndex` **não** foram
+  implementados; exposição/auditabilidade e integração com exportação/UI ficam para etapa futura.
+
+#### Ratificação arquitetural que precedeu a implementação
 
 - **Arquitetura aprovada:** **D + A em dois estágios**.
   **Estágio 1 (D)** — qualificador **tipado no nível de `Scalar`**, ortogonal a `Quality` e

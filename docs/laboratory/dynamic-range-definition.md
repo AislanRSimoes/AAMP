@@ -132,18 +132,30 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
   | `C ≠ ∅` e `min(C) = s* + 1` — saturação demonstrada imediatamente acima | **`Point`** |
   | `C = ∅` e `s* = último degrau` — censura pelo limite superior do ensaio | **`LowerBound`** |
   | `C ≠ ∅` e `min(C) > s* + 1` — saturação observada mas **não encaixotada** | **`LowerBound`** |
+  | `C = ∅` e `s* <` último degrau — degraus superiores inválidos por outra causa | **`LowerBound`** |
   | `V = ∅` — sem valor | *(irrelevante)* — `NotApplicable`, `valuePresent = false` |
 
-  A **ausência de valor nunca é convertida em `LowerBound`**. O terceiro caso poderá futuramente
-  admitir representação mais rica (intervalo); essa taxonomia **não** é introduzida agora.
+  A **ausência de valor nunca é convertida em `LowerBound`**. O caso de **saturação não encaixotada**
+  poderá futuramente admitir representação mais rica (intervalo); essa taxonomia **não** é
+  introduzida agora.
 
   **Registro de regime.** Com o ST-08 atual — escada de 8 degraus com pico máximo de **−6 dBFS** —,
   cadeias de **ganho unitário ou inferior a +6 dB nunca demonstram saturação**. O teto censurado é,
   portanto, o **regime normal** dessas medições, e **não** um caso raro. É este o regime em que a
   propriedade condicional `Dynamic Range ≥ SNR` (decisão **B**) perde garantia.
 
-  Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*;
-  estudo em [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md).
+  **Conformidade de implementação (P1-009, estágio 1), 2026-08-08.** A natureza da estimativa passou
+  a ser **efetivamente implementada** como campo tipado de `Scalar`, ortogonal a `Quality` e a
+  `valuePresent`, com `Point` por padrão. O MS-09 declara `LowerBound` sempre que a saturação não foi
+  demonstrada imediatamente acima do maior degrau válido. Commit `a175101`, protegido por
+  **TC-047**, validado independentemente no Windows. O valor de `DynamicRange_dB` permanece
+  numericamente inalterado, e **exportação, relatório, dashboard e Evidence Package continuam
+  invariáveis** — o **estágio 2** (fatos primários e integração com exportação/UI) **permanece
+  aberto**.
+
+  Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento —
+  P1-009, Estágio 1*; decisão em *Registro de Decisão — P1-009*; estudo em
+  [`censored-ceiling-architecture-study.md`](./censored-ceiling-architecture-study.md).
 - **Exportação.** O Dynamic Range é exportado como um **escalar em dB**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz), da **ausência de ponderação** e da **condição** (teto sem saturação; piso em
   silêncio). É **homogêneo** com as demais métricas expressas em dB.
@@ -222,3 +234,11 @@ devem acompanhar o valor sempre que ele for reportado ou comparado.
 > qualidade, de exportação, de interface, de contrato ou de estímulo acompanha esta ratificação — a
 > implementação **não** foi iniciada. Registro completo em
 > [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-009*.
+>
+> **Conformidade de implementação (P1-009 — estágio 1), 2026-08-08.** A natureza da estimativa está
+> **implementada e validada independentemente no Windows** (`a175101`, protegida por **TC-047**):
+> campo tipado de `Scalar`, `Point` por padrão, com o MS-09 declarando `Point` ou `LowerBound`
+> conforme a regra da **§6**. `DynamicRange_dB` permanece numericamente inalterado; exportação,
+> relatório, dashboard e Evidence Package permanecem invariáveis. **O estágio 2 — exposição dos
+> fatos primários e integração com exportação/UI — permanece ABERTO.** Registro completo em
+> [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-009, Estágio 1*.
