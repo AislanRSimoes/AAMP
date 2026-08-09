@@ -185,7 +185,9 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 ### Decisões aprovadas
 
-- **D1 — Definição de ruído.** A definição normativa de ruído do MS-10 passa a ser **band-limited,
+- **D1 — Definição de ruído.** ✅ **IMPLEMENTADA no P1-005** (`4825fcc`, validado independentemente
+  no Windows) — ver *Registro de Encerramento — P1-005* (§N).
+  A definição normativa de ruído do MS-10 passa a ser **band-limited,
   alinhada ao MS-08** (mesma banda 20 Hz–20 kHz). Uma verificação **independente** de energia fora da
   banda (DC, subsônicos, hum) permanece na **camada de Integridade** (não no `pn` do SNR). *Racional:
   consistência interna entre SNR e Noise Floor + comparabilidade normativa, sem perder detecção de
@@ -208,7 +210,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 | ID | Decisão aprovada | Recomendação origem | **Impacto da Implementação** | Aberto? |
 |----|------------------|---------------------|------------------------------|:------:|
-| **D1** | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **Altera algoritmo** · **Altera testes** · **Altera UI** · **Altera documentação** | — |
+| ~~**D1**~~ ✅ | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **EXECUTADA em P1-005** — algoritmo convergido (`pn` do MS-08), TC-048 criado, documentação atualizada. Checagem fora-de-banda na Integridade permanece fora do escopo | — |
 | **D2/V8** | S/N estrito; distorção fica com MS-05/06/07 | A | **Altera algoritmo** · **Altera testes** · **Altera documentação** | — |
 | **D3** | Manter output-referred | A | **Sem impacto de código** · **Altera documentação** | — |
 | **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — estado de `pn≈0` (→ P1, no máx. antes do P2); limiares → P2 |
@@ -229,6 +231,12 @@ exige um estímulo específico; ausência ⇒ `Error`.
 **MS-10 encerrado formalmente** como especificação aprovada, com **um único item em aberto**
 explicitamente rastreado: o estado de qualidade para `pn≈0` (D4). A implementação (Pilar 1) do MS-10
 deve seguir este registro como referência normativa.
+
+> **Situação de implementação (2026-08-08).** **D1 CONCLUÍDA** pelo **P1-005**, validada
+> independentemente no Windows (§N). **D3** não exigia código. **D2/V8** (numerador `S/N` estrito)
+> permanece com o **P1-006**, **liberado**. **D4** (`pn ≈ 0`) permanece com o **P1-007**, que deverá
+> **reutilizar a taxonomia `EstimateNature`** entregue pelo P1-009 estágio 1, em vez de criar uma
+> segunda solução. **D5** permanece no Pilar 2.
 
 ---
 
@@ -1635,6 +1643,184 @@ O Estágio 2 permanece como evolução futura para **exposição/auditabilidade 
 - **P1-007 não deve iniciar** antes de **reutilizar a taxonomia de `EstimateNature`** — é vedado
   inventar uma segunda solução para o mesmo fenômeno (`snrDb()` devolvendo `200 dB` quando `pn ≤ 0`
   é candidato a `LowerBound`; ver §L.7).
+
+---
+
+## Registro de Encerramento — P1-005 (Denominador do MS-10) — **NORMATIVO**
+
+> **Estado: CONCLUÍDO — validado independentemente no Windows.**
+> **Referência normativa:** *Registro de Decisão — MS-10* → **D1** (ruído *band-limited*, alinhado ao
+> MS-08) · `noise-floor-definition.md` §6 (o Noise Floor é o **ruído de referência** do SNR, **na
+> mesma banda**).
+> **Pré-requisitos cumpridos:** **AR-01** / **P1-001** (normalização energética) e **P1-002**
+> (estados semânticos do MS-08).
+
+### N.1 A solução científica
+
+O MS-10 **deixa de usar**
+
+```
+pn = meanSquare(ST-09 inteiro, 0 .. Nyquist)        ← banda LARGA
+```
+
+e passa a **consumir o Noise Floor oficial do MS-08**, já limitado à banda normativa
+**20 Hz–20 kHz**. A composição passa a ser:
+
+```
+pn      = 10^(NoiseFloor_dBFS / 10)
+SNR_dB  = 10 * log10(ps / pn)
+```
+
+com **`ps` inalterado nesta etapa**.
+
+**O MS-08 é a fonte única de verdade do denominador.** O MS-10 **não recomputa o ST-09** e **nenhuma
+segunda estimativa de Welch foi criada** — consome o resultado já publicado pela família que detém a
+definição do piso. A conversão é direta, sem fator de correção, porque as duas grandezas estão na
+**mesma escala absoluta**: somado sobre a banda inteira, o estimador do MS-08 reproduz `meanSquare`
+com erro de **0,0022 dB**, idêntico a −95 e a −60 dBFS. A única diferença sistemática é a **banda**
+(fração `(20k−20)/24k = 0,8325` → **−0,7962 dB** teórico contra **−0,7998 dB** medido).
+
+Antes do P1-005, as duas famílias **discordavam sobre o mesmo silêncio** — em até **52,8 dB**.
+
+### N.2 Resultados quantitativos de fechamento
+
+| Condição do ST-09 | SNR antes | SNR depois |
+|---|---:|---:|
+| ruído branco | ≈ **85,9897 dB** | ≈ **86,7895 dB** |
+| + 22 kHz a −40 dBFS | ≈ **34,0000 dB** | ≈ **86,7895 dB** |
+| + 5 Hz a −40 dBFS | ≈ **34,0000 dB** | ≈ **52,9384 dB** |
+| + 1 kHz *in-band* a −40 dBFS | ≈ **34,0000 dB** | ≈ **34,0000 dB** |
+
+O caso de **22 kHz** é o resultado central: energia ultrassônica não pertence à banda normativa, e o
+SNR volta a ser numericamente idêntico ao da cadeia limpa. O caso de **1 kHz** é a contraprova
+obrigatória: ruído **dentro** da banda continua degradando o SNR exatamente como antes — a correção
+**não** é rejeição indiscriminada de ruído.
+
+**O caso de 5 Hz é comportamento ESPERADO do estimador oficial do MS-08, não divergência
+remanescente do P1-005.** O componente está a 0,43 bin da resolução de 11,72 Hz e o lóbulo principal
+de Hann atravessa a borda de 20 Hz, de modo que a rejeição é **parcial (18,94 dB)** e não total. Essa
+é a característica de resolução do piso oficial, **herdada por construção** ao exigir alinhamento ao
+MS-08. Hann, Welch, tamanho de quadro, resolução espectral, banda e regras de inclusão de bins
+permanecem **intactos**.
+
+### N.3 Propagação semântica
+
+| MS-08 | MS-10 | `valuePresent` |
+|---|:--:|:--:|
+| `Normal` | `Normal` | `true` |
+| `LowConfidence` | `LowConfidence` | `true` |
+| `NotApplicable` / valor ausente | `NotApplicable` | `false` |
+| `Error` | `Error` | `false` / sem escalar válido |
+
+**A sentinela `−300 dBFS` não pode mais reaparecer como SNR artificial de ≈ 291 dB.** Ler
+`NoiseFloor_dBFS` por chave sem honrar `quality`/`valuePresent` produziria exatamente esse valor —
+a **DV-5 reencarnada no MS-10**. O contrato do operando, já consolidado no P1-004 para o MS-09,
+impede-o por construção.
+
+### N.4 CC-A — C++ ↔ JS
+
+A primeira validação independente do P1-005 (`09a9edc`) reprovou por **uma** divergência de
+montagem: com o ST-09 ausente o Core publicava `MS-10` em `Error`, enquanto o LabEngine **omitia a
+família**. O commit corretivo **`4825fcc`** fecha essa divergência, sem reabrir o cálculo —
+`computeMS10()` permaneceu **byte-idêntica** (2050 bytes) e `AnalysisEngine.cpp` não foi tocado.
+
+**Contrato final**, tanto no Core quanto semanticamente no LabEngine:
+
+```
+ST-03 ausente OU ST-09 ausente
+    → MS-10 EXISTE
+    → quality = Error
+    → valuePresent = false
+```
+
+A precedência foi levantada empiricamente e reproduzida integralmente — **qualquer** ausência de
+entrada requerida produz `Error`, e não apenas a do ST-09.
+
+**Diferença representacional PERMITIDA e explicitamente preservada:**
+
+| | `Error` |
+|---|---|
+| **Core** | família presente, **sem escalar** |
+| **JS** | `SNR_dB = null`, `valuePresent = false` |
+
+Para qualquer consumidor que verifique `valuePresent` o contrato é equivalente; é a mesma assimetria
+já registrada para o MS-09 desde o P1-004.
+
+Convergência verificada sobre entradas equivalentes em sete condições, comparando `SNR_dB`,
+`quality` e `valuePresent`, com coincidência até a **nona casa decimal**.
+
+### N.5 Proteção permanente — TC-048
+
+O **TC-048** protege o P1-005 e cobre:
+
+| Caso | Verifica |
+|---|---|
+| ruído branco | `Normal`, presente, ≈ 86,7895 dB |
+| 22 kHz | invariância em relação à cadeia limpa |
+| 5 Hz | rejeição **parcial** asserida explicitamente, sem exigir eliminação total |
+| 1 kHz *in-band* | controle contra rejeição indiscriminada — antigo e novo coincidem |
+| piso `LowConfidence` | propagação com valor preservado |
+| piso `NotApplicable` | sem valor; **e nunca ≈ 291 dB** |
+| ST-03 ausente | família existe, `Error`, sem escalar, bundle com 15 famílias |
+| ST-09 ausente | idem |
+| ambos ausentes | idem |
+| **controle negativo** | oráculo **independente** que reimplementa o `meanSquare` antigo, sem usar nenhuma função do produto, demonstrando a queda para ≈ 34 dB |
+| coerência | `SNR_dB = 10·log10(ps) − NoiseFloor_dBFS` no **mesmo bundle** — prova de fonte única |
+
+### N.6 Fronteiras preservadas
+
+- **`snrDb()` permaneceu inalterada** e continua sendo primitiva pública.
+- **TC-033** continua cobrindo a primitiva crua, sem uma linha alterada.
+- O **numerador `ps` permanece inalterado** e pertence ao **P1-006**.
+- **`EstimateNature` do MS-10 permanece `Point`** — o P1-005 não cria `LowerBound`.
+- **`pn ≤ 0 → 200` não foi reinterpretado**: o ramo foi reproduzido literalmente após a validação do
+  operando. *Fato registrado:* com o `pn` derivado do MS-08 ele é **estruturalmente inalcançável**
+  para operando válido (`NoiseFloor_dBFS` tem mínimo −300 dBFS ⇒ `pn ≥ 1e-30 > 0`, e `integFull == 0`
+  já retorna `NotApplicable` antes). **Nenhum caso artificial foi inventado** para exercitá-lo.
+- A **semântica de limite inferior continua reservada ao P1-007**.
+- **MS-08, MS-09, MS-13, ST-03 e ST-09 não foram alterados.**
+- **Exportação e Evidence Package permanecem estruturalmente inalterados.**
+
+### N.7 Validação independente no Windows — **APROVADO**
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| HEAD local = remoto | `4825fcc960475154acc89356801d0fc6e414ca64` |
+| Plataforma / configuração | Windows · **`Release`** · `GitDirty = false` |
+| Configuração e build | **0 warnings, 0 erros** |
+| `aamp_headless_suite` | **817 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 aprovados** |
+| Casos confirmados | **TC-030 · TC-033 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043 · TC-046 · TC-047 · TC-048** |
+
+### N.8 Rastreabilidade histórica dos Evidence Packages
+
+> Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** da captura original — o
+> formato não foi alterado e nenhum áudio preservado foi tocado.
+>
+> Entretanto, **o reprocessamento por versões posteriores pode produzir `SNR` diferente do
+> originalmente exportado**, devido à **correção científica do denominador** introduzida pelo
+> P1-005. Soma-se às causas já registradas para `MS-08` (P1-001) e `MS-09` (F9, P1-003, P1-004).
+> **Isto não é inconsistência da evidência: é evolução do estimador sobre a mesma observação.**
+> Todo resultado histórico deve ser interpretado **junto da versão/commit que o produziu**.
+
+### N.9 Achados que permanecem abertos — registrados, **não corrigidos**
+
+| ID | Achado | Estado |
+|---|---|:--:|
+| **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família. Mesma classe da divergência corrigida no MS-10, em família fora do escopo autorizado | 🔴 **Aberto** |
+| **P1-006** | Numerador do SNR — `S/N` estrito (D2/V8) | ⬜ **Não iniciado — liberado** |
+| **P1-007** | `pn ≈ 0` / limite inferior (D4) | ⬜ Não iniciado — deve **reutilizar `EstimateNature`** |
+| **P1-008** | Trust Ladder — porta inferior | ⬜ Não iniciado |
+| **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — não corrigido; o P1-005 não o amplia |
+
+### N.10 Encerramento
+
+**P1-005 CONCLUÍDO e validado independentemente no Windows** (`4825fcc`). O denominador do SNR passou
+a ser o Noise Floor *band-limited* oficial do MS-08, com fonte única de verdade e propagação
+semântica completa. Permanecem inalterados **`snrDb()`**, o **numerador**, **`EstimateNature`**,
+**MS-08**, **MS-09**, **MS-13**, os **estímulos**, a **exportação** e o **Evidence Package**.
 
 ---
 

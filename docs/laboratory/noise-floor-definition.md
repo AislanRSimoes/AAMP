@@ -69,6 +69,18 @@ for reportado ou comparado.
   portanto, o **limite inferior** da faixa dinâmica; a subtração de níveis é dimensionalmente coerente.
 - **MS-10 (SNR).** A relação sinal-ruído é definida como a distância entre o **nível do sinal de
   referência** e o **Noise Floor**, na mesma banda. O Noise Floor é o **ruído de referência** do SNR.
+
+  **Conformidade de implementação (P1-005), 2026-08-08.** Esta exigência — *o Noise Floor é o ruído
+  de referência do SNR, **na mesma banda*** — passou a ser **efetivamente implementada**. Até então o
+  MS-10 usava `meanSquare` do ST-09 em **banda larga**, de modo que as duas famílias **discordavam
+  sobre o mesmo silêncio** (em até **52,8 dB** com conteúdo ultrassônico). O denominador passou a ser
+  o piso oficial já publicado por esta especificação, `pn = 10^(NoiseFloor_dBFS/10)`, com o **MS-08
+  como fonte única de verdade** — o MS-10 **não recomputa o ST-09** e **não cria uma segunda
+  estimativa de Welch**. Os estados de qualidade do piso passam a governar o SNR, e a sentinela
+  `−300 dBFS` **nunca** é convertida em potência. Commit `4825fcc`, protegido por **TC-048**,
+  validado independentemente no Windows. **Esta especificação não foi alterada** — apenas passou a
+  ser honrada. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de
+  Encerramento — P1-005*.
 - **Exportação.** O Noise Floor é exportado como **um escalar em dBFS**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz) e da **condição** (silêncio, sem ponderação). A unidade é **homogênea** com as
   demais métricas de nível, permitindo composição direta (subtrações) no pacote de evidência.
