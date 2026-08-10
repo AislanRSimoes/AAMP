@@ -81,6 +81,22 @@ for reportado ou comparado.
   validado independentemente no Windows. **Esta especificação não foi alterada** — apenas passou a
   ser honrada. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de
   Encerramento — P1-005*.
+
+  **Conformidade de implementação (P1-006), 2026-08-10.** Fechado o outro lado da razão. O
+  **numerador** do SNR deixou de ser `meanSquare` do bloco de 1 kHz **inteiro** — que incorporava
+  harmônicas, DC, energia ultrassônica e a energia gerada por clipping, fazendo o valor carregar
+  **THD+N** — e passou a ser a **potência espectral absoluta da fundamental de 1 kHz retornada pelo
+  DUT** (`S/N` estrito, decisão **D2/V8**). O `ps` é medido pela **mesma máquina espectral** do piso
+  — captura do **ST-03**, quadro único **centrado** de `N = 4096`, **Hann**, **ENBW/Parseval**,
+  frequência nominal fixa de 1 kHz, `k0 = round(1000·N/fs)`, integração em **`k0 ± 2`** (em
+  48 kHz/4096: `k0 = 85`, bins 83–87). A referência permanece **output-referred** (**D3**): a fonte
+  ST-03 **emitida** não entra no valor. **Nenhum alinhamento temporal foi introduzido** — a
+  invariância decorre do enquadramento centrado e está **condicionada** às premissas geométricas
+  registradas no encerramento. Viés determinístico conhecido de **≈ −0,001220644 dB** (tom fora do
+  centro do bin + largura ratificada de ±2 bins), classificado como **propriedade do estimador**.
+  Commit `a702c0f`, protegido por **TC-049**, validado independentemente no Windows. **Esta
+  especificação não foi alterada.** Registro completo em [`metrics-audit.md`](./metrics-audit.md) →
+  *Registro de Encerramento — P1-006*.
 - **Exportação.** O Noise Floor é exportado como **um escalar em dBFS**, acompanhado, nos metadados, da
   **banda** (20 Hz–20 kHz) e da **condição** (silêncio, sem ponderação). A unidade é **homogênea** com as
   demais métricas de nível, permitindo composição direta (subtrações) no pacote de evidência.

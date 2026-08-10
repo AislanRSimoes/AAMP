@@ -94,7 +94,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 |---|---|---|---|---|---|---|---|---|
 | **MS-08** | Noise Floor | Piso de ruído integrado | `10·log10(Σ_banda P̄(f))`, `P̄` média de frames Hann 4096 (16 frames / ou todos), 50% overlap | dBFS | ST-09 Silence | `cpp:684-746`; 16 frames = `Constants.h:59` | `docs/laboratory/noise-floor-definition.md` | Todas |
 | **MS-09** | Dynamic Range | Faixa dinâmica útil | `20·log10(RMSmax_degrau_não-clipado) − NoiseFloor_dBFS` | dB | ST-08 + ST-09 | `cpp:749-776` | `NotApplicable` se todos os degraus clipados | Todas |
-| **MS-10** | **SNR** | Relação sinal-ruído | `10·log10(ps/pn)`, `ps`=meanSquare(tom 1 kHz), `pn`=meanSquare(silêncio); satura em **200** se `pn=0` | dB | ST-03 + ST-09 | `cpp:71-76, 779-791` | gauge exibido **0–120 dB** (`html:2721`); piso de retorno na captura **20 dB acima do floor** (`MIN_SNR_OVER_FLOOR_DB`, `Constants.h:47`) | Todas |
+| **MS-10** | **SNR** | Relação sinal-ruído | `10·log10(ps/pn)`; `ps` = **potência da fundamental de 1 kHz retornada** (quadro centrado `N=4096`, Hann + ENBW/Parseval, `k0±2`) — **P1-006** (§O); `pn` = `10^(NoiseFloor_dBFS/10)`, piso oficial do MS-08 — **P1-005** (§N); ramo `pn≤0 → 200` preservado, **estruturalmente inalcançável** para operando válido | dB | ST-03 + ST-09 | `cpp:71-76, 779-791` | gauge exibido **0–120 dB** (`html:2721`); piso de retorno na captura **20 dB acima do floor** (`MIN_SNR_OVER_FLOOR_DB`, `Constants.h:47`) | Todas |
 | **MS-11** | Crosstalk | Vazamento entre canais | `10·log10(p_inativo/p_ativo)` | dB | ST-01 (L+R) | `cpp:794-810` | *a definir* | **Só Estéreo** (`NotApplicable` em Mono) |
 | **MS-12** | Latency | Latência round-trip | `(peakIdx − posição_impulso_emitido)/fs` | ms + samples | ST-06 Impulse | `cpp:813-827` | *a definir* | Todas |
 
@@ -154,7 +154,9 @@ exige um estímulo específico; ausência ⇒ `Error`.
 - **V6 — Dupla implementação (C++ × JS).** Risco de divergência silenciosa das fórmulas espectrais.
 - **V7 — Escalares `DBG_*` temporários** presentes em MS-04/05/06/07 (`cpp`), marcados
   "REMOVER antes do RC"; hoje entram no bundle de métricas.
-- **V8 — MS-10 (SNR): numerador `S/N` vs `(S+D+N)/N` — RESOLVIDO pelo Registro de Decisão MS-10 (D2/V8).**
+- **V8 — MS-10 (SNR): numerador `S/N` vs `(S+D+N)/N` — RESOLVIDO pelo Registro de Decisão MS-10 (D2/V8)
+  e ✅ IMPLEMENTADO no P1-006** (`a702c0f`, validado independentemente no Windows) — ver *Registro de
+  Encerramento — P1-006* (§O).
   *(Histórico do achado preservado abaixo. Não é um defeito; foi uma escolha feita conscientemente — resolvida na direção `S/N` estrito.)*
   A primitiva `snrDb(signal, noise) = 10·log10(ps/pn)` (`cpp:71-76`) é agnóstica quanto ao conteúdo
   de `signal`. Há duas leituras coexistindo, cada uma apoiada por evidência:
@@ -192,10 +194,14 @@ exige um estímulo específico; ausência ⇒ `Error`.
   banda (DC, subsônicos, hum) permanece na **camada de Integridade** (não no `pn` do SNR). *Racional:
   consistência interna entre SNR e Noise Floor + comparabilidade normativa, sem perder detecção de
   anomalias fora de banda.*
-- **D2 / V8 — Numerador.** O MS-10 é formalizado como **S/N estrito** (numerador = energia do tom de
+- **D2 / V8 — Numerador.** ✅ **IMPLEMENTADA no P1-006** (`a702c0f`, validado independentemente no
+  Windows) — ver *Registro de Encerramento — P1-006* (§O).
+  O MS-10 é formalizado como **S/N estrito** (numerador = energia do tom de
   referência isolada, não o bloco inteiro). **THD, THD+N e IMD** continuam responsáveis pela distorção.
   O rótulo **"SNR" deve corresponder ao comportamento da métrica**. *Isto encerra a decisão pendente do
-  V8 na direção (a): alinhado ao que o TC-033 já verifica.*
+  V8 na direção (a): alinhado ao que o TC-033 já verifica.* **Concretização:** potência espectral
+  absoluta da fundamental de 1 kHz retornada, quadro único centrado de `N=4096`, Hann + ENBW/Parseval,
+  integração em `k0 ± 2` com `k0 = round(1000·N/fs)`.
 - **D3 — Referência.** Mantida a referência **output-referred** (nível em que o tom retornou). Decisão
   **registrada explicitamente** na especificação. **Nenhuma alteração de implementação** necessária.
 - **D4 — Estados de qualidade.** Aprovado o **princípio** de propagação de estados de qualidade ao
@@ -211,7 +217,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 | ID | Decisão aprovada | Recomendação origem | **Impacto da Implementação** | Aberto? |
 |----|------------------|---------------------|------------------------------|:------:|
 | ~~**D1**~~ ✅ | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **EXECUTADA em P1-005** — algoritmo convergido (`pn` do MS-08), TC-048 criado, documentação atualizada. Checagem fora-de-banda na Integridade permanece fora do escopo | — |
-| **D2/V8** | S/N estrito; distorção fica com MS-05/06/07 | A | **Altera algoritmo** · **Altera testes** · **Altera documentação** | — |
+| ~~**D2/V8**~~ ✅ | S/N estrito; distorção fica com MS-05/06/07 | A | **EXECUTADA em P1-006** — numerador = potência da fundamental retornada, TC-049 criado, TC-048 atualizado nos pontos que fixavam o numerador antigo, documentação atualizada | — |
 | **D3** | Manter output-referred | A | **Sem impacto de código** · **Altera documentação** | — |
 | **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — estado de `pn≈0` (→ P1, no máx. antes do P2); limiares → P2 |
 | **D5** | Conceito de apresentação aprovado | B | **Altera UI** · **Altera documentação** (concretização → P2) | Faixas/saturação → P2 |
@@ -221,7 +227,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 | Decisão | Arquivos afetados | Testes afetados | Achados relacionados | Pilar |
 |---------|-------------------|-----------------|----------------------|-------|
 | **D1** | `src/analysis/AnalysisEngine.cpp` (`snr`/`snrDb`); `resources/aamp_laboratory.html` (checagem fora-de-banda na Integridade) | `tests/test_analysis.cpp` (TC-033) | V8, V1, V6 | Pilar 1 |
-| **D2/V8** | `src/analysis/AnalysisEngine.cpp` (`snr`); `src/analysis/AnalysisEngine.h` (contrato) | `tests/test_analysis.cpp` (TC-033 + novo caso S/N estrito) | V8, V2 | Pilar 1 |
+| ~~**D2/V8**~~ ✅ | `src/analysis/AnalysisEngine.cpp` (`snr`, `inBandPower` parametrizado); `resources/aamp_laboratory.html` (`computeMS10`). **`AnalysisEngine.h` NÃO foi alterado** — o contrato público não mudou | `tests/test_analysis.cpp` (**TC-049** novo; **TC-048** atualizado; **TC-033** intacto) | V8, V2 | Pilar 1 |
 | **D3** | `docs/laboratory/metrics-audit.md` (somente documentação) | — | — | Pilar 1 (doc) |
 | **D4** | `src/analysis/AnalysisEngine.cpp` (qualidade do `snr`); `resources/aamp_laboratory.html` (porta inferior da confiança `:2226`, `normalizeMetrics`) | `tests/test_analysis.cpp` (novos casos de estado) | V1, V2 | Pilar 1 (princípio) / Pilar 2 (limiares) |
 | **D5** | `resources/aamp_laboratory.html` (gauge/chip `:2713,:2721`) | — | V5 | Pilar 2 |
@@ -232,11 +238,13 @@ exige um estímulo específico; ausência ⇒ `Error`.
 explicitamente rastreado: o estado de qualidade para `pn≈0` (D4). A implementação (Pilar 1) do MS-10
 deve seguir este registro como referência normativa.
 
-> **Situação de implementação (2026-08-08).** **D1 CONCLUÍDA** pelo **P1-005**, validada
-> independentemente no Windows (§N). **D3** não exigia código. **D2/V8** (numerador `S/N` estrito)
-> permanece com o **P1-006**, **liberado**. **D4** (`pn ≈ 0`) permanece com o **P1-007**, que deverá
-> **reutilizar a taxonomia `EstimateNature`** entregue pelo P1-009 estágio 1, em vez de criar uma
-> segunda solução. **D5** permanece no Pilar 2.
+> **Situação de implementação (2026-08-10).** **D1 CONCLUÍDA** pelo **P1-005**, validada
+> independentemente no Windows (§N). **D2/V8 CONCLUÍDA** pelo **P1-006**, validada independentemente
+> no Windows (§O) — o MS-10 é hoje **S/N estrito**. **D3** não exigia código e foi **honrada**: a
+> referência permanece *output-referred*, medida exclusivamente da captura. **D4** (`pn ≈ 0`)
+> permanece com o **P1-007**, **liberado para análise**, que deverá **reutilizar a taxonomia
+> `EstimateNature`** entregue pelo P1-009 estágio 1, em vez de criar uma segunda solução. **D5**
+> permanece no Pilar 2.
 
 ---
 
@@ -1771,7 +1779,9 @@ O **TC-048** protege o P1-005 e cobre:
 
 - **`snrDb()` permaneceu inalterada** e continua sendo primitiva pública.
 - **TC-033** continua cobrindo a primitiva crua, sem uma linha alterada.
-- O **numerador `ps` permanece inalterado** e pertence ao **P1-006**.
+- O **numerador `ps` permanece inalterado** e pertence ao **P1-006**. *(Resolvido depois: o P1-006 o
+  substituiu pela potência da fundamental retornada — ver §O. Este registro é preservado como o
+  estado correto no encerramento do P1-005.)*
 - **`EstimateNature` do MS-10 permanece `Point`** — o P1-005 não cria `LowerBound`.
 - **`pn ≤ 0 → 200` não foi reinterpretado**: o ramo foi reproduzido literalmente após a validação do
   operando. *Fato registrado:* com o `pn` derivado do MS-08 ele é **estruturalmente inalcançável**
@@ -1810,7 +1820,7 @@ O **TC-048** protege o P1-005 e cobre:
 | ID | Achado | Estado |
 |---|---|:--:|
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família. Mesma classe da divergência corrigida no MS-10, em família fora do escopo autorizado | 🔴 **Aberto** |
-| **P1-006** | Numerador do SNR — `S/N` estrito (D2/V8) | ⬜ **Não iniciado — liberado** |
+| ~~**P1-006**~~ ✅ | Numerador do SNR — `S/N` estrito (D2/V8) | ✅ **CONCLUÍDO depois** (`a702c0f`) — ver §O |
 | **P1-007** | `pn ≈ 0` / limite inferior (D4) | ⬜ Não iniciado — deve **reutilizar `EstimateNature`** |
 | **P1-008** | Trust Ladder — porta inferior | ⬜ Não iniciado |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — não corrigido; o P1-005 não o amplia |
@@ -1824,13 +1834,279 @@ semântica completa. Permanecem inalterados **`snrDb()`**, o **numerador**, **`E
 
 ---
 
+## Registro de Encerramento — P1-006 (Numerador do MS-10) — **NORMATIVO**
+
+> **Estado: CONCLUÍDO — validado independentemente no Windows.**
+> **Referência normativa:** *Registro de Decisão — MS-10* → **D2/V8** (`S/N` estrito) e **D3**
+> (referência *output-referred*) · `noise-floor-definition.md` §6.
+> **Pré-requisito cumprido:** **P1-005** (denominador *band-limited*, fonte única de verdade).
+
+### O.1 A solução científica
+
+O MS-10 **deixa de usar**
+
+```
+ps = meanSquare(bloco de 1 kHz do ST-03, INTEIRO)        ← S + D + N
+```
+
+e passa a medir a **potência espectral absoluta da fundamental de 1 kHz retornada pelo DUT**:
+
+```
+ps      = potência da fundamental retornada (captura ST-03)
+pn      = 10^(NoiseFloor_dBFS / 10)                       ← P1-005, MS-08 oficial
+SNR_dB  = 10 * log10(ps / pn)
+```
+
+**Por que o numerador antigo estava errado.** Vale exatamente
+
+```
+ps_total / ps_fund = 1 + (THD+N / 100)²
+```
+
+ou seja, o valor publicado como "SNR" carregava **informação de THD+N**: num DUT **mais distorcido** o
+número **melhorava**. Isso contraria **D2/V8** e invade a responsabilidade de **MS-05/MS-06**, que
+**não** foram alteradas.
+
+**Estimador — o mesmo do piso.** Nenhuma máquina espectral nova foi criada:
+
+| Parâmetro | Valor |
+|---|---|
+| Fonte do valor | **captura do ST-03** (a fonte emitida **não** entra no valor — **D3**, *output-referred*) |
+| Bloco | nominal de 1 kHz, recorte `[2 s, 4 s)` |
+| Quadro | **único, CENTRADO** no bloco, `N = 4096` |
+| Janela | **Hann** |
+| Normalização | **ENBW / Parseval** (potência absoluta) |
+| Frequência nominal | **fixa em 1000 Hz** — sem *peak tracking* |
+| Bin central | `k0 = round(1000·N/fs)` |
+| Para 48 kHz / N=4096 | `k0 = 85` → bins **83, 84, 85, 86, 87** |
+| Integração | **`k0 ± 2`** |
+
+`inBandPower` passou a aceitar `loHz`/`hiHz` com **os limites normativos como padrão**: o único
+chamador existente (**MS-09**) não passa os parâmetros e permanece **numericamente idêntico**. Os
+limites são expressos como `(k0∓2)·fs/N` — exatamente a expressão com que o próprio estimador calcula
+a frequência de cada bin —, de modo que a comparação de borda é **igualdade bit-a-bit** e o conjunto
+de bins é **idêntico em C++ e JS**.
+
+### O.2 Alinhamento temporal — decisão final
+
+> [!warning] **Nenhum alinhamento temporal foi introduzido no P1-006.**
+> Não há `bestLag`, correlação cruzada ou dependência da **fonte ST-03 emitida** no caminho do MS-10.
+> A invariância observada **não vem de alinhamento — vem do ENQUADRAMENTO**: um quadro de 4096
+> amostras **centrado** num bloco de 2 s tolera deslocamentos muito superiores ao domínio operacional
+> do projeto.
+
+| Deslocamento do ST-03 | SNR estrito |
+|---|---:|
+| offset 0 | **86,788268656 dB** |
+| offset 913 | **86,788268656 dB** |
+| offset 2400 *(= 50 ms, o limite exato da política)* | **86,788268656 dB** |
+| offset 4800 *(= 100 ms, o dobro da política)* | **86,788268656 dB** |
+
+**A justificativa é CONDICIONADA às premissas atuais:**
+
+1. bloco de 1 kHz com **2 s**;
+2. quadro de **4096** amostras, **centralizado**;
+3. política de latência do projeto **≤ 50 ms**.
+
+> **Se qualquer uma dessas premissas for alterada, a necessidade de alinhamento deve ser
+> reavaliada.** Este registro **não** declara que o MS-10 "não precisa de alinhamento" em qualquer
+> arquitetura futura — declara que, **nesta geometria**, o alinhamento é desnecessário e por isso não
+> foi introduzido. Em consequência, também **não** foi criada política nova para fonte ST-03 ausente,
+> e o **F9 não foi reutilizado** onde não há necessidade demonstrada.
+
+### O.3 Resultados quantitativos de fechamento
+
+| Caso | SNR estrito | `meanSquare` antigo | Inflação indevida |
+|---|---:|---:|---:|
+| limpo | **86,788268656 dB** | 86,789489300 dB | — |
+| harmônicas (2 kHz + 3 kHz) | **86,788268650 dB** | 86,847879565 dB | **+0,0596 dB** |
+| DC | **86,788268656 dB** | 86,875088036 dB | **+0,0866 dB** |
+| 22 kHz | **86,788268656 dB** | 86,832499557 dB | **+0,0443 dB** |
+| ruído −60 dBFS | **86,787547890 dB** | 86,789442134 dB | — |
+| ganho ×1,5 *(sem clipping)* | **90,310093837 dB** | 90,311314481 dB | — |
+| clipping ×3 | **94,161086680 dB** | 94,263156660 dB | **+0,1021 dB** |
+| offset 913 | **86,788268656 dB** | — | — |
+| offset 2400 | **86,788268656 dB** | — | — |
+
+**O método antigo `meanSquare` incorporava indevidamente:**
+
+- **harmônicas** — produtos de distorção do DUT;
+- **DC** — componente de offset, fora da banda normativa;
+- **energia ultrassônica** — conteúdo acima de 20 kHz;
+- **energia adicional produzida por clipping** — as harmônicas geradas pela própria saturação.
+
+Isso fazia o "SNR" **carregar informação de THD+N**, contrariando **D2/V8**.
+
+Dois casos merecem leitura explícita:
+
+- **ganho ×1,5 sem clipping** — o numerador estrito escala **exatamente** `20·log10(1,5)` em relação
+  ao caso limpo: o estimador é linear no nível quando não há saturação.
+- **clipping ×3** — o numerador estrito fica **abaixo** do antigo porque a fundamental é
+  **comprimida** pela saturação e as harmônicas geradas **não** são contadas. Essa é a informação
+  física correta; contá-las era precisamente o defeito.
+
+### O.4 Viés de integração — propriedade conhecida do estimador
+
+> [!info] **Viés determinístico de ≈ −0,001220644 dB**
+> Medido contra a potência analítica `A²/2` de um seno exato de −6 dBFS. Decorre de o tom de 1 kHz
+> **não cair exatamente no centro de um bin** (em 48 kHz / N=4096 ele cai no bin **85,333**) somado à
+> integração **ratificada** em **±2 bins**.
+
+Classificação: **propriedade conhecida do estimador adotado**, **não** defeito pendente do P1-006. O
+truncamento só pode **subestimar**, nunca superestimar. **A decisão de ±2 bins não é reaberta neste
+encerramento** e a largura **não** foi ampliada para ±3 ou ±4 para reduzir o viés — os testes fixam o
+**valor esperado do novo contrato**, não o valor ideal de um seno infinitamente resolvido.
+
+### O.5 Fonte única e coerência com o P1-005
+
+A composição final do MS-10:
+
+```
+ps  = potência da FUNDAMENTAL retornada          ← P1-006 (este registro)
+pn  = potência derivada do NoiseFloor_dBFS oficial do MS-08   ← P1-005
+SNR = 10 * log10(ps / pn)
+```
+
+| Camada | Item | Registro |
+|---|---|---|
+| **Denominador** | Noise Floor *band-limited* oficial do MS-08 | **P1-005** (§N) |
+| **Numerador** | potência da fundamental retornada | **P1-006** (§O) |
+| **Distorção** | THD / THD+N / IMD | **MS-05 / MS-06** — inalteradas |
+
+**Ambos os lados da razão usam a MESMA máquina espectral absoluta** — Hann + ENBW/Parseval —, o que
+torna a razão dimensionalmente coerente e auditável por construção.
+
+### O.6 Proteção permanente — TC-049
+
+O **TC-049** é a regressão permanente do P1-006 e cobre:
+
+| Caso | Verifica |
+|---|---|
+| seno puro | numerador = potência da fundamental; **viés ±2 bins fixado como contrato** |
+| harmônicas | estrito **invariante**; o antigo infla |
+| ruído | in-band afeta o estrito; os métodos divergem |
+| DC | estrito **invariante**; o antigo infla |
+| 22 kHz | estrito **invariante**; o antigo infla |
+| ganho ×1,5 | escala **exata** de `20·log10(1,5)`, sem clipping (pré-condição asserida) |
+| clipping ×3 | fundamental comprimida; antigo **acima** do estrito (pré-condição asserida) |
+| offsets 0 / 913 / 2400 *(+ margem a 4800)* | **invariância temporal do quadro centrado** — a cláusula é do **enquadramento**, não de alinhamento |
+| ST-03 ausente | família **existe**, `Error`, sem escalar, bundle com 15 famílias |
+| **CC-A** | pontos de referência normativos: `k0 = 85`, bordas `972,65625 Hz` / `1019,53125 Hz`, expressão inteira do quadro centrado |
+| **controle negativo** | oráculo **independente** que reimplementa o `meanSquare` antigo, sem usar nenhuma função do produto, provando que ele incorpora harmônicas, DC e 22 kHz e **se comporta de forma diferente** do numerador estrito |
+| não-regressão do denominador | identidade `SNR_dB = 10·log10(ps_fund) − NoiseFloor_dBFS` no mesmo bundle; `LowConfidence`, `NotApplicable`, sentinela `−300` |
+
+> **Registro metodológico.** Deliberadamente **não** se exige do controle negativo uma "falha por
+> latência": o `meanSquare` **não discrimina frequência** e, justamente por isso, **mascarava** o
+> problema em vez de expô-lo.
+
+### O.7 TC-048 — atualização delimitada
+
+O **TC-048 foi atualizado somente onde as asserções antigas fixavam o numerador pré-P1-006**:
+
+| Ponto | Antes | Depois | Motivo |
+|---|---:|---:|---|
+| (a) ruído branco | 86,7895 dB | **86,7883 dB** | viés de −0,001221 dB |
+| (b) 22 kHz | 86,7895 dB | **86,7883 dB** | idem |
+| (f) piso `LowConfidence` | 86,8250 dB | **86,8238 dB** | idem |
+| (j) identidade de coerência | `ps = meanSquare` | **`ps` estrito**, por oráculo independente | o numerador mudou |
+
+**As proteções do P1-005 permaneceram integralmente:**
+
+- denominador oficial do MS-08 como fonte única;
+- 22 kHz no ST-09 (invariância fora de banda);
+- 5 Hz — rejeição parcial asserida explicitamente;
+- 1 kHz *in-band* — controle contra rejeição indiscriminada;
+- piso `LowConfidence` — propagação com valor preservado;
+- piso `NotApplicable` — sem valor;
+- ausência estrutural (ST-03, ST-09, ambos) → `Error`;
+- **vedação da sentinela `−300 dBFS`** — nunca ≈ 291 dB;
+- identidade de coerência, **agora expressa com o numerador estrito**.
+
+Nenhum caso foi removido e nenhuma tolerância foi afrouxada.
+
+### O.8 CC-A — C++ ↔ JS
+
+Convergência verificada sobre **entradas bit-idênticas** (blocos de tom exportados do Core e
+consumidos pelo LabEngine), executando o **bloco real de montagem** do MS-10, em **12 condições**:
+
+| Eixo comparado | Resultado |
+|---|---|
+| `SNR_dB` | **0 divergências** — maior `|Δ|` **exatamente 0,0 dB** (identidade bit-a-bit em todos os casos com valor) |
+| `quality` | coincidente em todos os casos |
+| `valuePresent` | coincidente em todos os casos |
+| `EstimateNature` | **`Point`** nos dois motores — o P1-006 **não** cria `LowerBound` |
+
+Cobertos os casos científicos (limpo, harmônicas, DC, 22 kHz, ruído, ganho, clipping, offsets) **e**
+os estados **`LowConfidence`**, **`NotApplicable`** e **`Error`**. Preservada a diferença
+representacional já registrada desde o P1-004: em `Error` o Core **não emite escalar**, o JS emite
+`SNR_dB = null` com `valuePresent = false`.
+
+### O.9 Não-regressões e fronteiras preservadas
+
+| Item | Estado |
+|---|---|
+| **MS-08** | ≈ **−95,799789257 dBFS** — numericamente inalterado |
+| **MS-09** | ≈ **86,789489300 dB** (`LowerBound`) — numericamente inalterado |
+
+Permaneceram **intactos**: **`snrDb()`** (e portanto **TC-033**, sem uma linha alterada), **MS-05**,
+**MS-06**, **MS-08**, **MS-09**, **MS-13**, **ST-03**, **ST-09**, **`EstimateNature`**, **`Quality`**,
+a **exportação** e o **Evidence Package**. `MetricResult`, `Scalar`, os **estímulos** e o **CMake**
+também não foram tocados.
+
+### O.10 Validação independente no Windows — **APROVADO**
+
+| Item | Evidência |
+|---|---|
+| Branch | `claude/aamp-migration-stage-0-fzuot8` |
+| HEAD local = remoto | `a702c0f1a6ff0a8a4cd0982f919fa7edca7e2eb9` |
+| Plataforma / configuração | Windows · **`Release`** · `GitDirty = false` |
+| Build | **`--clean-first`** · **0 warnings, 0 erros** |
+| Executável | `build\windows-ninja\aamp_app_artefacts\Release\AAMP.exe` · **4.660.736 bytes** |
+| SHA-256 | `1488CD919F25F93448050C0B254B374F9069AE68E025D7DD337DA308B3243306` |
+| `aamp_headless_suite` | **874 checks passed, 0 failed** |
+| `aamp_scientific_validation` | **8 checks passed, 0 failed** |
+| CTest | **2/2 Passed** |
+| Casos confirmados | **TC-030 · TC-033 · TC-034 · TC-038 · TC-039 · TC-041 · TC-043 · TC-046 · TC-047 · TC-048 · TC-049** |
+
+### O.11 Rastreabilidade histórica dos Evidence Packages
+
+> Pacotes `.aamp` anteriores **continuam válidos como evidência bruta** da captura original — o
+> formato não foi alterado e nenhum áudio preservado foi tocado.
+>
+> Entretanto, **o reprocessamento por versões posteriores pode produzir `SNR` diferente do
+> originalmente exportado**, devido às correções **acumuladas** do **P1-005** (denominador
+> *band-limited*) e do **P1-006** (numerador estrito). Soma-se às causas já registradas para `MS-08`
+> (P1-001) e `MS-09` (F9, P1-003, P1-004). **Isto não é inconsistência da evidência: é evolução do
+> estimador sobre a mesma observação.** Todo resultado histórico deve ser interpretado **junto da
+> versão/commit que o produziu**.
+
+### O.12 Achados que permanecem abertos — registrados, **não corrigidos**
+
+| ID | Achado | Estado |
+|---|---|:--:|
+| **P1-007** | Semântica de `pn ≈ 0` / limite inferior do SNR (D4) | ⬜ **Liberado para análise** — deve **reutilizar `EstimateNature`** (P1-009 estágio 1) |
+| **P1-008** | Trust Ladder — porta inferior | ⬜ **Não iniciado** |
+| **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família | 🔴 **Aberto** — corrigido apenas para o MS-10 |
+| **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — o P1-006 não o amplia |
+| **P1-009 — estágio 2** | Fatos primários (`DynamicRange_stepIndex`, `DynamicRange_firstClippedIndex`) e integração com exportação/UI | 🔴 **Aberto — não iniciado** |
+
+### O.13 Encerramento
+
+**P1-006 CONCLUÍDO e validado independentemente no Windows** (`a702c0f`). O numerador do SNR passou a
+ser a **potência da fundamental retornada**, fechando **D2/V8**: o MS-10 é hoje **S/N estrito**, com
+denominador e numerador medidos pela **mesma máquina espectral absoluta** e com a distorção
+integralmente sob responsabilidade de **MS-05/MS-06**. Nenhum alinhamento temporal foi introduzido, e
+a dispensa está **condicionada às premissas geométricas registradas em §O.2**.
+
+---
+
 ## Encadeamento com os pilares
 
 1. **Pilar 1 (validar implementação):** endereça **V1** (porta inferior da confiança), **V2**
    (propagação de `Quality`), **V3** (semântica da Consistência), **V4** (Reproducibility), **V7** (DBG).
    Pré-decisão de especificação a resolver antes de tocar código/teste: **V8** (numerador do MS-10:
-   `S/N` vs `(S+D+N)/N`). Restrição de ordem: **AR-01** — corrigir e validar a normalização do MS-08
-   antes de implementar D1 no MS-10.
+   `S/N` vs `(S+D+N)/N`) — ✅ **resolvida e implementada** pelo **P1-006** (§O). Restrição de ordem:
+   **AR-01** — corrigir e validar a normalização do MS-08 antes de implementar D1 no MS-10.
 2. **Pilar 2 (apresentação normativa):** define e expõe as faixas da **Seção C** (V5) de forma uniforme.
 3. **Pilar 3 (exportação):** congela o formato só depois que Seções A–C estiverem estáveis.
 
@@ -1844,7 +2120,7 @@ Fluxo metodológico por métrica (o mesmo empregado no MS-10 e no MS-08): **(1)*
 
 | Métrica | Estado |
 |---|---|
-| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo; item aberto `pn≈0` rastreado) |
+| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo). **D1 implementada no P1-005** (§N) e **D2/V8 no P1-006** (§O) — denominador e numerador convergidos. Item aberto `pn≈0` (D4) rastreado no **P1-007** |
 | **MS-08 — Noise Floor** | ✅ **Encerrado** (definição normativa ratificada — N1; `noise-floor-definition.md`) |
 | **MS-09 — Dynamic Range** | ✅ **Encerrado** (Registro de Decisão D1–D3; `dynamic-range-definition.md` APROVADA; alinhamento de implementação → Pilar 1, sob AR-01) |
 

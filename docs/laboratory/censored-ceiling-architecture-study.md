@@ -433,3 +433,9 @@ falhas**; CTest **2/2**; TC-030 · TC-034 · TC-038 · TC-039 · TC-041 · TC-04
 evolução futura, junto da eventual integração com exportação e interface (§10). A conclusão da §11
 sobre sequenciamento mantém-se: **P1-005 e P1-006 estão liberados; P1-007 deve reutilizar esta
 taxonomia em vez de criar outra.**
+
+> **Nota de desfecho (2026-08-10).** **P1-005** (`4825fcc`) e **P1-006** (`a702c0f`) foram
+> **concluídos** e validados independentemente no Windows; o MS-10 publica `EstimateNature = Point`
+> nos dois motores, sem criar `LowerBound`. A obrigação sobre o **P1-007** — reutilizar esta
+> taxonomia — **permanece integralmente**. O **estágio 2** deste estudo segue **aberto**. O texto
+> acima é preservado como estava no encerramento do estágio 1.
