@@ -62,6 +62,49 @@ for reportado ou comparado.
 - **Densidade espectral (dBFS/Hz):** não é o Noise Floor; é uma grandeza complementar.
 - **Ponderação psicoacústica** (p.ex. curva A): não é aplicada — o valor normativo é plano.
 
+### 5.1 A constante `−300 dBFS` **não** é um limite de observabilidade — ratificação P1-007 (2026-08-10)
+
+O valor `−300 dBFS` decorre exclusivamente da guarda numérica
+
+```
+NoiseFloor_dBFS = 10 · log10( max(integFull, 1e-30) )
+```
+
+cuja finalidade é **proteger `log10(0)`**. Ratifica-se que essa constante **não** representa:
+
+- a **resolução do conversor** (ADC) ou de qualquer elemento da cadeia;
+- o **menor Noise Floor mensurável** pelo hardware;
+- um **limite metrológico** do AAMP;
+- um **limite de confiança** do sistema.
+
+> [!warning] Vedação normativa
+> É **expressamente vedado** derivar de `−300 dBFS` qualquer afirmação física, em particular
+> `SNR ≥ 10·log10(Ps) − (−300)` ou qualquer `LowerBound` construído sobre essa constante. Fazê-lo
+> converteria uma guarda de `log10` em resultado de medição.
+
+**Três condições distintas, hoje parcialmente conflatadas no mesmo campo numérico:**
+
+| Condição | Significado | Contrato |
+|---|---|---|
+| `integFull == 0` | **ausência de observação quantitativa** — nada foi observado, ou o observado é identicamente nulo | `NotApplicable`, `valuePresent = false` |
+| `0 < integFull < 1e-30` | **saturação numérica do estimador** — há energia, mas abaixo do domínio numérico representável | `NotApplicable`, `valuePresent = false` — **política ratificada (P1-007/D5); ainda NÃO implementada** |
+| `integFull ≥ 1e-30` | **valor quantitativo representável** | `Normal` (ou `LowConfidence` conforme observação) |
+
+O significado da faixa intermediária é, e deve ser documentado como, exatamente: *“o estimador atual
+não fornece uma medição quantitativa utilizável para essa entrada”* — **nunca** como uma afirmação
+sobre o piso físico do dispositivo.
+
+> [!info] `1e-30` é fronteira **computacional** da implementação atual
+> Não é especificação metrológica do AAMP. Trocar o estimador, a precisão numérica ou a normalização
+> pode deslocá-la sem que a **grandeza normativa** definida neste documento mude — o que é apenas a
+> aplicação, a este caso, do *Princípio da Independência do Estimador* (§2).
+
+**Estado de implementação.** Na implementação vigente, a faixa `0 < integFull < 1e-30` é publicada
+como `Normal` / `valuePresent = true` com o valor saturado `−300,0000 dBFS`, e é consumida como
+medição válida por **MS-09** e **MS-10**. Isso é **semanticamente inválido** e constitui o objeto
+técnico do **P1-007**, que **permanece não implementado**. Registro completo em
+[`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-007*.
+
 ## 6. Relação com as demais camadas
 
 - **MS-09 (Dynamic Range).** A faixa dinâmica é definida como a distância entre o **maior nível não

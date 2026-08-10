@@ -261,6 +261,24 @@ Os latentes ficam **registrados como observação, sem correção e sem expansã
 deles — MS-10 `pn≈0` e MS-08 `−300` — **já são itens abertos do Plano Mestre**, e o primeiro é
 precisamente a decisão que **P1-007/D4** terá de tomar.
 
+> **Nota de desfecho (P1-007, 2026-08-10).** O levantamento acima é preservado como estava. A análise
+> posterior **corrigiu duas de suas premissas**, e a correção é registrada aqui sem reescrever o
+> original:
+>
+> 1. **`pn ≤ 0 → 200` não é "limite inferior apresentado como valor pontual" no caminho oficial** — o
+>    ramo é **estruturalmente inalcançável** em `AnalysisEngine::snr()` (`NoiseFloor_dBFS ≥ −300` ⇒
+>    `pn ≥ 1e-30 > 0`). Ele permanece **alcançável apenas na primitiva pública `snrDb()`**, por
+>    chamada direta. Ratificado que `200 dB` **não** será convertido em `LowerBound`.
+> 2. **O clamp `−300 dBFS` NÃO é "hoje tratado como `NotApplicable`" em todos os casos.** Apenas
+>    `integFull == 0` o é. Na janela `0 < integFull < 1e-30` o piso é publicado com
+>    `quality = Normal` e `valuePresent = true`, e **MS-09 e MS-10 o consomem como medição válida**
+>    (≈ 291 dB). Esse é o defeito material **DV-10**, hoje o objeto reclassificado do **P1-007**.
+> 3. Ratificado que `−300 dBFS` **não é limite superior metrológico do piso**, e sim guarda contra
+>    `log10(0)`: a leitura "o piso é *no máximo* isso" **não** sustenta um `UpperBound` físico.
+>
+> **P1-007 permanece NÃO IMPLEMENTADO.** Ver [`metrics-audit.md`](./metrics-audit.md) → *Registro de
+> Decisão — P1-007*.
+
 O problema é transversal **por evidência, não por especulação**. Um mecanismo compartilhado não é
 superengenharia; a ausência dele forçaria P1-007 a inventar um segundo tratamento *ad hoc* e
 incompatível para o mesmo fenômeno.

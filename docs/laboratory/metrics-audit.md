@@ -219,7 +219,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 | ~~**D1**~~ ✅ | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **EXECUTADA em P1-005** — algoritmo convergido (`pn` do MS-08), TC-048 criado, documentação atualizada. Checagem fora-de-banda na Integridade permanece fora do escopo | — |
 | ~~**D2/V8**~~ ✅ | S/N estrito; distorção fica com MS-05/06/07 | A | **EXECUTADA em P1-006** — numerador = potência da fundamental retornada, TC-049 criado, TC-048 atualizado nos pontos que fixavam o numerador antigo, documentação atualizada | — |
 | **D3** | Manter output-referred | A | **Sem impacto de código** · **Altera documentação** | — |
-| **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — estado de `pn≈0` (→ P1, no máx. antes do P2); limiares → P2 |
+| **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — **P1-007 RATIFICADO, não implementado** (§P): o objeto foi **reclassificado** — não é `pn≈0`, é a **saturação numérica do piso**; limiares → P2 |
 | **D5** | Conceito de apresentação aprovado | B | **Altera UI** · **Altera documentação** (concretização → P2) | Faixas/saturação → P2 |
 
 ### Matriz de Rastreabilidade — MS-10
@@ -238,13 +238,19 @@ exige um estímulo específico; ausência ⇒ `Error`.
 explicitamente rastreado: o estado de qualidade para `pn≈0` (D4). A implementação (Pilar 1) do MS-10
 deve seguir este registro como referência normativa.
 
+> **Reclassificação (P1-007, 2026-08-10).** A análise demonstrou que `pn ≈ 0` **não é alcançável no
+> pipeline oficial** e que o item aberto de D4 corresponde, de fato, à **saturação numérica do
+> estimador de Noise Floor**. O escopo foi reformulado — ver *Registro de Decisão — P1-007* (§P).
+> **Nada foi implementado.**
+
 > **Situação de implementação (2026-08-10).** **D1 CONCLUÍDA** pelo **P1-005**, validada
 > independentemente no Windows (§N). **D2/V8 CONCLUÍDA** pelo **P1-006**, validada independentemente
 > no Windows (§O) — o MS-10 é hoje **S/N estrito**. **D3** não exigia código e foi **honrada**: a
-> referência permanece *output-referred*, medida exclusivamente da captura. **D4** (`pn ≈ 0`)
-> permanece com o **P1-007**, **liberado para análise**, que deverá **reutilizar a taxonomia
-> `EstimateNature`** entregue pelo P1-009 estágio 1, em vez de criar uma segunda solução. **D5**
-> permanece no Pilar 2.
+> referência permanece *output-referred*, medida exclusivamente da captura. **D4** permanece com o
+> **P1-007**, hoje **RATIFICADO arquiteturalmente e NÃO IMPLEMENTADO** (§P), com objeto
+> **reclassificado**: o alvo não é `pn ≈ 0` — inalcançável no caminho oficial —, mas a **saturação
+> numérica do piso** publicada como medição pontual. A taxonomia `EstimateNature` **não** será
+> aplicada agora (**D6**: falta `L` metrologicamente justificável). **D5** permanece no Pilar 2.
 
 ---
 
@@ -1483,6 +1489,13 @@ nem a um novo valor de `Quality`. **O comportamento do MS-10 não é decidido ne
 
 **P1-007 deverá reutilizar a taxonomia criada por P1-009, não inventar uma segunda solução.**
 
+> **Ratificação (P1-007, 2026-08-10).** A hipótese registrada acima foi **examinada e não
+> confirmada**. Demonstrou-se que `pn ≤ 0` é **inalcançável** no caminho oficial (**D1**) e que
+> `200 dB` **não** pode ser convertido em `LowerBound` (**D2**), nem `−300 dBFS` servir de base para
+> um limite físico (**D3**). A obrigação de **não inventar segunda solução** permanece válida; o que
+> muda é que, **com os fatos atuais, nenhuma natureza unilateral é aplicada** ao MS-10 (**D6**). O
+> texto acima é preservado como o estado da análise em 2026-08-08. Ver §P.
+
 ### L.8 F10 (NaN) e achados latentes
 
 **F10 permanece fora do P1-009.** Registrado como **requisito de implementação** do estágio 1: a
@@ -1787,7 +1800,8 @@ O **TC-048** protege o P1-005 e cobre:
   operando. *Fato registrado:* com o `pn` derivado do MS-08 ele é **estruturalmente inalcançável**
   para operando válido (`NoiseFloor_dBFS` tem mínimo −300 dBFS ⇒ `pn ≥ 1e-30 > 0`, e `integFull == 0`
   já retorna `NotApplicable` antes). **Nenhum caso artificial foi inventado** para exercitá-lo.
-- A **semântica de limite inferior continua reservada ao P1-007**.
+- A **semântica de limite inferior continua reservada ao P1-007**. *(Ratificado depois em §P: o
+  `LowerBound` **não** será aplicado ao MS-10 com os fatos atuais — D6.)*
 - **MS-08, MS-09, MS-13, ST-03 e ST-09 não foram alterados.**
 - **Exportação e Evidence Package permanecem estruturalmente inalterados.**
 
@@ -1821,7 +1835,7 @@ O **TC-048** protege o P1-005 e cobre:
 |---|---|:--:|
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família. Mesma classe da divergência corrigida no MS-10, em família fora do escopo autorizado | 🔴 **Aberto** |
 | ~~**P1-006**~~ ✅ | Numerador do SNR — `S/N` estrito (D2/V8) | ✅ **CONCLUÍDO depois** (`a702c0f`) — ver §O |
-| **P1-007** | `pn ≈ 0` / limite inferior (D4) | ⬜ Não iniciado — deve **reutilizar `EstimateNature`** |
+| **P1-007** | `pn ≈ 0` / limite inferior (D4) | ⬜ Não iniciado — deve **reutilizar `EstimateNature`** *(reclassificado depois em §P; `EstimateNature` **não** aplicada — D6)* |
 | **P1-008** | Trust Ladder — porta inferior | ⬜ Não iniciado |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — não corrigido; o P1-005 não o amplia |
 
@@ -2084,7 +2098,7 @@ também não foram tocados.
 
 | ID | Achado | Estado |
 |---|---|:--:|
-| **P1-007** | Semântica de `pn ≈ 0` / limite inferior do SNR (D4) | ⬜ **Liberado para análise** — deve **reutilizar `EstimateNature`** (P1-009 estágio 1) |
+| **P1-007** | Semântica de limite do MS-10 — objeto **reclassificado**: saturação numérica do piso, não `pn ≈ 0` | ⬜ **RATIFICADO arquiteturalmente (§P) — NÃO IMPLEMENTADO** |
 | **P1-008** | Trust Ladder — porta inferior | ⬜ **Não iniciado** |
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família | 🔴 **Aberto** — corrigido apenas para o MS-10 |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — o P1-006 não o amplia |
@@ -2097,6 +2111,167 @@ ser a **potência da fundamental retornada**, fechando **D2/V8**: o MS-10 é hoj
 denominador e numerador medidos pela **mesma máquina espectral absoluta** e com a distorção
 integralmente sob responsabilidade de **MS-05/MS-06**. Nenhum alinhamento temporal foi introduzido, e
 a dispensa está **condicionada às premissas geométricas registradas em §O.2**.
+
+---
+
+## Registro de Decisão — P1-007 (Semântica de Limite do MS-10) — **NORMATIVO**
+
+> **Status: RATIFICAÇÃO ARQUITETURAL APROVADA — implementação NÃO autorizada.**
+> **P1-007 permanece NÃO IMPLEMENTADO.** Este registro fixa a política; nenhuma alteração de código,
+> teste, frontend, exportação, Evidence Package ou CMake acompanha esta etapa.
+> **Referência:** *Registro de Decisão — MS-10* → **D4** · `noise-floor-definition.md` §5.1.
+
+### P.1 Reclassificação do objeto técnico
+
+O P1-007 **deixa de ser** *“decidir o comportamento `pn ≈ 0 → 200 dB`”* isoladamente.
+
+> **Novo objeto técnico:** eliminar a apresentação de valores pontuais derivados da **saturação
+> numérica** do estimador de Noise Floor e retirar do **pipeline oficial** a semântica artificial de
+> `200 dB`, **preservando separadamente** o contrato da primitiva pública `snrDb()`.
+
+A reformulação decorre da análise de alcançabilidade: o ramo originalmente visado **não tem fenômeno
+físico associado no caminho oficial**, enquanto o fenômeno que efetivamente corrompe o contrato —
+saturação do piso publicada como medição pontual — estava **fora** da formulação original.
+
+### P.2 Decisões ratificadas
+
+| ID | Decisão |
+|---|---|
+| **D1** | O ramo `pn ≤ 0 → 200 dB` **não representa condição física do pipeline oficial**. Demonstrado que `NoiseFloor_dBFS ≥ −300` ⇒ `pn = 10^(NoiseFloor_dBFS/10) ≥ 1e-30 > 0`, logo o ramo é **estruturalmente inalcançável** em `AnalysisEngine::snr()` e no equivalente JS. **Isto não autoriza remover ou modificar `snrDb()`** — ver §P.5 |
+| **D2** | `200 dB` **não** deve ser usado como medição física nem como limite. É **vedado** interpretá-lo como estimativa pontual **ou** convertê-lo em `LowerBound` |
+| **D3** | `−300 dBFS` **não é limite físico de observabilidade**. Deriva de `max(integFull, 1e-30)`, guarda contra `log10(0)`. Não representa resolução do ADC, Noise Floor mínimo mensurável, limite metrológico nem limite de confiança. **Vedado** derivar `SNR ≥ Ps − (−300)` ou qualquer `LowerBound` físico dessa constante |
+| **D4** | A janela `0 < integFull < 1e-30` é o **defeito material** do P1-007 — ver §P.3 |
+| **D5** | **Política escolhida: alternativa E.** Quando `0 < integFull < 1e-30`, o MS-08 deve **futuramente** resultar em `quality = NotApplicable`, `valuePresent = false`, e o MS-10 deve **herdar esse estado pela propagação já existente**. Significa **apenas**: *“o estimador atual não fornece uma medição quantitativa utilizável para essa entrada”* |
+| **D6** | `UpperBound(MS-08) → LowerBound(MS-10)` permanece **conceitualmente válido**, mas **não aplicável com os fatos atuais** — ver §P.6 |
+| **D7** | **P1-009 estágio 2 não será antecipado.** A ausência de `EstimateNature` em exportação/UI **não** deve ser corrigida pelo P1-007 |
+| **D8** | **F10 permanece separado** — ver §P.7 |
+| **D9** | **DV-6 permanece fora do escopo.** Não corrigir a materialização divergente do MS-08 no LabEngine |
+
+### P.3 O defeito material — **DV-10**: janela `0 < integFull < 1e-30`
+
+> **DV-10 (identificador novo, reconfirmado livre: DV-1…DV-9 ocupados).** *Saturação numérica do
+> estimador de Noise Floor publicada como medição pontual válida, propagando-se a MS-09 e MS-10.*
+> 🔴 **Aberto — não corrigido nesta etapa.**
+
+Comportamento **atual**, medido no caminho de produção:
+
+```
+MS-08:  quality = Normal   valuePresent = true   NoiseFloor_dBFS = −300,0000   (SATURADO)
+MS-10:  quality = Normal   valuePresent = true   estimate = Point   SNR ≈ 291 dB
+```
+
+Medições de delimitação (ST-09 = ruído *in-band* de nível decrescente):
+
+| Piso alvo do ST-09 | `NoiseFloor_dBFS` | MS-09 | MS-10 |
+|---|---:|---:|---:|
+| −299 dBFS | −299,7985 | 290,7882 | 290,7870 |
+| **−300 dBFS** | **−300,0000** ← clamp | **290,9897** | **290,9885** |
+| −320 dBFS | **−300,0000** ← clamp | **290,9897** | **290,9885** |
+| −600 dBFS | **−300,0000** ← clamp | **290,9897** | **290,9885** |
+
+**Esta representação é semanticamente inválida.** É o mesmo fenômeno da **DV-5** por uma rota
+distinta: o P1-005 fechou a rota do **estado** (`valuePresent = false`); a rota do **clamp**
+permanece aberta, porque ali o estado é `Normal` e o valor saturado é apresentado como medição.
+
+> [!info] Alcance realista
+> A janela exige piso *in-band* abaixo de **−300 dBFS**, que **nenhum ADC real produz** (24 bits
+> ≈ −144 dBFS). É **buraco de contrato** alcançável por entrada sintética ou processada — e
+> **preservado** pelo Evidence Package, pois sobrevive ao *round-trip* float32 —, **não** defeito
+> observado em campo.
+
+**Nenhum teste cobre a janela.** TC-039 assere `value < −1.0` apenas no caso nominal; TC-046 e TC-048
+cobrem somente a rota `integFull == 0`.
+
+### P.4 Registro obrigatório — zero × saturação × valor representável
+
+```
+integFull == 0
+    → ausência de observação quantitativa
+
+0 < integFull < 1e-30
+    → saturação numérica do estimador
+    → NotApplicable na política ratificada (D5)
+
+integFull >= 1e-30
+    → valor quantitativo representável
+```
+
+> **`1e-30` é fronteira COMPUTACIONAL da implementação atual, não especificação metrológica do
+> AAMP.** Não documentar `1e-30` nem `−300 dBFS` como resolução física do sistema. Registro normativo
+> correspondente em [`noise-floor-definition.md`](./noise-floor-definition.md) §5.1.
+
+### P.5 Situação de `snrDb()` — decisão explicitamente separada
+
+| Fato | Estado |
+|---|---|
+| Chamadores de produção | **zero** — em todo o repositório, o único chamador é o **TC-033** |
+| Superfície | `static` público em `AnalysisEngine.h:35` — **API de `aamp_core`** |
+| Ramo `pn ≤ 0 → 200` | **ALCANÇÁVEL** por chamada direta: `snrDb(sig, {})`, `snrDb(sig, zeros)` e `snrDb(zeros, zeros)` retornam `200.000000` |
+| Cobertura | **TC-033 não cobre esse ramo** — usa ruído não-nulo |
+
+**Nenhuma decisão sobre remoção é tomada nesta ratificação.** A implementação posterior do P1-007
+deverá tratar `snrDb()` como **decisão explícita separada**, ciente de que alterar a primitiva altera
+API pública coberta por TC-033.
+
+### P.6 `UpperBound(MS-08) → LowerBound(MS-10)`
+
+A relação
+
+```
+NoiseFloor ≤ L          (UpperBound)
+        ↓
+SNR ≥ 10·log10(Ps) − L  (LowerBound)
+```
+
+é **cientificamente válida** — porém **somente quando `L` tiver origem metrológica justificável**.
+
+O Evidence Package atual **não preserva informação suficiente** para estabelecer esse `L`:
+`metadata.json` contém `clipThresholdDbfs`, `prngSeed`, `preRollSeconds` e `postRollSeconds` — **não
+há profundidade de bits do ADC, piso especificado do dispositivo, nem modelo de resolução**.
+
+Em consequência, ratifica-se:
+
+- **não** implementar `UpperBound` no MS-08 agora;
+- **não** implementar `LowerBound` no MS-10 agora;
+- **não** usar `−300` como substituto de `L`;
+- manter a evolução **condicionada a uma futura definição de observabilidade/resolução**.
+
+### P.7 F10 — manifestação registrada, **não corrigida** (D8)
+
+```
+C++ : nf NaN/Inf atravessa e é publicado como quality = Normal, valuePresent = true
+JS  : nf não-finito → Error   (guarda !isFinite(nf) em computeMS10)
+```
+
+Divergência CC-A **real**, causada pela ausência, no `snr()` do Core, da guarda que o LabEngine
+possui. É **manifestação de F10** e **não** deve ser corrigida nesta etapa **nem incorporada
+implicitamente ao P1-007**. É **distinta da DV-6**, que permanece igualmente aberta (**D9**).
+
+### P.8 Alcance sobre MS-08, MS-09 e MS-10
+
+| Família | Relação com o P1-007 |
+|---|---|
+| **MS-08** | **Origem** do defeito. A política **D5** altera a classificação do MS-08 — logo o P1-007 **toca o MS-08**, o que constitui **gate arquitetural** e não pode ser resolvido implicitamente dentro do MS-10 |
+| **MS-09** | **Também consome** o `−300` saturado como valor válido (DR ≈ 290,9897 dB, `Normal`). Qualquer implementação exige **não-regressão explícita do MS-09** |
+| **MS-10** | **Herdeiro** — recebe o estado corrigido pela propagação de operando já existente desde o P1-005; não requer lógica nova de propagação |
+
+### P.9 Gate para implementação posterior
+
+A próxima autorização técnica deverá definir **separadamente**:
+
+1. alteração do **MS-08** para a janela `0 < integFull < 1e-30`;
+2. propagação **MS-08 → MS-10**;
+3. comportamento equivalente **C++/JS**;
+4. **regressão permanente específica** para a janela do clamp;
+5. destino de **`snrDb()`** e cobertura do seu domínio direto;
+6. **não-regressão de MS-09**.
+
+### P.10 Estado
+
+**P1-007 NÃO IMPLEMENTADO.** Esta é uma ratificação arquitetural pré-implementação: fixa política,
+vedações e escopo, **sem** alterar `src/`, `tests/`, `resources/`, `tools/`, `validation/`, CMake,
+exportação ou Evidence Package. Permanecem abertos e **não corrigidos**: **DV-10** (o defeito
+material), **F10**, **DV-6** e **P1-009 estágio 2**.
 
 ---
 
@@ -2120,7 +2295,7 @@ Fluxo metodológico por métrica (o mesmo empregado no MS-10 e no MS-08): **(1)*
 
 | Métrica | Estado |
 |---|---|
-| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo). **D1 implementada no P1-005** (§N) e **D2/V8 no P1-006** (§O) — denominador e numerador convergidos. Item aberto `pn≈0` (D4) rastreado no **P1-007** |
+| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo). **D1 implementada no P1-005** (§N) e **D2/V8 no P1-006** (§O) — denominador e numerador convergidos. **D4 ratificado no P1-007** (§P), com objeto reclassificado para a **saturação numérica do piso** — **não implementado** |
 | **MS-08 — Noise Floor** | ✅ **Encerrado** (definição normativa ratificada — N1; `noise-floor-definition.md`) |
 | **MS-09 — Dynamic Range** | ✅ **Encerrado** (Registro de Decisão D1–D3; `dynamic-range-definition.md` APROVADA; alinhamento de implementação → Pilar 1, sob AR-01) |
 

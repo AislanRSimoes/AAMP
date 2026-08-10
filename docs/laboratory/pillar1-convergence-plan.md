@@ -25,7 +25,7 @@
 | ~~**P1-004**~~ ✅ *(núcleo)* | MS-09 | **D3** | validação / trat. de erro | Baixo | ~~`teto ≤ piso`: DR **negativo** reportado como `Normal`; só "sem degrau válido" → `NotApplicable` — Apêndice C, MS09-A4~~ | **NÚCLEO SEMÂNTICO CONCLUÍDO** — `teto ≤ piso` → **não caracterizável**; estados do piso propagados ao DR; sentinela `−300` deixa de ser lida como medição. **Validado independentemente no Windows.** A **representação do teto censurado (decisão D) foi desmembrada e permanece item aberto** | P1-003 ✅ |
 | ~~**P1-005**~~ ✅ | MS-10 | **D1** | algoritmo | Moderado | ~~`pn` do SNR = `meanSquare` no tempo (banda larga), separado do MS-08 — Apêndice B.5~~ | **CONCLUÍDO** — `pn = 10^(NoiseFloor_dBFS/10)`, o piso *band-limited* oficial do MS-08 como **fonte única de verdade**; sem segundo Welch. Propagação semântica completa. **Validado independentemente no Windows.** Checagem fora-de-banda na Integridade permanece fora do escopo | AR-01 ✅, P1-001 ✅ |
 | ~~**P1-006**~~ ✅ | MS-10 | **D2/V8** | algoritmo | Moderado | ~~Numerador = bloco de 1 kHz **inteiro** (S+D+N)~~ | **CONCLUÍDO** — numerador = **potência da fundamental retornada** (quadro único centrado `N=4096`, Hann + ENBW/Parseval, `k0 = round(1000·N/fs)`, integração em `k0±2`); referência *output-referred* preservada; **sem alinhamento temporal**. **Validado independentemente no Windows.** `snrDb()` e **TC-033** intactos | P1-005 ✅ |
-| **P1-007** | MS-10 | **D4** | validação / arquitetura | Moderado | SNR saturado em 200 dB para `pn≈0` não é rebaixado; SNR baixo não reduz confiança *(os estados do **piso** já se propagam desde o P1-005)* | Tratamento de `pn≈0` **reutilizando a taxonomia `EstimateNature`**; SNR insuficiente reduz confiança. **Item aberto (D4):** definir o estado para `pn≈0` | P1-005 ✅, **P1-009 estágio 1** ✅; **decisão aberta `pn≈0`** |
+| **P1-007** *(reclassificado)* | MS-10 **+ MS-08** | **D4** | validação / arquitetura | Moderado | **DV-10** — a janela `0 < integFull < 1e-30` satura o piso em `−300 dBFS` e o publica como `Normal`/`valuePresent=true`; MS-09 e MS-10 o consomem como medição válida (≈ 291 dB, `Point`) | Eliminar valores pontuais derivados de **saturação numérica** e retirar do pipeline oficial a semântica artificial de `200 dB`, **preservando à parte** o contrato de `snrDb()`. Política ratificada: **alternativa E** — `NotApplicable`/`valuePresent=false` na janela | **RATIFICADO (§P) — NÃO IMPLEMENTADO**; toca o **MS-08** → **gate arquitetural** |
 | **P1-008** | MS-10 | **V1** (via D4) | interface / validação | Moderado | Trust ladder só testa teto (clipping/pico) + `lowConf`; captura silenciosa lê "Confiável" | **Porta inferior**: sinal que não se eleva acima do piso (via SNR) **nunca** lê "Confiável" | P1-005 ✅, P1-006 ✅, P1-007 |
 | ~~**P1-009**~~ ✅ *(estágio 1)* | MS-09 *(transversal)* | **D** (teto censurado) | contrato / semântica | Moderado | ~~Uma estimativa **unilateral** é publicada como se fosse pontual: `DynamicRange_dB` afirma `DR = X` mesmo quando o ensaio só sustenta `DR ≥ X`~~ *(o MS-10, `pn≤0` → `200 dB`, permanece — P1-007)* | **ESTÁGIO 1 CONCLUÍDO** — natureza da estimativa tipada no nível de `Scalar` (`Point`/`LowerBound`/`UpperBound`), ortogonal a `Quality` e `valuePresent`, padrão `Point`. **Validado independentemente no Windows.** **Estágio 2 (fatos primários / exportação) permanece aberto** | **P1-004** ✅ |
 
@@ -189,8 +189,12 @@ da taxonomia produziria uma segunda solução incompatível.
 - ✅ CC-A: **12 condições**, `SNR_dB`/`quality`/`valuePresent`/`EstimateNature` convergentes, maior
   `|Δ|` **0,0 dB**; `EstimateNature = Point`
 - ✅ CTest completo: `aamp_headless_suite` **874** · `aamp_scientific_validation` **8** · 2/2
-- ⬜ `pn≈0` / limite inferior (D4) — **P1-007**, **liberado para análise**, deve **reutilizar
-  `EstimateNature`**
+- ⬜ **P1-007 — RATIFICADO (§P), NÃO IMPLEMENTADO.** Objeto **reclassificado**: não é `pn≈0` — provado
+  **estruturalmente inalcançável** no caminho oficial (`NoiseFloor_dBFS ≥ −300` ⇒ `pn ≥ 1e-30 > 0`) —,
+  e sim **DV-10**, a saturação numérica do piso publicada como medição pontual
+- ⬜ Política ratificada: **`0 < integFull < 1e-30` → `NotApplicable`/`valuePresent=false`** no MS-08,
+  herdado pelo MS-10 via propagação existente. **`EstimateNature` NÃO é aplicada** (falta `L`
+  metrologicamente justificável); `200 dB` **não** vira `LowerBound`; `−300 dBFS` **não** é limite físico
 
 **Trust Ladder** — P1-008
 - ✓ **Porta inferior** ativa: sinal que não se eleva acima do piso **nunca** lê "Confiável"
@@ -216,7 +220,7 @@ da taxonomia produziria uma segunda solução incompatível.
 | **P1-009 — estágio 2** | 🔴 **ABERTO — não iniciado** | Exposição/auditabilidade dos fatos primários (`DynamicRange_stepIndex`, `DynamicRange_firstClippedIndex`) e eventual integração com exportação/UI. Diferível ao Pilar 3. |
 | **P1-005** | ✅ **CONCLUÍDO — validado independentemente no Windows** | `pn` do SNR passou a ser o Noise Floor *band-limited* oficial do MS-08, fonte única de verdade (`4825fcc`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-005*. |
 | **P1-006** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Numerador do SNR passou a ser a **potência da fundamental retornada** — `S/N` estrito (D2/V8) (`a702c0f`). **TC-033 não foi alterado**; `snrDb()` intacta. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-006*. |
-| **P1-007** | ⬜ **Liberado para análise** | **Não deve iniciar sem reutilizar a taxonomia de `EstimateNature`** (P1-009 estágio 1) — é vedado inventar segunda solução para o mesmo fenômeno. **Requer nova autorização.** |
+| **P1-007** | ⬜ **RATIFICADO arquiteturalmente — NÃO IMPLEMENTADO** | Objeto **reclassificado** (§P): eliminar valores pontuais derivados da **saturação numérica** do estimador de Noise Floor (**DV-10**) e retirar do pipeline oficial a semântica artificial de `200 dB`, preservando à parte o contrato de `snrDb()`. Política ratificada: **alternativa E**. **`EstimateNature` não é aplicada agora** (D6). **Toca o MS-08 → gate arquitetural.** Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-007*. **Requer nova autorização, com os seis pontos do gate definidos separadamente.** |
 | **P1-008** | ⬜ Não iniciado | — |
 
 ### P1-001 — síntese do encerramento
@@ -263,12 +267,13 @@ da taxonomia produziria uma segunda solução incompatível.
 | ~~**F9**~~ ✅ | Segmentação temporal do ST-08 — **RESOLVIDO** pela alternativa **A2** (`cfb95fa`), como **item próprio e pré-requisito** do P1-003. **Validado independentemente no Windows — APROVADO** | — (pré-requisito cumprido) | — |
 | **F3** | Interface declara métricas "não aplicáveis" e as exibe | — (tratar **durante P1-008** / Pilar 2) | — |
 | **F8** | Contagem de checks divergente entre plataformas (469 × 461) | — (higiene de evidência) | — |
-| **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura com `NaN` chega ao contrato rotulada como medição válida | — (registrar, **não corrigir** — decisão **D4** do P1-004) | — |
+| **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura com `NaN` chega ao contrato rotulada como medição válida. *Manifestação adicional registrada no P1-007: com `nf` não-finito o **C++** publica `Normal`/`valuePresent=true` enquanto o **JS** retorna `Error` (guarda `!isFinite(nf)` em `computeMS10`) — divergência CC-A real, **distinta da DV-6**.* | — (registrar, **não corrigir** — decisão **D4** do P1-004; **D8** do P1-007) | — |
 | **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792` afirmando que a sentinela existe "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | — (corrigi-lo modificaria código já validado) | — |
 | ~~**Decisão D**~~ ✅ *(estágio 1)* | **Representação do teto censurado** — **estágio 1 CONCLUÍDO e validado no Windows** (`a175101`); **estágio 2 aberto** (fatos primários / exportação) | — (pré-requisito de P1-007 **cumprido**) | P1-005, P1-006 |
 | **DV-4** | Silêncio "sujo" não detectado (exige limiar) | — (**Pilar 2**) | — |
 | ~~**DV-5**~~ ✅ | Sentinela `−300` lida como medição pelo MS-09 — **RESOLVIDA no P1-004** (sentinela conservada no campo por **D3**; nenhum consumidor normativo a interpreta) | — (fechada) | — |
 | **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família. *Corrigido para o **MS-10** em `4825fcc` (P1-005); permanece aberto para o **MS-08**.* | — | — |
+| **DV-10** | **Saturação numérica do piso publicada como medição pontual.** Com `0 < integFull < 1e-30`, o MS-08 publica o clamp `−300 dBFS` com `quality = Normal` e `valuePresent = true`; **MS-09** (DR ≈ 290,9897 dB) e **MS-10** (SNR ≈ 290,9885 dB, `Point`) o consomem como valor válido. Mesma classe da **DV-5**, por rota distinta: o P1-005 fechou a rota do **estado**, esta é a rota do **clamp**. Sobrevive ao *round-trip* float32 do Evidence Package; **nenhum teste cobre a janela**. *Alcançável por entrada sintética/processada — nenhum ADC real produz piso in-band < −300 dBFS* | — (**P1-007**, ratificado e **não implementado**) | MS-08, MS-09, MS-10 |
 | **DV-8** | Apresentação ignora `valuePresent`/`quality` e exibe a sentinela `−300` | — (**Pilar 2**) | — |
 | **DV-9** | **Assimetria legítima da fonte ST-08** — Core **regenera** o estímulo (ramo inalcançável) × reprocessamento lê do pacote (pode faltar). **Preservada por decisão D5**, documentada nos dois lados | — (legítima; **não** corrigir) | — |
 | **V1** | Trust Ladder rotula "Medição confiável" com única métrica `NotApplicable`. **Impacto novo, não avaliado:** a propagação de `LowConfidence` do MS-08 alcança agora o contrato do MS-09 | — (**P1-008**) | — |
@@ -479,6 +484,56 @@ da taxonomia produziria uma segunda solução incompatível.
 - **Não-regressões:** **MS-08 ≈ −95,799789257 dBFS** e **MS-09 ≈ 86,789489300 dB** inalterados.
   Intactos `snrDb()`, **TC-033**, MS-05, MS-06, MS-08, MS-09, MS-13, ST-03, ST-09, `EstimateNature`,
   `Quality`, exportação e Evidence Package.
+
+### P1-007 — ratificação arquitetural *(não é encerramento)*
+
+> **P1-007 permanece NÃO IMPLEMENTADO.** Esta seção registra a política ratificada em 2026-08-10;
+> nenhuma alteração de código, teste, frontend, exportação, Evidence Package ou CMake a acompanha.
+
+- **Escopo reclassificado.** O item deixa de ser *“decidir o comportamento `pn ≈ 0 → 200 dB`”* e passa
+  a ser: **eliminar a apresentação de valores pontuais derivados da saturação numérica do estimador de
+  Noise Floor e retirar do pipeline oficial a semântica artificial de `200 dB`**, preservando
+  separadamente o contrato da primitiva pública `snrDb()`.
+- **D1 — o ramo `pn ≤ 0 → 200` não é condição física do pipeline oficial.** Provado que
+  `NoiseFloor_dBFS ≥ −300` ⇒ `pn = 10^(NoiseFloor_dBFS/10) ≥ 1e-30 > 0`, logo o ramo é
+  **estruturalmente inalcançável** em `AnalysisEngine::snr()` e no equivalente JS. **Não autoriza**
+  remover ou modificar `snrDb()`.
+- **D2 — `200 dB` não é medição nem limite.** Vedado tratá-lo como estimativa pontual **ou** convertê-lo
+  em `LowerBound`.
+- **D3 — `−300 dBFS` não é limite físico de observabilidade.** Deriva de `max(integFull, 1e-30)`, guarda
+  contra `log10(0)`. Não representa resolução do ADC, piso mínimo mensurável, limite metrológico nem
+  limite de confiança. **Vedado** derivar `SNR ≥ Ps − (−300)` ou qualquer `LowerBound` dessa constante.
+- **D4 — o defeito material é a janela `0 < integFull < 1e-30`** (**DV-10**).
+- **D5 — política escolhida: alternativa E.** Nessa janela o MS-08 deve **futuramente** resultar em
+  `NotApplicable`/`valuePresent = false`, herdado pelo MS-10 pela propagação já existente. Significa
+  **apenas** *“o estimador atual não fornece medição quantitativa utilizável para essa entrada”*.
+- **D6 — `UpperBound(MS-08) → LowerBound(MS-10)` é válido, mas não aplicável hoje.** Exige `L` de origem
+  metrológica justificável; o Evidence Package **não preserva** informação suficiente para estabelecê-lo
+  (`metadata.json` tem `clipThresholdDbfs`, `prngSeed`, pre/post-roll — **sem** profundidade de bits,
+  piso especificado ou modelo de resolução). Não implementar `UpperBound` no MS-08 nem `LowerBound` no
+  MS-10 agora; não usar `−300` como substituto de `L`.
+- **D7 — P1-009 estágio 2 não será antecipado** pelo P1-007.
+- **D8 — F10 permanece separado** (ver tabela de achados). **D9 — DV-6 permanece fora do escopo.**
+
+**Distinção registrada:**
+
+```
+integFull == 0            → ausência de observação quantitativa
+0 < integFull < 1e-30     → saturação numérica do estimador → NotApplicable (política ratificada)
+integFull >= 1e-30        → valor quantitativo representável
+```
+
+`1e-30` é **fronteira computacional da implementação atual**, não especificação metrológica do AAMP.
+
+**`snrDb()` — situação registrada, decisão adiada:** zero chamadores de produção; superfície pública de
+`aamp_core`; ramo `pn ≤ 0 → 200` **alcançável por chamada direta**; **TC-033 não cobre esse ramo**. Seu
+destino é **decisão explícita separada** na implementação posterior.
+
+**Gate para implementação posterior** — a próxima autorização deverá definir separadamente: **(1)**
+alteração do MS-08 para a janela; **(2)** propagação MS-08 → MS-10; **(3)** comportamento equivalente
+C++/JS; **(4)** regressão permanente específica para a janela do clamp; **(5)** destino de `snrDb()` e
+cobertura do seu domínio direto; **(6)** não-regressão de **MS-09**, que também consome o `−300`
+saturado como valor válido.
 
 ### Rastreabilidade histórica dos Evidence Packages
 
