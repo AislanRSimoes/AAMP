@@ -1,5 +1,0 @@
-C:/aamp/build/ninja_test/CMakeFiles/aamp_core.dir
-C:/aamp/build/ninja_test/CMakeFiles/aamp_tests.dir
-C:/aamp/build/ninja_test/CMakeFiles/test.dir
-C:/aamp/build/ninja_test/CMakeFiles/edit_cache.dir
-C:/aamp/build/ninja_test/CMakeFiles/rebuild_cache.dir
