@@ -53,13 +53,19 @@ static std::vector<double> noisePowerSpectrum(const std::vector<double>& sig, in
 // fisicamente valida (dynamic-range-definition.md sec.4/sec.5). Reutiliza noisePowerSpectrum,
 // isto e: Hann + normalizacao ENBW/Parseval, e integra os mesmos bins que o MS-08 integra.
 // Devolve POTENCIA linear (0 quando nao ha energia in-band), nao nivel em dB.
-static double inBandPower(const std::vector<double>& frame, int n, double fs, Window w) {
+// P1-006: a banda de integracao passa a ser PARAMETRIZAVEL, com os limites normativos como padrao.
+// Os chamadores existentes (MS-09) nao passam os parametros e permanecem NUMERICAMENTE IDENTICOS.
+// Nenhum segundo estimador foi criado: e a MESMA maquina espectral absoluta (Hann + ENBW/Parseval),
+// apenas com a regiao de integracao escolhida pelo consumidor -- banda inteira no piso, vizinhanca
+// do tom no sinal.
+static double inBandPower(const std::vector<double>& frame, int n, double fs, Window w,
+                          double loHz = k::BAND_LOW_HZ, double hiHz = k::BAND_HIGH_HZ) {
     if (static_cast<int>(frame.size()) < n) return 0.0;
     const std::vector<double> p = noisePowerSpectrum(frame, n, w);
     double band = 0.0;
     for (std::size_t b = 0; b < p.size(); ++b) {
         const double f = static_cast<double>(b) * fs / static_cast<double>(n);
-        if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+        if (f < loHz || f > hiHz) continue;
         band += p[b];
     }
     return band;
@@ -951,10 +957,38 @@ MetricResult AnalysisEngine::snr(const CapturedSet& cap) const {
         return r;
     }
 
-    // Numerador CONGELADO (P1-006): bloco de 1 kHz inteiro, meanSquare temporal, recorte [2 s,4 s).
+    // ---- P1-006 / D2-V8: numerador = POTENCIA DA FUNDAMENTAL RETORNADA, nao do bloco inteiro ----
+    // Antes, ps era meanSquare do bloco de 1 kHz INTEIRO, de modo que o SNR incorporava distorcao,
+    // ruido, DC e energia fora da banda: mede-se que ps_total/ps_fund = 1 + (THD+N/100)^2 EXATAMENTE,
+    // ou seja, o SNR publicado era o SNR estrito somado a uma funcao monotona do THD+N -- num DUT
+    // muito distorcido o "SNR" MELHORAVA. A distorcao pertence a MS-05/MS-06, que NAO sao alteradas.
+    // Referencia OUTPUT-REFERRED (D3): ps e medido EXCLUSIVAMENTE da captura.
+    //
+    // Estimador: a MESMA maquina espectral absoluta do piso (Hann + ENBW/Parseval, N=4096), num
+    // quadro unico CENTRADO no bloco -- mesma convencao do MS-09, sem introduzir variante de Welch.
+    //
+    // SELECAO DE BINS (contrato exato, indispensavel para CC-A). O bin nominal e
+    //     k0 = int(1000 * N / fs + 0.5)   -> 85  em 48 kHz / N=4096
+    // e a regiao e k0+-2 -> bins {83,84,85,86,87}. Os limites sao expressos em Hz como
+    // (k0-+2)*fs/N, EXATAMENTE a mesma expressao com que inBandPower calcula a frequencia de cada
+    // bin; logo a comparacao de borda e uma igualdade bit-a-bit e o conjunto de bins e identico em
+    // C++ e JS. Nao se usa largura em Hz aproximada.
     const int seg = static_cast<int>(2.0 * m_fs + 0.5);
     std::vector<double> tone = slice(sig->second, static_cast<std::size_t>(seg), static_cast<std::size_t>(2 * seg)); // 1 kHz
-    const double ps = meanSquare(tone);
+    const int NF = 4096;                                  // mesma janela do MS-08/MS-09
+    const double f0 = 1000.0;                             // frequencia nominal FIXA (sem peak tracking),
+                                                          // mesma convencao literal ja usada por MS-05/06
+    const int k0 = static_cast<int>(f0 * NF / m_fs + 0.5);
+    const double loHz = static_cast<double>(k0 - 2) * m_fs / static_cast<double>(NF);
+    const double hiHz = static_cast<double>(k0 + 2) * m_fs / static_cast<double>(NF);
+    double ps = 0.0;
+    if (static_cast<int>(tone.size()) >= NF) {
+        const int off = (static_cast<int>(tone.size()) - NF) / 2;   // quadro CENTRADO no bloco
+        const std::vector<double> frame = slice(tone, static_cast<std::size_t>(off), static_cast<std::size_t>(off + NF));
+        ps = inBandPower(frame, NF, m_fs, Window::Hann, loHz, hiHz);
+    }
+    // Observacao mais curta que um quadro deixa ps = 0 -> 10*log10(0/pn) = -inf, EXATAMENTE o que
+    // meanSquare de um bloco vazio ja produzia. Nenhuma politica nova foi introduzida aqui.
     const double pn = std::pow(10.0, nfDb / 10.0);
 
     // Ramo preservado de snrDb() (pn <= 0 -> 200 dB), reproduzido AQUI sem reinterpretacao e

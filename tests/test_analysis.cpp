@@ -1022,9 +1022,16 @@ TEST_CASE("TC-047 MS-09 natureza da estimativa: Point vs LowerBound (P1-009)") {
 // ruido INDISCRIMINADAMENTE (o ruido in-band tem de continuar afetando o SNR); (iii) converter a
 // sentinela -300 dBFS em potencia e publicar ~+291 dB; (iv) perder a propagacao de estado do piso.
 //
-// FORA DE ESCOPO, deliberadamente: o numerador (P1-006) e a condicao pn~0 (P1-007).
+// FORA DE ESCOPO, deliberadamente: a condicao pn~0 (P1-007).
+//
+// ATUALIZADO PELO P1-006: este caso continua sendo o teste do DENOMINADOR, mas o numerador deixou de
+// ser meanSquare do bloco inteiro e passou a ser a potencia da FUNDAMENTAL (TC-049). Os valores
+// esperados que dependem do numerador caem 0,001221 dB -- o vies +-2 bins ratificado -- e a
+// identidade de coerencia (j) passa a ser expressa com o numerador estrito. Nenhuma protecao foi
+// removida: os controles negativos, a vedacao da sentinela e a propagacao de estado seguem intactos.
 TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
     AnalysisEngine eng(FS);
+    const double PI048 = 3.14159265358979;
 
     auto snrSc = [](const ResultBundle& b) -> const Scalar* {
         const MetricResult* m = b.find("MS-10");
@@ -1072,7 +1079,7 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
         const Scalar* s = snrSc(bRef);
         CHECK(s != nullptr);
         CHECK(q10(bRef) == Quality::Normal && s->quality == Quality::Normal && s->valuePresent);
-        CHECK_NEAR(s->value, 86.7895, 0.001);
+        CHECK_NEAR(s->value, 86.7883, 0.001);                   // P1-006: -0,001221 dB (vies +-2 bins)
         CHECK_NEAR(snrAntigo(capRef), 85.9897, 0.001);          // oraculo: metodo antigo
         CHECK(s->value - snrAntigo(capRef) > 0.5);              // a correcao e efetivamente nao-nula
     }
@@ -1084,7 +1091,7 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
         ResultBundle b = eng.computeAllMetrics(cap);
         const Scalar* s = snrSc(b);
         CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
-        CHECK_NEAR(s->value, 86.7895, 0.001);                   // invariante em relacao a (a)
+        CHECK_NEAR(s->value, 86.7883, 0.001);                   // invariante em relacao a (a)
         CHECK_NEAR(snrAntigo(cap), 34.0, 0.1);                  // CONTROLE NEGATIVO: o antigo desaba
         CHECK(s->value - snrAntigo(cap) > 50.0);                // vies do metodo antigo: >50 dB
     }
@@ -1127,7 +1134,7 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
         CHECK(b.find("MS-08")->quality == Quality::LowConfidence);
         CHECK(q10(b) == Quality::LowConfidence);
         CHECK(s != nullptr && s->quality == Quality::LowConfidence && s->valuePresent);
-        CHECK_NEAR(s->value, 86.8250, 0.001);
+        CHECK_NEAR(s->value, 86.8238, 0.001);                   // P1-006: -0,001221 dB
     }
 
     // ---- (g)(h) piso NotApplicable -> SNR NotApplicable, sem valor; a sentinela NAO volta ----
@@ -1173,14 +1180,32 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
 
     // ---- (j) COERENCIA no mesmo bundle: fonte unica de verdade ----
     // SNR_dB deve ser exatamente 10*log10(ps) - NoiseFloor_dBFS lidos do MESMO bundle. Se o MS-10
-    // recomputasse o piso por outro caminho, esta identidade quebraria.
+    // recomputasse o piso por outro caminho, esta identidade quebraria. O que esta sendo testado
+    // AQUI e o DENOMINADOR; por isso o ps do oraculo acompanha o numerador vigente (P1-006: potencia
+    // da fundamental, quadro centrado de 4096, bins k0+-2), reconstruido independentemente.
     {
-        auto ms = [](const std::vector<double>& x) {
-            double a = 0.0; for (double v : x) a += v * v; return a / static_cast<double>(x.size());
-        };
+        const int N = 4096;
         const int seg = static_cast<int>(2.0 * FS + 0.5);
         const std::vector<double>& t = capRef.captured.at(StimulusId::ST03_PureSine);
-        const double ps = ms(std::vector<double>(t.begin() + seg, t.begin() + 2 * seg));
+        const std::vector<double> tone(t.begin() + seg, t.begin() + 2 * seg);
+        const int off = (static_cast<int>(tone.size()) - N) / 2;
+        std::vector<double> win(static_cast<std::size_t>(N));
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < N; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2.0 * PI048 * i / (N - 1));
+            win[static_cast<std::size_t>(i)] = w; s1 += w; s2 += w * w;
+        }
+        std::vector<double> buf(static_cast<std::size_t>(N));
+        for (int i = 0; i < N; ++i)
+            buf[static_cast<std::size_t>(i)] = tone[static_cast<std::size_t>(off + i)] * win[static_cast<std::size_t>(i)];
+        std::vector<Complex> X = Fft::forwardReal(buf, N);
+        const double kPow = 1.0 / (2.0 * (static_cast<double>(N) * s2 / (s1 * s1)));
+        const int k0 = static_cast<int>(1000.0 * N / FS + 0.5);
+        double ps = 0.0;
+        for (int b = k0 - 2; b <= k0 + 2; ++b) {
+            const double mag = std::abs(X[static_cast<std::size_t>(b)]) / s1 * 2.0;
+            ps += mag * mag * kPow;
+        }
         CHECK_NEAR(snrSc(bRef)->value, 10.0 * std::log10(ps) - nfDe(bRef), 1e-9);
     }
 
@@ -1196,6 +1221,295 @@ TEST_CASE("TC-048 MS-10 pn = Noise Floor band-limited do MS-08 (P1-005)") {
             }
         const Scalar* s10 = snrSc(bRef);
         CHECK(s10 != nullptr && s10->estimate == EstimateNature::Point);  // P1-005 nao cria LowerBound
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// TC-049 -- P1-006: o NUMERADOR do SNR passa a ser a POTENCIA DA FUNDAMENTAL RETORNADA (S/N estrito).
+//
+// IDENTIFICADOR: reconfirmado livre mecanicamente imediatamente antes da edicao (nenhuma ocorrencia
+// de "TC-049" em arquivos rastreados nem em todo o historico; a numeracao sob tests/ saltava de
+// TC-048 para TC-050).
+//
+// Antes, ps era o meanSquare do bloco de 1 kHz INTEIRO: o SNR incorporava distorcao, ruido, DC e
+// energia fora de banda, de modo que ps_total/ps_fund = 1 + (THD+N/100)^2 EXATAMENTE -- num DUT muito
+// distorcido o "SNR" MELHORAVA. A distorcao pertence a MS-05/MS-06, que NAO sao alteradas.
+//
+// ESTIMADOR: a MESMA maquina espectral absoluta do piso (Hann + ENBW/Parseval, N=4096), num quadro
+// unico CENTRADO no bloco. Frequencia nominal FIXA em 1000 Hz, k0 = round(1000*N/fs) = 85 em
+// 48 kHz/N=4096, integracao nos bins k0+-2 = {83,84,85,86,87}.
+//
+// DECISAO DE GATE REGISTRADA (A): o alinhamento temporal do ST-03 e DISPENSADO neste item. A
+// invariancia NAO vem de correlacao/bestLag -- vem do ENQUADRAMENTO temporal escolhido: um quadro de
+// 4096 amostras centrado num bloco de 2 s tolera deslocamentos muito superiores ao dominio
+// operacional (politica de latencia <= 50 ms). O caso (h) prova exatamente isso. A decisao vale para
+// a GEOMETRIA ATUAL -- bloco de 1 kHz = 2 s, quadro = 4096, quadro centralizado, latencia <= 50 ms --
+// e deve ser reavaliada se qualquer uma dessas premissas mudar.
+//
+// VIES ACEITO: a integracao em k0+-2 introduz um vies determinístico de -0,001221 dB para 1 kHz em
+// 48 kHz/N=4096 (o tom cai no bin 85,333). Este teste fixa o VALOR ESPERADO DO NOVO CONTRATO, nao o
+// valor ideal analitico de um seno infinitamente resolvido: a largura +-2 bins ja foi ratificada e
+// NAO deve ser ampliada para +-3/+-4 so para reduzir esse erro.
+//
+// FORA DE ESCOPO, deliberadamente: pn~0 / limite inferior (P1-007) e Trust Ladder (P1-008).
+TEST_CASE("TC-049 MS-10 ps = potencia da fundamental, S/N estrito (P1-006)") {
+    AnalysisEngine eng(FS);
+    const double PI = 3.14159265358979;
+
+    auto snrSc = [](const ResultBundle& b) -> const Scalar* {
+        const MetricResult* m = b.find("MS-10");
+        if (m == nullptr) return nullptr;
+        for (const Scalar& s : m->scalars) if (s.key == "SNR_dB") return &s;
+        return nullptr;
+    };
+    auto nfDe = [](const ResultBundle& b) -> double {
+        const Scalar* s = nfScalar(b, "NoiseFloor_dBFS");
+        return s != nullptr ? s->value : 0.0;
+    };
+    auto q10 = [](const ResultBundle& b) {
+        const MetricResult* m = b.find("MS-10");
+        return m == nullptr ? Quality::Error : m->quality;
+    };
+    // Bloco de 1 kHz efetivamente analisado pelo Core: recorte [2 s, 4 s) do ST-03 CAPTURADO.
+    auto bloco1k = [](const CapturedSet& cap) {
+        const int seg = static_cast<int>(2.0 * FS + 0.5);
+        const std::vector<double>& t = cap.captured.at(StimulusId::ST03_PureSine);
+        return std::vector<double>(t.begin() + seg, t.begin() + 2 * seg);
+    };
+    // ORACULO INDEPENDENTE (i): numerador ESTRITO reconstruido no proprio teste -- Hann simetrico,
+    // ENBW/Parseval, N=4096, quadro CENTRADO, bins k0+-2. Nao chama inBandPower nem snr(): usa
+    // apenas a primitiva Fft, exatamente como TC-031 ja faz para a calibracao de amplitude.
+    auto psFund = [&](const std::vector<double>& tone) {
+        const int N = 4096;
+        if (static_cast<int>(tone.size()) < N) return 0.0;
+        const int off = (static_cast<int>(tone.size()) - N) / 2;
+        std::vector<double> win(static_cast<std::size_t>(N));
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < N; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2.0 * PI * i / (N - 1));
+            win[static_cast<std::size_t>(i)] = w; s1 += w; s2 += w * w;
+        }
+        const double enbw = static_cast<double>(N) * s2 / (s1 * s1);   // Hann = 1.5
+        std::vector<double> buf(static_cast<std::size_t>(N));
+        for (int i = 0; i < N; ++i)
+            buf[static_cast<std::size_t>(i)] = tone[static_cast<std::size_t>(off + i)] * win[static_cast<std::size_t>(i)];
+        std::vector<Complex> X = Fft::forwardReal(buf, N);
+        const double kPow = 1.0 / (2.0 * enbw);
+        const int k0 = static_cast<int>(1000.0 * N / FS + 0.5);
+        double p = 0.0;
+        for (int b = k0 - 2; b <= k0 + 2; ++b) {
+            const double mag = std::abs(X[static_cast<std::size_t>(b)]) / s1 * 2.0;
+            p += mag * mag * kPow;
+        }
+        return p;
+    };
+    // ORACULO INDEPENDENTE (ii): o metodo ANTIGO (meanSquare do bloco inteiro). E o CONTROLE NEGATIVO
+    // exigido -- ele NAO discrimina frequencia, por isso incorpora harmonicas, DC e 22 kHz.
+    // Observacao registrada: nao se exige dele "falha por latencia", justamente porque a insensibilidade
+    // a frequencia MASCARAVA o problema em vez de expo-lo.
+    auto psTotal = [](const std::vector<double>& x) {
+        if (x.empty()) return 0.0;
+        double a = 0.0; for (double v : x) a += v * v; return a / static_cast<double>(x.size());
+    };
+    // ST-03 do loopback contaminado por um componente aditivo.
+    auto comContaminacao = [&](int tipo) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& t = cap.captured[StimulusId::ST03_PureSine];
+        const std::vector<double> nz = harness::deterministicNoise(t.size(), -60.0, 999);
+        for (std::size_t i = 0; i < t.size(); ++i) {
+            const double n = static_cast<double>(i);
+            if (tipo == 0) t[i] += 0.05 * std::sin(2.0 * PI * 2000.0 * n / FS)      // 2ª e 3ª harmonicas
+                                 + 0.03 * std::sin(2.0 * PI * 3000.0 * n / FS);
+            else if (tipo == 1) t[i] += 0.05;                                        // DC
+            else if (tipo == 2) t[i] += 0.05 * std::sin(2.0 * PI * 22000.0 * n / FS);// fora de banda
+            else                t[i] += nz[i];                                       // ruido de banda larga
+        }
+        return cap;
+    };
+
+    CapturedSet capRef = harness::makeLoopback(FS, 0, false);
+    ResultBundle bRef = eng.computeAllMetrics(capRef);
+    const double SNR_REF = 86.788268656;   // valor NORMATIVO do novo contrato
+
+    // ---- (a) SENO PURO: o numerador e a potencia da FUNDAMENTAL, com o vies +-2 bins ACEITO ----
+    {
+        const Scalar* s = snrSc(bRef);
+        CHECK(s != nullptr);
+        CHECK(q10(bRef) == Quality::Normal && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, SNR_REF, 1e-6);
+        CHECK_NEAR(s->value, 10.0 * std::log10(psFund(bloco1k(capRef))) - nfDe(bRef), 1e-9);
+
+        // Vies determinístico da largura ratificada, medido contra um seno sintetico EXATO de -6 dBFS
+        // (potencia analitica A^2/2). Fixado como CONTRATO, nao como erro a eliminar.
+        CapturedSet capSin = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& t = capSin.captured[StimulusId::ST03_PureSine];
+        const double A = dbfsToLinear(-6.0);
+        for (std::size_t i = 0; i < t.size(); ++i)
+            t[i] = A * std::sin(2.0 * PI * 1000.0 * static_cast<double>(i) / FS);
+        const double vies = 10.0 * std::log10(psFund(bloco1k(capSin)) / (A * A / 2.0));
+        CHECK_NEAR(vies, -0.001221, 1e-5);                       // o vies ACEITO, nao um defeito
+        CHECK(vies < 0.0);                                       // truncamento so pode SUBESTIMAR
+    }
+
+    // ---- (b)(d)(e) HARMONICAS, DC e 22 kHz: o numerador estrito e INVARIANTE; o antigo INFLA ----
+    // Este e o coracao do P1-006: o controle negativo prova que o meanSquare antigo incorpora as tres
+    // contaminacoes e, portanto, se comporta de forma DIFERENTE do numerador estrito.
+    {
+        struct Caso { const char* nome; int tipo; double minInflacaoAntigo; };
+        const Caso casos[3] = {
+            { "harmonicas 2k+3k", 0, 0.05 },   // +0,0596 dB medidos
+            { "DC",               1, 0.08 },   // +0,0866 dB medidos
+            { "22 kHz",           2, 0.04 },   // +0,0443 dB medidos
+        };
+        for (const Caso& k : casos) {
+            CapturedSet cap = comContaminacao(k.tipo);
+            ResultBundle b = eng.computeAllMetrics(cap);
+            const Scalar* s = snrSc(b);
+            const std::vector<double> tone = bloco1k(cap);
+            CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+            // o numerador ESTRITO nao ve a contaminacao
+            CHECK_NEAR(s->value, SNR_REF, 1e-6);
+            // o metodo ANTIGO ve, e para MAIS -- "SNR" que melhora com distorcao
+            const double antigo = 10.0 * std::log10(psTotal(tone)) - nfDe(b);
+            CHECK(antigo - s->value > k.minInflacaoAntigo);
+        }
+    }
+
+    // ---- (c) RUIDO de banda larga somado ao TOM: afeta pouco o estrito, e os metodos DIVERGEM ----
+    {
+        CapturedSet cap = comContaminacao(3);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        const double antigo = 10.0 * std::log10(psTotal(bloco1k(cap))) - nfDe(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 86.787547890, 1e-6);
+        CHECK(s->value < SNR_REF);                               // ruido in-band entra na vizinhanca
+        CHECK(antigo > s->value);                                // o antigo soma TODO o ruido do bloco
+    }
+
+    // ---- (f) GANHO x1,5 SEM clipping: o numerador estrito escala EXATAMENTE 20*log10(1,5) ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& t = cap.captured[StimulusId::ST03_PureSine];
+        double pico = 0.0;
+        for (std::size_t i = 0; i < t.size(); ++i) { t[i] *= 1.5; pico = std::max(pico, std::fabs(t[i])); }
+        CHECK(pico < 1.0);                                       // pre-condicao: NAO ha clipping
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value - SNR_REF, 20.0 * std::log10(1.5), 1e-6);
+    }
+
+    // ---- (g) CLIPPING x3: a fundamental e COMPRIMIDA e o antigo fica ACIMA do estrito ----
+    // O clipping cria harmonicas: o meanSquare as CONTA, o numerador estrito NAO. O ganho aparente
+    // fica muito abaixo dos 20*log10(3) ideais -- que e exatamente a informacao fisica correta.
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& t = cap.captured[StimulusId::ST03_PureSine];
+        double pico = 0.0;
+        for (std::size_t i = 0; i < t.size(); ++i) {
+            t[i] *= 3.0;
+            if (t[i] >  1.0) t[i] =  1.0;
+            if (t[i] < -1.0) t[i] = -1.0;
+            pico = std::max(pico, std::fabs(t[i]));
+        }
+        CHECK_NEAR(pico, 1.0, 1e-12);                            // pre-condicao: HA clipping
+        ResultBundle b = eng.computeAllMetrics(cap);
+        const Scalar* s = snrSc(b);
+        const double antigo = 10.0 * std::log10(psTotal(bloco1k(cap))) - nfDe(b);
+        CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+        CHECK_NEAR(s->value, 94.161086680, 1e-6);
+        CHECK(antigo > s->value);                                // o antigo conta as harmonicas de clipping
+        CHECK(s->value < SNR_REF + 20.0 * std::log10(3.0) - 2.0);// muito abaixo do ganho ideal
+    }
+
+    // ---- (h) INVARIANCIA TEMPORAL DO QUADRO CENTRADO (gate A dispensado) ----
+    // A invariancia decorre do ENQUADRAMENTO -- quadro de 4096 centrado num bloco de 2 s --, NAO de
+    // correlacao ou alinhamento: nenhum bestLag participa do caminho. 2400 amostras = 50 ms, o limite
+    // exato da politica de latencia do projeto; o comportamento se mantem MUITO alem disso.
+    {
+        const int offsets[3] = { 0, 913, 2400 };
+        for (int d : offsets) {
+            CapturedSet cap = harness::makeLoopback(FS, 0, false);
+            cap.captured[StimulusId::ST03_PureSine] =
+                harness::shift(cap.captured[StimulusId::ST03_PureSine], d);
+            ResultBundle b = eng.computeAllMetrics(cap);
+            const Scalar* s = snrSc(b);
+            CHECK(s != nullptr && s->quality == Quality::Normal && s->valuePresent);
+            CHECK_NEAR(s->value, SNR_REF, 1e-6);                 // identico ao caso sem deslocamento
+        }
+        // margem: mesmo a 4800 amostras (100 ms, o DOBRO da politica) nada muda.
+        CapturedSet capM = harness::makeLoopback(FS, 0, false);
+        capM.captured[StimulusId::ST03_PureSine] =
+            harness::shift(capM.captured[StimulusId::ST03_PureSine], 4800);
+        CHECK_NEAR(snrSc(eng.computeAllMetrics(capM))->value, SNR_REF, 1e-6);
+    }
+
+    // ---- (i) ST-03 AUSENTE -> Error (precedencia estrutural preservada pelo P1-006) ----
+    {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured.erase(StimulusId::ST03_PureSine);
+        ResultBundle b = eng.computeAllMetrics(cap);
+        CHECK(b.find("MS-10") != nullptr);                       // a familia EXISTE
+        CHECK(q10(b) == Quality::Error);
+        CHECK(snrSc(b) == nullptr);                              // Error nao emite escalar no Core
+        CHECK(b.metrics.size() == 15);
+    }
+
+    // ---- (j) NAO-REGRESSAO DO DENOMINADOR (P1-005): pn continua sendo o piso oficial do MS-08 ----
+    // A identidade so fecha se o denominador continuar vindo do MS-08 pela fonte unica de verdade.
+    // Trocar o numerador NAO pode ter reaberto o denominador.
+    {
+        CHECK_NEAR(snrSc(bRef)->value,
+                   10.0 * std::log10(psFund(bloco1k(capRef))) - nfDe(bRef), 1e-9);
+        // piso LowConfidence -> propaga, com valor presente
+        CapturedSet capLc = harness::makeLoopback(FS, 0, false);
+        capLc.captured[StimulusId::ST09_Silence] =
+            harness::deterministicNoise(static_cast<std::size_t>(4096 + 4 * 2048), -95.0);
+        ResultBundle bLc = eng.computeAllMetrics(capLc);
+        CHECK(q10(bLc) == Quality::LowConfidence);
+        CHECK(snrSc(bLc) != nullptr && snrSc(bLc)->valuePresent);
+        CHECK_NEAR(snrSc(bLc)->value, 86.823790210, 1e-6);
+        // piso NotApplicable -> sem valor, e a sentinela -300 dBFS NAO volta como ~+291 dB
+        CapturedSet capNa = harness::makeLoopback(FS, 0, false);
+        std::vector<double>& z = capNa.captured[StimulusId::ST09_Silence];
+        std::fill(z.begin(), z.end(), 0.0);
+        ResultBundle bNa = eng.computeAllMetrics(capNa);
+        CHECK(q10(bNa) == Quality::NotApplicable);
+        CHECK(snrSc(bNa) != nullptr && !snrSc(bNa)->valuePresent);
+        CHECK(!(snrSc(bNa)->valuePresent && snrSc(bNa)->value > 200.0));
+        CHECK_NEAR(nfDe(bNa), -300.0, 1e-9);
+    }
+
+    // ---- (k) CC-A: contrato EXATO que o LabEngine tem de reproduzir ----
+    // A convergencia C++ <-> JS e verificada fora do harness C++ (o LabEngine e JavaScript). O que
+    // este bloco fixa sao os pontos de referencia normativos comparados la: a selecao de bins e os
+    // valores publicados. Se qualquer um mudar, a comparacao externa deixa de fechar.
+    {
+        const int N = 4096;
+        const int k0 = static_cast<int>(1000.0 * N / FS + 0.5);
+        CHECK(k0 == 85);                                         // Math.round(1000*4096/48000) = 85
+        CHECK_NEAR(static_cast<double>(k0 - 2) * FS / N, 972.65625, 1e-9);   // loHz
+        CHECK_NEAR(static_cast<double>(k0 + 2) * FS / N, 1019.53125, 1e-9);  // hiHz
+        // o quadro CENTRADO tem de ser a mesma expressao inteira dos dois lados
+        const int len = static_cast<int>(bloco1k(capRef).size());
+        CHECK((len - N) / 2 == ((len - N) >> 1));
+        CHECK_NEAR(snrSc(bRef)->value, SNR_REF, 1e-6);
+    }
+
+    // ---- (l) GATES ANTERIORES intactos ----
+    {
+        CHECK_NEAR(nfDe(bRef), -95.799789257, 1e-6);             // MS-08 (P1-002/P1-003)
+        const MetricResult* m9 = bRef.find("MS-09");
+        CHECK(m9 != nullptr);
+        for (const Scalar& s : m9->scalars)
+            if (s.key == "DynamicRange_dB") {
+                CHECK_NEAR(s.value, 86.789489300, 1e-6);         // MS-09 (P1-004)
+                CHECK(s.estimate == EstimateNature::LowerBound); // P1-009 estagio 1
+            }
+        const Scalar* s10 = snrSc(bRef);
+        CHECK(s10 != nullptr && s10->estimate == EstimateNature::Point);  // P1-007 NAO antecipado
+        CHECK(bRef.metrics.size() == 15);
     }
 }
 

@@ -1050,16 +1050,19 @@ function computeMS09(signal, officialNoiseFloor, stepSource){
   return {quality:q, dynamicrange_db: lmaxDb - nf, valuePresent:true, estimateNature:nature};
 }
 /* MS-10 (SNR) — SEXTA família nativa, terceira do grupo de ruído. Método oficial (AnalysisEngine::snr):
-       SNR_dB = 10·log10(ps/pn),  ps = meanSquare(bloco de 1 kHz do ST-03),  pn = piso OFICIAL da MS-08.
+       SNR_dB = 10·log10(ps/pn),  ps = potência da FUNDAMENTAL do bloco de 1 kHz do ST-03,
+                                  pn = piso OFICIAL da MS-08.
    PURA, agnóstica. P1-005: o denominador deixou de ser o RMS temporal de banda LARGA do ST-09 e passou
    a ser o Noise Floor band-limited 20 Hz–20 kHz já calculado pela MS-08 — as duas famílias discordavam
    sobre o MESMO silêncio (até 52,8 dB com conteúdo ultrassônico). A MS-10 NÃO recomputa o ST-09 e NÃO
    cria um segundo Welch: o resultado da MS-08 é a fonte de verdade.
+   P1-006: o NUMERADOR deixou de ser o meanSquare do bloco INTEIRO e passou a ser S/N ESTRITO — a
+   potência da fundamental retornada, medida pela MESMA máquina espectral absoluta (officialBandPower,
+   Hann + ENBW/Parseval, N=4096) num quadro único CENTRADO no bloco, bins k0±2. Sem alinhamento
+   temporal: a invariância vem do enquadramento, não de correlação (gate A dispensado — TC-049).
    D-DEPENDÊNCIA-DE-FAMÍLIA (mesmo precedente da MS-09): a segunda entrada é o RESULTADO CIENTÍFICO
    OFICIAL da MS-08 (objeto), não o contrato/UI — a família não conhece apresentação. Reproduz
-   internamente a semântica do Core (Normal/LowConfidence/NotApplicable/Error) e a PRESENÇA do valor.
-   O NUMERADOR permanece CONGELADO (bloco inteiro, meanSquare temporal, recorte [2 s,4 s)) — qualquer
-   questão do numerador pertence ao P1-006. RMS é primitiva aritmética privada, inline. */
+   internamente a semântica do Core (Normal/LowConfidence/NotApplicable/Error) e a PRESENÇA do valor. */
 function computeMS10(signal, officialNoiseFloor){
   const fs=signal.sampleRate, seg=Math.round(2.0*fs);
   const nf = officialNoiseFloor && officialNoiseFloor.noisefloor_dbfs;   // dependência: resultado oficial da MS-08
@@ -1073,8 +1076,27 @@ function computeMS10(signal, officialNoiseFloor){
   // Recorte [2 s, 4 s): região ESTACIONÁRIA do estímulo oficial (mesma convenção do Core e de MS-05/06).
   // NÃO é otimização — é a definição científica do trecho analisável do ST-03.
   const tone=signal.samples.slice(seg, 2*seg);
-  const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
-  const ps=ms(tone);                               // numerador congelado (P1-006)
+  // P1-006 / D2-V8 — numerador = POTÊNCIA DA FUNDAMENTAL RETORNADA, não do bloco inteiro. Antes, ps
+  // era o meanSquare do bloco INTEIRO, de modo que o SNR incorporava distorção, ruído, DC e energia
+  // fora da banda: ps_total/ps_fund = 1 + (THD+N/100)² EXATAMENTE, ou seja o "SNR" MELHORAVA num DUT
+  // muito distorcido. A distorção pertence a MS-05/MS-06, que NÃO são alteradas.
+  // Referência OUTPUT-REFERRED (D3): ps é medido EXCLUSIVAMENTE da captura.
+  // Estimador: a MESMA máquina espectral absoluta do piso (officialBandPower — Hann + ENBW/Parseval,
+  // N=4096), num quadro único CENTRADO no bloco, mesma convenção da MS-09; nenhuma variante de Welch.
+  // SELEÇÃO DE BINS (contrato exato, indispensável para CC-A): k0 = round(1000·N/fs) → 85 em
+  // 48 kHz/N=4096, região k0±2 → bins {83,84,85,86,87}. Os limites vão em Hz como (k0∓2)·fs/N —
+  // EXATAMENTE a mesma expressão com que officialBandPower calcula a frequência de cada bin —, logo
+  // a comparação de borda é igualdade bit-a-bit e o conjunto de bins é idêntico ao do Core.
+  const NF=4096, F0=1000;                          // frequência nominal FIXA, sem peak tracking
+  const K0=Math.round(F0*NF/fs);
+  const loHz=(K0-2)*fs/NF, hiHz=(K0+2)*fs/NF;
+  let ps=0;
+  if(tone.length>=NF){
+    const offT=(tone.length-NF)>>1;                // quadro CENTRADO no bloco
+    ps=officialBandPower(tone, offT, NF, fs, loHz, hiHz);
+  }
+  // Observação mais curta que um quadro deixa ps = 0 → 10·log10(0/pn) = −Infinity, EXATAMENTE o que
+  // o meanSquare de um bloco vazio já produzia. Nenhuma política nova foi introduzida aqui.
   const pn=Math.pow(10, nf/10);                    // piso oficial da MS-08 em potência linear
   // Ramo preservado do Core (pn ≤ 0 → 200 dB), reproduzido sem reinterpretação e alcançável apenas
   // após o operando ter sido validado acima. FATO REGISTRADO: com o pn derivado da MS-08 ele é
