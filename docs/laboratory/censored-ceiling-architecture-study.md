@@ -276,8 +276,8 @@ precisamente a decisão que **P1-007/D4** terá de tomar.
 > 3. Ratificado que `−300 dBFS` **não é limite superior metrológico do piso**, e sim guarda contra
 >    `log10(0)`: a leitura "o piso é *no máximo* isso" **não** sustenta um `UpperBound` físico.
 >
-> **P1-007 permanece NÃO IMPLEMENTADO.** Ver [`metrics-audit.md`](./metrics-audit.md) → *Registro de
-> Decisão — P1-007*.
+> **À data desta nota, o P1-007 permanecia NÃO IMPLEMENTADO; foi implementado posteriormente em
+> `64163e3`.** Ver [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-007*.
 
 O problema é transversal **por evidência, não por especulação**. Um mecanismo compartilhado não é
 superengenharia; a ausência dele forçaria P1-007 a inventar um segundo tratamento *ad hoc* e

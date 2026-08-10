@@ -219,7 +219,7 @@ exige um estímulo específico; ausência ⇒ `Error`.
 | ~~**D1**~~ ✅ | Ruído band-limited (alinhado ao MS-08) + checagem fora-de-banda na Integridade | B | **EXECUTADA em P1-005** — algoritmo convergido (`pn` do MS-08), TC-048 criado, documentação atualizada. Checagem fora-de-banda na Integridade permanece fora do escopo | — |
 | ~~**D2/V8**~~ ✅ | S/N estrito; distorção fica com MS-05/06/07 | A | **EXECUTADA em P1-006** — numerador = potência da fundamental retornada, TC-049 criado, TC-048 atualizado nos pontos que fixavam o numerador antigo, documentação atualizada | — |
 | **D3** | Manter output-referred | A | **Sem impacto de código** · **Altera documentação** | — |
-| **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — **P1-007 RATIFICADO, não implementado** (§P): o objeto foi **reclassificado** — não é `pn≈0`, é a **saturação numérica do piso**; limiares → P2 |
+| **D4** | Propagar estados de qualidade; SNR baixo reduz confiança | B (princípio) | **Altera algoritmo** · **Altera UI** · **Altera testes** · **Altera documentação** | **Sim** — **P1-007 CONCLUÍDO** (§P): o objeto foi **reclassificado** — não é `pn≈0`, é a **saturação numérica do piso**; limiares → P2 |
 | **D5** | Conceito de apresentação aprovado | B | **Altera UI** · **Altera documentação** (concretização → P2) | Faixas/saturação → P2 |
 
 ### Matriz de Rastreabilidade — MS-10
@@ -247,7 +247,7 @@ deve seguir este registro como referência normativa.
 > independentemente no Windows (§N). **D2/V8 CONCLUÍDA** pelo **P1-006**, validada independentemente
 > no Windows (§O) — o MS-10 é hoje **S/N estrito**. **D3** não exigia código e foi **honrada**: a
 > referência permanece *output-referred*, medida exclusivamente da captura. **D4** permanece com o
-> **P1-007**, hoje **RATIFICADO arquiteturalmente e NÃO IMPLEMENTADO** (§P), com objeto
+> **P1-007**, hoje **RATIFICADO e IMPLEMENTADO** (§P, `64163e3`), com objeto
 > **reclassificado**: o alvo não é `pn ≈ 0` — inalcançável no caminho oficial —, mas a **saturação
 > numérica do piso** publicada como medição pontual. A taxonomia `EstimateNature` **não** será
 > aplicada agora (**D6**: falta `L` metrologicamente justificável). **D5** permanece no Pilar 2.
@@ -475,7 +475,10 @@ Registrada também a caracterização anterior em **preset vazio** (Noise Floor 
 Dynamic Range 290 dB): trata-se de **silêncio digital bit-exato** — `−300 dBFS` é o *clamp*
 `10·log10(1e-30)` e `200 dB` é o retorno de saturação de `snrDb` para `pn ≤ 0`. Esse caso é
 **insensível ao fator ENBW** (produziria o mesmo valor com a normalização anterior) e, portanto,
-**não constitui evidência sobre o P1-001**; ele exercita P1-002, P1-004 e P1-007, que permanecem abertos.
+**não constitui evidência sobre o P1-001**; ele exercita P1-002, P1-004 e P1-007, **abertos à época deste
+registro** e desde então concluídos. Os valores citados descrevem o comportamento **anterior** ao P1-007:
+no contrato atual, o silêncio digital bit-exato resulta em `NotApplicable`/`valuePresent = false` no MS-08,
+herdado por MS-09 e MS-10.
 
 ### E.6 Validação A/B — **reprocessamento offline, sem nova aquisição**
 
@@ -1835,7 +1838,7 @@ O **TC-048** protege o P1-005 e cobre:
 |---|---|:--:|
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família. Mesma classe da divergência corrigida no MS-10, em família fora do escopo autorizado | 🔴 **Aberto** |
 | ~~**P1-006**~~ ✅ | Numerador do SNR — `S/N` estrito (D2/V8) | ✅ **CONCLUÍDO depois** (`a702c0f`) — ver §O |
-| **P1-007** | `pn ≈ 0` / limite inferior (D4) | ⬜ Não iniciado — deve **reutilizar `EstimateNature`** *(reclassificado depois em §P; `EstimateNature` **não** aplicada — D6)* |
+| **P1-007** | `pn ≈ 0` / limite inferior (D4) | ✅ **Concluído** *(reclassificado em §P para a saturação numérica do piso; `EstimateNature` **não** aplicada — D6)* |
 | **P1-008** | Trust Ladder — porta inferior | ⬜ Não iniciado |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — não corrigido; o P1-005 não o amplia |
 
@@ -2098,7 +2101,7 @@ também não foram tocados.
 
 | ID | Achado | Estado |
 |---|---|:--:|
-| **P1-007** | Semântica de limite do MS-10 — objeto **reclassificado**: saturação numérica do piso, não `pn ≈ 0` | ⬜ **RATIFICADO arquiteturalmente (§P) — NÃO IMPLEMENTADO** |
+| **P1-007** | Semântica de limite do MS-10 — objeto **reclassificado**: saturação numérica do piso, não `pn ≈ 0` | ✅ **CONCLUÍDO** — ratificado (§P, `3459490`) e implementado (`64163e3`), TC-056 |
 | **P1-008** | Trust Ladder — porta inferior | ⬜ **Não iniciado** |
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família | 🔴 **Aberto** — corrigido apenas para o MS-10 |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — o P1-006 não o amplia |
@@ -2116,9 +2119,11 @@ a dispensa está **condicionada às premissas geométricas registradas em §O.2*
 
 ## Registro de Decisão — P1-007 (Semântica de Limite do MS-10) — **NORMATIVO**
 
-> **Status: RATIFICAÇÃO ARQUITETURAL APROVADA — implementação NÃO autorizada.**
-> **P1-007 permanece NÃO IMPLEMENTADO.** Este registro fixa a política; nenhuma alteração de código,
-> teste, frontend, exportação, Evidence Package ou CMake acompanha esta etapa.
+> **Status: RATIFICADO E IMPLEMENTADO.** A ratificação (`3459490`) precedeu a implementação (`64163e3`);
+> o texto histórico desta seção foi preservado e o desfecho consta da síntese de encerramento.
+> **Nota de desfecho.** Quando escrito, este registro fixava a política sem alteração de código. A
+> implementação veio em `64163e3`, conforme a política aqui ratificada; as decisões D1–D9 **não** foram
+> alteradas por ela.
 > **Referência:** *Registro de Decisão — MS-10* → **D4** · `noise-floor-definition.md` §5.1.
 
 ### P.1 Reclassificação do objeto técnico
@@ -2268,10 +2273,10 @@ A próxima autorização técnica deverá definir **separadamente**:
 
 ### P.10 Estado
 
-**P1-007 NÃO IMPLEMENTADO.** Esta é uma ratificação arquitetural pré-implementação: fixa política,
-vedações e escopo, **sem** alterar `src/`, `tests/`, `resources/`, `tools/`, `validation/`, CMake,
-exportação ou Evidence Package. Permanecem abertos e **não corrigidos**: **DV-10** (o defeito
-material), **F10**, **DV-6** e **P1-009 estágio 2**.
+**Histórico.** Esta seção foi escrita como ratificação arquitetural pré-implementação: fixou política,
+vedações e escopo sem alterar `src/`, `tests/`, `resources/`, `tools/`, `validation/`, CMake,
+exportação ou Evidence Package. **DV-10** foi corrigida em seguida por `64163e3`, com **TC-056**.
+Permanecem abertos e **não corrigidos**: **F10**, **DV-6** e **P1-009 estágio 2**.
 
 ---
 
@@ -2295,7 +2300,7 @@ Fluxo metodológico por métrica (o mesmo empregado no MS-10 e no MS-08): **(1)*
 
 | Métrica | Estado |
 |---|---|
-| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo). **D1 implementada no P1-005** (§N) e **D2/V8 no P1-006** (§O) — denominador e numerador convergidos. **D4 ratificado no P1-007** (§P), com objeto reclassificado para a **saturação numérica do piso** — **não implementado** |
+| **MS-10 — SNR** | ✅ **Encerrado** (Registro de Decisão normativo). **D1 implementada no P1-005** (§N) e **D2/V8 no P1-006** (§O) — denominador e numerador convergidos. **D4 ratificado e implementado no P1-007** (§P, `64163e3`), com objeto reclassificado para a **saturação numérica do piso** |
 | **MS-08 — Noise Floor** | ✅ **Encerrado** (definição normativa ratificada — N1; `noise-floor-definition.md`) |
 | **MS-09 — Dynamic Range** | ✅ **Encerrado** (Registro de Decisão D1–D3; `dynamic-range-definition.md` APROVADA; alinhamento de implementação → Pilar 1, sob AR-01) |
 

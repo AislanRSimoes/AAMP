@@ -87,7 +87,7 @@ cuja finalidade é **proteger `log10(0)`**. Ratifica-se que essa constante **nã
 | Condição | Significado | Contrato |
 |---|---|---|
 | `integFull == 0` | **ausência de observação quantitativa** — nada foi observado, ou o observado é identicamente nulo | `NotApplicable`, `valuePresent = false` |
-| `0 < integFull < 1e-30` | **saturação numérica do estimador** — há energia, mas abaixo do domínio numérico representável | `NotApplicable`, `valuePresent = false` — **política ratificada (P1-007/D5); ainda NÃO implementada** |
+| `0 < integFull < 1e-30` | **saturação numérica do estimador** — há energia, mas abaixo do domínio numérico representável | `NotApplicable`, `valuePresent = false` — **política ratificada e implementada (P1-007/D5, `64163e3`)** |
 | `integFull ≥ 1e-30` | **valor quantitativo representável** | `Normal` (ou `LowConfidence` conforme observação) |
 
 O significado da faixa intermediária é, e deve ser documentado como, exatamente: *“o estimador atual
@@ -99,11 +99,13 @@ sobre o piso físico do dispositivo.
 > pode deslocá-la sem que a **grandeza normativa** definida neste documento mude — o que é apenas a
 > aplicação, a este caso, do *Princípio da Independência do Estimador* (§2).
 
-**Estado de implementação.** Na implementação vigente, a faixa `0 < integFull < 1e-30` é publicada
-como `Normal` / `valuePresent = true` com o valor saturado `−300,0000 dBFS`, e é consumida como
-medição válida por **MS-09** e **MS-10**. Isso é **semanticamente inválido** e constitui o objeto
-técnico do **P1-007**, que **permanece não implementado**. Registro completo em
-[`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-007*.
+**Estado de implementação.** A faixa `0 < integFull < 1e-30` resulta em `NotApplicable` /
+`valuePresent = false`, e **MS-09** e **MS-10** herdam esse estado pelo contrato do operando. Antes do
+**P1-007** ela era publicada como `Normal` / `valuePresent = true` com o valor saturado `−300,0000 dBFS`
+e consumida como medição válida — condição **semanticamente inválida**, corrigida em `64163e3`.
+O valor `−300` **permanece no campo** (D3 do P1-004); o que nunca mais ocorre é acompanhar
+`valuePresent = true`. Registro completo em [`metrics-audit.md`](./metrics-audit.md) →
+*Registro de Decisão — P1-007*.
 
 ## 6. Relação com as demais camadas
 
