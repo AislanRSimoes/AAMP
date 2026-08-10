@@ -1073,8 +1073,27 @@ function computeMS10(signal, officialNoiseFloor){
   // Recorte [2 s, 4 s): região ESTACIONÁRIA do estímulo oficial (mesma convenção do Core e de MS-05/06).
   // NÃO é otimização — é a definição científica do trecho analisável do ST-03.
   const tone=signal.samples.slice(seg, 2*seg);
-  const ms=x=>{if(!x.length)return 0; let s=0; for(let i=0;i<x.length;i++)s+=x[i]*x[i]; return s/x.length;};
-  const ps=ms(tone);                               // numerador congelado (P1-006)
+  // P1-006 / D2-V8 — numerador = POTÊNCIA DA FUNDAMENTAL RETORNADA, não do bloco inteiro. Antes, ps
+  // era o meanSquare do bloco INTEIRO, de modo que o SNR incorporava distorção, ruído, DC e energia
+  // fora da banda: ps_total/ps_fund = 1 + (THD+N/100)² EXATAMENTE, ou seja o "SNR" MELHORAVA num DUT
+  // muito distorcido. A distorção pertence a MS-05/MS-06, que NÃO são alteradas.
+  // Referência OUTPUT-REFERRED (D3): ps é medido EXCLUSIVAMENTE da captura.
+  // Estimador: a MESMA máquina espectral absoluta do piso (officialBandPower — Hann + ENBW/Parseval,
+  // N=4096), num quadro único CENTRADO no bloco, mesma convenção da MS-09; nenhuma variante de Welch.
+  // SELEÇÃO DE BINS (contrato exato, indispensável para CC-A): k0 = round(1000·N/fs) → 85 em
+  // 48 kHz/N=4096, região k0±2 → bins {83,84,85,86,87}. Os limites vão em Hz como (k0∓2)·fs/N —
+  // EXATAMENTE a mesma expressão com que officialBandPower calcula a frequência de cada bin —, logo
+  // a comparação de borda é igualdade bit-a-bit e o conjunto de bins é idêntico ao do Core.
+  const NF=4096, F0=1000;                          // frequência nominal FIXA, sem peak tracking
+  const K0=Math.round(F0*NF/fs);
+  const loHz=(K0-2)*fs/NF, hiHz=(K0+2)*fs/NF;
+  let ps=0;
+  if(tone.length>=NF){
+    const offT=(tone.length-NF)>>1;                // quadro CENTRADO no bloco
+    ps=officialBandPower(tone, offT, NF, fs, loHz, hiHz);
+  }
+  // Observação mais curta que um quadro deixa ps = 0 → 10·log10(0/pn) = −Infinity, EXATAMENTE o que
+  // o meanSquare de um bloco vazio já produzia. Nenhuma política nova foi introduzida aqui.
   const pn=Math.pow(10, nf/10);                    // piso oficial da MS-08 em potência linear
   // Ramo preservado do Core (pn ≤ 0 → 200 dB), reproduzido sem reinterpretação e alcançável apenas
   // após o operando ter sido validado acima. FATO REGISTRADO: com o pn derivado da MS-08 ele é
