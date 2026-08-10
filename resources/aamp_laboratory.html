@@ -959,15 +959,30 @@ function computeMS08(signal){
     frames++;
   }
   const integFull=frames>0 ? acc/frames : 0;              // média Welch sobre todos os quadros
-  const noisefloor_dbfs=10*Math.log10(Math.max(integFull,1e-30));
+  // PISO_MIN — fronteira COMPUTACIONAL (clamp de log10), NÃO resolução metrológica do AAMP e NÃO
+  // limite de observabilidade do hardware (noise-floor-definition.md §5.1). Espelha o PISO_MIN do
+  // Core, que pelo mesmo motivo não vive em Constants.h.
+  const PISO_MIN=1e-30;
+  const noisefloor_dbfs=10*Math.log10(Math.max(integFull,PISO_MIN));
   // P1-002 — classificação da observação, espelha AnalysisEngine::noiseFloor (CC-A).
   // Estrutural, sem limiar novo; NÃO detecta "silêncio sujo" (DV-4 → Pilar 2).
-  //   frames == 0     → nenhuma janela observada: não há medição      → NotApplicable
-  //   integFull == 0  → piso não-mensurável (silêncio digital)        → NotApplicable
-  //   frames < 16     → observação aquém da linha de base do projeto  → LowConfidence
+  //   frames == 0            → nenhuma janela observada: não há medição   → NotApplicable
+  //   integFull < PISO_MIN   → ver P1-007 abaixo                          → NotApplicable
+  //   frames < 16            → observação aquém da linha de base          → LowConfidence
+  //
+  // P1-007 / D4-D5 (DV-10) — saturação numérica NÃO é medição. A janela 0 < integFull < PISO_MIN
+  // publicava o valor SATURADO −300,0000 dBFS como Normal/valuePresent=true, e MS-09/MS-10 o
+  // consumiam como operando válido (≈ 291 dB). Mesma classe da DV-5 por outra rota: o P1-005 fechou
+  // a rota do ESTADO, esta é a rota do CLAMP.
+  //   integFull == 0            → ausência de observação quantitativa
+  //   0 < integFull < PISO_MIN  → saturação numérica do estimador
+  //   integFull >= PISO_MIN     → valor quantitativo representável
+  // A comparação é `<` (e não `!(x >= PISO_MIN)`) DELIBERADAMENTE: com NaN ambas as guardas, a
+  // antiga e a nova, avaliam FALSO — a classificação de valores não-finitos fica inalterada.
+  // F10 permanece separado e não é corrigido nem ampliado aqui.
   const NOISE_AVG_FRAMES=16;                             // k::NOISE_AVG_FRAMES do Core
   let quality='Normal', valuePresent=true;
-  if(frames<=0||integFull<=0){quality='NotApplicable'; valuePresent=false;}
+  if(frames<=0||integFull<PISO_MIN){quality='NotApplicable'; valuePresent=false;}
   else if(frames<NOISE_AVG_FRAMES){quality='LowConfidence';}
   return {noisefloor_dbfs, frames, quality, valuePresent};
 }

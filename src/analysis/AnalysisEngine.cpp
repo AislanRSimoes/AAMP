@@ -783,22 +783,46 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
     // suficiente"; Rastreabilidade: condicao declarada junto ao numero) e N4/D4.
     // Condicoes ESTRUTURAIS, sem limiar novo. A deteccao de "silencio sujo" (DV-4) NAO e feita
     // aqui: depende de limiar, que pertence ao Pilar 2.
-    //   fr2 == 0        -> nenhuma janela observada: nao ha medicao      -> NotApplicable
-    //   integFull == 0  -> piso nao-mensuravel (silencio digital)        -> NotApplicable
-    //   fr2 < 16        -> observacao aquem da linha de base do projeto  -> LowConfidence
+    //   fr2 == 0                 -> nenhuma janela observada: nao ha medicao   -> NotApplicable
+    //   integFull  < PISO_MIN    -> ver P1-007 logo abaixo                     -> NotApplicable
+    //   fr2 < 16                 -> observacao aquem da linha de base          -> LowConfidence
     // O limite de 16 reutiliza k::NOISE_AVG_FRAMES, a observacao ja dimensionada pelo projeto;
     // nao e um limiar novo.
+    //
+    // ---- P1-007 / D4-D5 (DV-10): saturacao numerica NAO e medicao ----
+    // O clamp max(integFull, PISO_MIN) existe para proteger log10(0). Ate aqui, a janela
+    //     0 < integFull < PISO_MIN
+    // era classificada como Normal/valuePresent=true e publicava o valor SATURADO -300,0000 dBFS
+    // como se fosse medida -- e o MS-09 (DR ~ 290,9897 dB) e o MS-10 (SNR ~ 290,9885 dB) o
+    // consumiam como operando valido. E a mesma classe da DV-5 por outra rota: o P1-005 fechou a
+    // rota do ESTADO, esta e a rota do CLAMP.
+    // A condicao passa de `integFull <= 0` para `integFull < PISO_MIN`, unificando os dois casos
+    // sob o unico significado sustentavel: "o estimador atual nao fornece uma medicao quantitativa
+    // utilizavel para essa entrada".
+    //   integFull == 0            -> ausencia de observacao quantitativa
+    //   0 < integFull < PISO_MIN  -> saturacao numerica do estimador
+    //   integFull >= PISO_MIN     -> valor quantitativo representavel
+    // PISO_MIN e FRONTEIRA COMPUTACIONAL desta implementacao, NAO resolucao metrologica do AAMP e
+    // NAO limite de observabilidade do hardware (noise-floor-definition.md sec.5.1). Por isso NAO
+    // vai para Constants.h, que guarda constantes cientificas normativas.
+    //
+    // A comparacao e `<` (e nao `!(x >= PISO_MIN)`) DELIBERADAMENTE: com NaN ambas as guardas, a
+    // antiga e a nova, avaliam FALSO, de modo que a classificacao de valores nao-finitos fica
+    // BIT-A-BIT inalterada. F10 permanece separado e nao e corrigido nem ampliado aqui.
+    const double PISO_MIN = 1e-30;               // fronteira computacional (clamp de log10)
     Quality nfQuality = Quality::Normal;
     bool    nfPresent = true;
-    if (fr2 <= 0 || integFull <= 0.0) { nfQuality = Quality::NotApplicable; nfPresent = false; }
+    if (fr2 <= 0 || integFull < PISO_MIN) { nfQuality = Quality::NotApplicable; nfPresent = false; }
     else if (fr2 < k::NOISE_AVG_FRAMES) { nfQuality = Quality::LowConfidence; }
 
-    // Quando nfPresent e false o campo numerico NAO deve ser interpretado como medicao (o valor
-    // permanece o do clamp apenas para que o MS-09 mantenha comportamento identico -- Q4/P1-002;
-    // fazer o MS-09 honrar nf.quality pertence a P1-003/P1-004).
+    // Quando nfPresent e false o campo numerico NAO deve ser interpretado como medicao: o valor do
+    // clamp permanece no campo por decisao D3 do P1-004 (a sentinela nao foi removida), mas desde o
+    // P1-007 ele nunca mais acompanha valuePresent=true na janela de saturacao. O gate e SEMANTICO
+    // -- quality=NotApplicable + valuePresent=false --, e e ele que impede qualquer consumidor de
+    // tratar -300 dBFS como medicao. Nenhum consumidor reconhece a sentinela por VALOR.
     if (USE_FULL_OBSERVATION)
-        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, 1e-30)), "dBFS", nfQuality, nfPresent});
-    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, 1e-30)), "dBFS", nfQuality, nfPresent});
+        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, PISO_MIN)), "dBFS", nfQuality, nfPresent});
+    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, PISO_MIN)), "dBFS", nfQuality, nfPresent});
     // Descritor auditavel da condicao (sec.7 Rastreabilidade): sempre valido e presente -- e o
     // discriminador entre "nada observado" (0) e "observado e nulo" (>0), que compartilham o clamp.
     r.scalars.push_back({"NoiseFloor_frames", static_cast<double>(fr2), "n", Quality::Normal, true});

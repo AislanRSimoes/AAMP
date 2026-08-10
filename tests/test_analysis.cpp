@@ -1513,6 +1513,227 @@ TEST_CASE("TC-049 MS-10 ps = potencia da fundamental, S/N estrito (P1-006)") {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// TC-056 -- P1-007 / DV-10: SATURACAO NUMERICA do piso NAO e medicao.
+//
+// IDENTIFICADOR: varrido mecanicamente em todo o repositorio E em todo o historico antes da edicao.
+// TC-050..TC-055 e TC-060..TC-063 estao OCUPADOS (test_export, test_orchestrator, E2E); a primeira
+// lacuna real e TC-056. NAO se assumiu TC-050/TC-051.
+//
+// O clamp max(integFull, 1e-30) existe para proteger log10(0). Antes do P1-007 a janela
+//     0 < integFull < 1e-30
+// era publicada como Normal / valuePresent=true com o valor SATURADO -300,0000 dBFS, e o MS-09
+// (DR ~ 290,9897 dB) e o MS-10 (SNR ~ 290,9885 dB) o consumiam como operando VALIDO. E a mesma
+// classe da DV-5 por outra rota: o P1-005 fechou a rota do ESTADO, esta e a rota do CLAMP.
+//
+// O que este teste IMPEDE de reintroduzir: (i) publicar o valor clampado como medicao; (ii) deixar
+// MS-09/MS-10 derivarem ~291 dB de um piso saturado; (iii) mover a fronteira sem perceber; (iv)
+// confundir "nada observado" com "observado abaixo do representavel".
+//
+// FRONTEIRA COMPUTACIONAL, nao metrologica: 1e-30 e propriedade desta implementacao, nao resolucao
+// do AAMP nem limite de observabilidade do hardware (noise-floor-definition.md sec.5.1).
+//
+// FORA DE ESCOPO, deliberadamente: F10 (NaN/Inf), DV-6, P1-008 e P1-009 estagio 2.
+TEST_CASE("TC-056 MS-08 saturacao numerica -> NotApplicable; MS-09/MS-10 herdam (P1-007/DV-10)") {
+    AnalysisEngine eng(FS);
+    const double PI = 3.14159265358979;
+    const double PISO_MIN = 1e-30;                 // a MESMA fronteira do Core
+
+    // ORACULO INDEPENDENTE de integFull: Welch(Hann, N=4096, hop=2048) + ENBW/Parseval, integracao
+    // em 20 Hz-20 kHz, media sobre TODOS os quadros. Reconstruido aqui SEM chamar noiseFloor():
+    // e ele que decide de que LADO da fronteira cada fixture realmente cai -- o teste nao confia em
+    // amplitude nominal.
+    auto integFullOracle = [&](const std::vector<double>& sig) {
+        const int N = 4096, hop = 2048;
+        std::vector<double> win(static_cast<std::size_t>(N));
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < N; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2.0 * PI * i / (N - 1));
+            win[static_cast<std::size_t>(i)] = w; s1 += w; s2 += w * w;
+        }
+        const double kPow = 1.0 / (2.0 * (static_cast<double>(N) * s2 / (s1 * s1)));
+        std::vector<double> acc(static_cast<std::size_t>(N / 2), 0.0);
+        int fr = 0;
+        for (std::size_t st = 0; st + static_cast<std::size_t>(N) <= sig.size(); st += static_cast<std::size_t>(hop)) {
+            std::vector<double> buf(static_cast<std::size_t>(N));
+            for (int i = 0; i < N; ++i)
+                buf[static_cast<std::size_t>(i)] = sig[st + static_cast<std::size_t>(i)] * win[static_cast<std::size_t>(i)];
+            std::vector<Complex> X = Fft::forwardReal(buf, N);
+            for (int b = 0; b < N / 2; ++b) {
+                const double m = std::abs(X[static_cast<std::size_t>(b)]) / s1 * 2.0;
+                acc[static_cast<std::size_t>(b)] += m * m * kPow;
+            }
+            ++fr;
+        }
+        if (fr == 0) return 0.0;
+        double band = 0.0;
+        for (int b = 0; b < N / 2; ++b) {
+            const double f = static_cast<double>(b) * FS / N;
+            if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
+            band += acc[static_cast<std::size_t>(b)] / fr;
+        }
+        return band;
+    };
+    // CONTROLE NEGATIVO: reproduz o comportamento ANTIGO -- clamp publicado como medicao. Nao usa
+    // nenhuma funcao do produto. Demonstra que a interpretacao rejeitada produzia ~291 dB.
+    auto antigoNfDbfs = [&](const std::vector<double>& st09) {
+        return 10.0 * std::log10(std::max(integFullOracle(st09), PISO_MIN));
+    };
+
+    auto q = [](const ResultBundle& b, const char* fam) {
+        const MetricResult* m = b.find(fam);
+        return m == nullptr ? Quality::Error : m->quality;
+    };
+    auto esc = [](const ResultBundle& b, const char* fam, const char* key) -> const Scalar* {
+        const MetricResult* m = b.find(fam);
+        if (m == nullptr) return nullptr;
+        for (const Scalar& s : m->scalars) if (s.key == key) return &s;
+        return nullptr;
+    };
+    auto comSt09 = [&](std::vector<double> z) {
+        CapturedSet cap = harness::makeLoopback(FS, 0, false);
+        cap.captured[StimulusId::ST09_Silence] = z;
+        return cap;
+    };
+
+    // Fixtures escolhidas com MARGEM DELIBERADA da fronteira (nunca sobre ela, para que nenhum
+    // arredondamento da FFT torne a classificacao ambigua):
+    //   -280 dBFS -> integFull ~ 8,32e-29  =  83x ACIMA de 1e-30
+    //   -320 dBFS -> integFull ~ 8,32e-33  = 120x ABAIXO de 1e-30
+    const std::size_t NS = static_cast<std::size_t>(6 * 48000);
+    const std::vector<double> zSilencio(NS, 0.0);
+    const std::vector<double> zSub   = harness::deterministicNoise(NS, -320.0);
+    const std::vector<double> zSupra = harness::deterministicNoise(NS, -280.0);
+    const std::vector<double> zNominal = harness::deterministicNoise(NS, -95.0);
+
+    // ---- (a) os TRES lados da fronteira, verificados pelo estimador e nao pela amplitude ----
+    {
+        const double iZero = integFullOracle(zSilencio);
+        const double iSub = integFullOracle(zSub);
+        const double iSupra = integFullOracle(zSupra);
+        CHECK(iZero == 0.0);                                  // ausencia de observacao quantitativa
+        CHECK(iSub > 0.0 && iSub < PISO_MIN);                 // saturacao numerica -- estritamente dentro
+        CHECK(iSupra >= PISO_MIN);                            // valor representavel
+        CHECK(iSub  < PISO_MIN / 10.0);                       // margem: nao encosta na fronteira
+        CHECK(iSupra > PISO_MIN * 10.0);                      // margem do outro lado
+        CHECK(iSupra > iSub);                                 // ordenacao trivial, protege a fixture
+    }
+
+    // ---- (b) MS-08: silencio digital e saturacao numerica -> MESMO contrato ----
+    // Antes, apenas o primeiro era NotApplicable. Agora os dois sao, pelo unico significado
+    // sustentavel: "o estimador nao fornece medicao quantitativa utilizavel para essa entrada".
+    {
+        for (const std::vector<double>* z : { &zSilencio, &zSub }) {
+            ResultBundle b = eng.computeAllMetrics(comSt09(*z));
+            const Scalar* nf = esc(b, "MS-08", "NoiseFloor_dBFS");
+            CHECK(q(b, "MS-08") == Quality::NotApplicable);
+            CHECK(nf != nullptr && nf->quality == Quality::NotApplicable && !nf->valuePresent);
+            // D3/P1-004: a sentinela PERMANECE no campo -- o que nunca mais ocorre e acompanhar
+            // valuePresent=true. O gate e SEMANTICO, nao a remocao do numero.
+            CHECK_NEAR(nf->value, -300.0, 1e-9);
+        }
+        // discriminador auditavel: o silencio digital foi OBSERVADO (frames > 0), nao e "nada visto"
+        ResultBundle bSil = eng.computeAllMetrics(comSt09(zSilencio));
+        const Scalar* fr = esc(bSil, "MS-08", "NoiseFloor_frames");
+        CHECK(fr != nullptr && fr->value > 0.0 && fr->quality == Quality::Normal && fr->valuePresent);
+    }
+
+    // ---- (c) MS-08: acima da fronteira nada muda ----
+    {
+        ResultBundle b = eng.computeAllMetrics(comSt09(zSupra));
+        const Scalar* nf = esc(b, "MS-08", "NoiseFloor_dBFS");
+        CHECK(q(b, "MS-08") == Quality::Normal);
+        CHECK(nf != nullptr && nf->quality == Quality::Normal && nf->valuePresent);
+        CHECK_NEAR(nf->value, -280.7985, 0.001);              // valor REAL, nunca o clamp
+        CHECK(nf->value < -1.0 && nf->value > -300.0);
+    }
+
+    // ---- (d) PROPAGACAO: MS-09 e MS-10 herdam pelo contrato do operando, sem conhecer o -300 ----
+    // Nenhum tratamento especial foi criado nas familias derivadas: elas ja honravam
+    // quality/valuePresent desde o P1-004 (MS-09) e o P1-005 (MS-10).
+    {
+        ResultBundle b = eng.computeAllMetrics(comSt09(zSub));
+        CHECK(q(b, "MS-09") == Quality::NotApplicable);
+        CHECK(q(b, "MS-10") == Quality::NotApplicable);
+        const Scalar* dr = esc(b, "MS-09", "DynamicRange_dB");
+        const Scalar* sn = esc(b, "MS-10", "SNR_dB");
+        CHECK(dr != nullptr && dr->quality == Quality::NotApplicable && !dr->valuePresent);
+        CHECK(sn != nullptr && sn->quality == Quality::NotApplicable && !sn->valuePresent);
+        CHECK(b.metrics.size() == 15);                        // bundle integro
+    }
+
+    // ---- (e) CONTROLE NEGATIVO: a interpretacao ANTIGA produzia ~291 dB; hoje e rejeitada ----
+    // Este e o coracao do P1-007. Nao basta proteger contra silencio digital: o que se protege e
+    // contra SATURACAO PUBLICADA COMO MEDICAO.
+    {
+        ResultBundle b = eng.computeAllMetrics(comSt09(zSub));
+        const double nfAntigo = antigoNfDbfs(zSub);
+        CHECK_NEAR(nfAntigo, -300.0, 1e-9);                   // o metodo antigo entregava o clamp...
+        // ...e dele MS-09/MS-10 derivariam ~291 dB, reconstruidos aqui sem o produto:
+        const Scalar* teto = esc(b, "MS-09", "DynamicRange_dB");
+        (void)teto;
+        const double drAntigo = 86.789489300 + (-95.799789257 - nfAntigo); // DR = teto - piso
+        CHECK(drAntigo > 290.0 && drAntigo < 292.0);          // ~290,99 dB -- o valor espurio
+        // o contrato ATUAL rejeita essa leitura em ambas as familias:
+        CHECK(!(esc(b, "MS-09", "DynamicRange_dB")->valuePresent));
+        CHECK(!(esc(b, "MS-10", "SNR_dB")->valuePresent));
+        // e, por seguranca de regressao, nenhuma GRANDEZA EM dB das familias do piso e derivadas
+        // carrega o valor espurio. O escopo e MS-08/MS-09/MS-10 e unidades logaritmicas: outras
+        // familias tem escalares legitimamente acima de 200 (contagens, frequencias, amostras).
+        for (const char* fam : { "MS-08", "MS-09", "MS-10" }) {
+            const MetricResult* m = b.find(fam);
+            CHECK(m != nullptr);
+            for (const Scalar& s : m->scalars)
+                if (s.unit == "dB" || s.unit == "dBFS")
+                    CHECK(!(s.valuePresent && s.value > 200.0));
+        }
+    }
+
+    // ---- (f) NAO-REGRESSAO: o banco valido permanece numericamente identico ----
+    // A matematica do MS-08 para valores representaveis NAO pode mudar (TC-038/TC-039).
+    {
+        // piso claramente ACIMA do clamp, com comprimento proprio: valor real, nunca o clamp.
+        // A constante exata pertence ao BANCO DE REFERENCIA (bRef, abaixo) -- esta fixture tem
+        // outro numero de quadros, logo so a ordem de grandeza e comparavel.
+        ResultBundle b = eng.computeAllMetrics(comSt09(zNominal));
+        CHECK(q(b, "MS-08") == Quality::Normal);
+        CHECK(esc(b, "MS-08", "NoiseFloor_dBFS")->valuePresent);
+        CHECK_NEAR(esc(b, "MS-08", "NoiseFloor_dBFS")->value, -95.8, 0.1);
+        // banco de referencia: nao-regressao NUMERICA EXATA das tres familias (TC-038/TC-039)
+        ResultBundle bRef = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+        CHECK_NEAR(esc(bRef, "MS-08", "NoiseFloor_dBFS")->value, -95.799789257, 1e-6);
+        CHECK_NEAR(esc(bRef, "MS-09", "DynamicRange_dB")->value, 86.789489300, 1e-6);
+        CHECK_NEAR(esc(bRef, "MS-10", "SNR_dB")->value, 86.788268656, 1e-6);
+        CHECK(esc(bRef, "MS-09", "DynamicRange_dB")->estimate == EstimateNature::LowerBound);
+        CHECK(esc(bRef, "MS-10", "SNR_dB")->estimate == EstimateNature::Point);
+        // P1-007 NAO usa EstimateNature: na condicao saturada o valor esta AUSENTE, logo a natureza
+        // nao tem significado operacional. Nenhum LowerBound/UpperBound foi introduzido.
+        ResultBundle bSub = eng.computeAllMetrics(comSt09(zSub));
+        CHECK(esc(bSub, "MS-09", "DynamicRange_dB")->estimate == EstimateNature::Point);
+        CHECK(esc(bSub, "MS-10", "SNR_dB")->estimate == EstimateNature::Point);
+    }
+
+    // ---- (g) snrDb(): comportamento LEGADO da primitiva crua, preservado e agora COBERTO ----
+    // Registro explicito (P1-007, decisao desta etapa):
+    //   * o ramo pn <= 0 -> 200 dB e ALCANCAVEL por chamada direta a primitiva;
+    //   * NAO corresponde ao contrato cientifico do MS-10, que nesta condicao publica
+    //     NotApplicable / valuePresent=false -- ver (d);
+    //   * NAO existe chamador de producao: em todo o repositorio, so os testes a invocam;
+    //   * sua futura remocao ou depreciacao exige DECISAO PROPRIA de API/higiene, fora do P1-007.
+    // TC-033 permanece o teste da primitiva no dominio normal e NAO foi convertido em teste do
+    // MS-10 oficial.
+    {
+        const std::vector<double> sinal(1000, 0.5);
+        const std::vector<double> ruidoZero(1000, 0.0);
+        CHECK_NEAR(AnalysisEngine::snrDb(sinal, ruidoZero), 200.0, 1e-12);
+        CHECK_NEAR(AnalysisEngine::snrDb(sinal, {}), 200.0, 1e-12);          // ruido vazio
+        CHECK_NEAR(AnalysisEngine::snrDb(ruidoZero, ruidoZero), 200.0, 1e-12); // 200 ate SEM sinal
+        // contraste com o caminho oficial: a MESMA ausencia de ruido NAO produz 200 dB no MS-10.
+        ResultBundle bSil = eng.computeAllMetrics(comSt09(std::vector<double>(NS, 0.0)));
+        CHECK(esc(bSil, "MS-10", "SNR_dB") != nullptr && !esc(bSil, "MS-10", "SNR_dB")->valuePresent);
+    }
+}
+
 // TC-030: as 15 familias calculadas (ou N/A justificado), nenhuma em Error.
 TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
     AnalysisEngine eng(FS);
