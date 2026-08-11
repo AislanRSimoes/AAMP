@@ -8,6 +8,12 @@
 // Uso:
 //   wav_metric_harness reamp_ac30.wav thd        -> THD  (mapeia o WAV como ST-03 PureSine)
 //   wav_metric_harness reamp_st02_ac30.wav imd    -> IMD  (mapeia o WAV como ST-02 MultiTone)
+//   wav_metric_harness ST09_Capture.wav noise     -> Noise Floor (mapeia o WAV como ST-09 Silence)
+//
+// O modo 'noise' existe para REPROCESSAR uma captura ja adquirida (p.ex. o ST09_Capture.wav
+// extraido de um .aamp) com binarios de commits diferentes, permitindo comparar o mesmo dado
+// fisico antes e depois de uma convergencia do Pilar 1. Alem do escalar do MS-08, imprime pico,
+// RMS de banda larga e fator de crista do proprio WAV -- descritores do sinal, nao metricas.
 //
 // IMPORTANTE: thd() espera um SENO reampeado; imd() espera o MULTITOM reampeado. Rodar imd() sobre
 // um seno (ou thd() sobre o multitom) executa, mas o numero NAO tem significado fisico da metrica.
@@ -16,6 +22,7 @@
 
 #include "analysis/AnalysisEngine.h"
 #include <cstdio>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -77,7 +84,7 @@ static bool loadWav(const std::string& path, std::vector<double>& out, double& f
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "uso: %s <arquivo.wav> <thd|imd>\n", argv[0]);
+        std::fprintf(stderr, "uso: %s <arquivo.wav> <thd|imd|noise>\n", argv[0]);
         return 2;
     }
     const std::string path = argv[1];
@@ -100,9 +107,26 @@ int main(int argc, char** argv) {
     } else if (metric == "imd") {
         cap.captured[aamp::StimulusId::ST02_MultiTone] = samples;  // WAV como ST-02 (multitom reampeado)
         wantId = "MS-07";
+    } else if (metric == "noise") {
+        cap.captured[aamp::StimulusId::ST09_Silence] = samples;    // WAV como ST-09 (captura de silencio)
+        wantId = "MS-08";
     } else {
-        std::fprintf(stderr, "metrica desconhecida: %s (use thd ou imd)\n", metric.c_str());
+        std::fprintf(stderr, "metrica desconhecida: %s (use thd, imd ou noise)\n", metric.c_str());
         return 2;
+    }
+
+    // Descritores do PROPRIO WAV (nao sao metricas do AAMP): permitem verificar, sobre o dado
+    // fisico, se o residuo e ruidoso ou tonal -- ruido gaussiano tem crista ~13 dB; uma senoide,
+    // 3,01 dB. O estimador de Noise Floor e calibrado para ruido de banda larga.
+    {
+        double pk = 0.0, sq = 0.0;
+        for (double v : samples) { const double a = (v < 0.0 ? -v : v); if (a > pk) pk = a; sq += v * v; }
+        const double rms = samples.empty() ? 0.0 : std::sqrt(sq / static_cast<double>(samples.size()));
+        const double pkDb  = (pk  > 0.0) ? 20.0 * std::log10(pk)  : -300.0;
+        const double rmsDb = (rms > 0.0) ? 20.0 * std::log10(rms) : -300.0;
+        std::printf("WAV_peak_dBFS = %.4f\n", pkDb);
+        std::printf("WAV_rms_broadband_dBFS = %.4f\n", rmsDb);
+        std::printf("WAV_crest_dB = %.4f\n", pkDb - rmsDb);
     }
 
     aamp::ResultBundle bundle = eng.computeAllMetrics(cap);

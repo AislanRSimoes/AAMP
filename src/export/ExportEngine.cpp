@@ -1,11 +1,13 @@
 // AAMP - src/export/ExportEngine.cpp
 #include "ExportEngine.h"
+#include "../common/RiffWaveWriter.h"   // capacidade neutra de escrita RIFF/WAVE (fmt+data)
 #include <fstream>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
 #include <cmath>
 #include <map>
+#include <string>
 
 namespace aamp {
 
@@ -107,15 +109,9 @@ ExportStatus ExportEngine::exportScalarsCSV(const ResultBundle& b, const std::st
 }
 
 // --- WAV (RIFF/WAVE, IEEE float 32-bit, DOC-10 §4) ---
-static void put32(std::ostream& o, std::uint32_t v) {
-    char b[4] = { char(v & 0xFF), char((v >> 8) & 0xFF), char((v >> 16) & 0xFF), char((v >> 24) & 0xFF) };
-    o.write(b, 4);
-}
-static void put16(std::ostream& o, std::uint16_t v) {
-    char b[2] = { char(v & 0xFF), char((v >> 8) & 0xFF) };
-    o.write(b, 2);
-}
-
+// O núcleo RIFF/WAVE (fmt+data) é a capacidade NEUTRA RiffWaveWriter, consumida de forma
+// independente. Aqui o ExportEngine compõe, por conta própria, seu chunk LIST/INFO específico de
+// exportação e o anexa como trailing chunk — a capacidade neutra não conhece esse INFO.
 ExportStatus ExportEngine::exportWAV(const std::vector<double>& ir, double fs, int channels,
                                      const std::string& path) const {
     ExportStatus st; st.path = path;
@@ -123,44 +119,25 @@ ExportStatus ExportEngine::exportWAV(const std::vector<double>& ir, double fs, i
     std::ofstream f(path, std::ios::binary);
     if (!f) { st.message = "Nao foi possivel salvar " + path + ": destino nao gravavel."; return st; }
 
-    const std::uint16_t fmtCode = 3; // IEEE float
-    const std::uint16_t bits = 32;
-    const std::uint32_t sr = static_cast<std::uint32_t>(fs + 0.5);
-    const std::uint16_t ch = static_cast<std::uint16_t>(channels);
-    const std::uint32_t blockAlign = ch * (bits / 8);
-    const std::uint32_t byteRate = sr * blockAlign;
-    const std::uint32_t numFrames = static_cast<std::uint32_t>(ir.size());
-    const std::uint32_t dataBytes = numFrames * blockAlign;
-
-    // INFO (LIST) chunk
+    // INFO (LIST) chunk — metadados do domínio de EXPORTAÇÃO (fora da capacidade neutra).
     auto pad = [](std::string s){ if (s.size() % 2) s.push_back('\0'); return s; };
     std::string isft = pad(std::string("AAMP ") + m_version + '\0');
     std::string icrd = pad("2026-06-16\0");
     std::string icmt = pad("AAMP measurement IR\0");
-    std::uint32_t listBytes = 4 // "INFO"
+    const std::uint32_t listBytes = 4 // "INFO"
         + 8 + static_cast<std::uint32_t>(isft.size())
         + 8 + static_cast<std::uint32_t>(icrd.size())
         + 8 + static_cast<std::uint32_t>(icmt.size());
-
-    const std::uint32_t riffBytes = 4 + (8 + 16) + (8 + dataBytes) + (8 + listBytes);
-
-    f.write("RIFF", 4); put32(f, riffBytes); f.write("WAVE", 4);
-    // fmt
-    f.write("fmt ", 4); put32(f, 16);
-    put16(f, fmtCode); put16(f, ch); put32(f, sr); put32(f, byteRate);
-    put16(f, static_cast<std::uint16_t>(blockAlign)); put16(f, bits);
-    // data
-    f.write("data", 4); put32(f, dataBytes);
-    for (std::uint32_t i = 0; i < numFrames; ++i) {
-        float v = static_cast<float>(ir[i]);
-        for (int c = 0; c < channels; ++c) f.write(reinterpret_cast<const char*>(&v), 4);
-    }
-    // LIST INFO
-    f.write("LIST", 4); put32(f, listBytes); f.write("INFO", 4);
+    std::string list;
+    list.append("LIST", 4); riff::putU32(list, listBytes); list.append("INFO", 4);
     auto writeInfo = [&](const char* id, const std::string& s){
-        f.write(id, 4); put32(f, static_cast<std::uint32_t>(s.size())); f.write(s.data(), static_cast<std::streamsize>(s.size()));
+        list.append(id, 4); riff::putU32(list, static_cast<std::uint32_t>(s.size())); list.append(s);
     };
     writeInfo("ISFT", isft); writeInfo("ICRD", icrd); writeInfo("ICMT", icmt);
+
+    // fmt+data pela capacidade neutra; LIST/INFO anexado como trailing chunk (bytes idênticos).
+    const std::string bytes = riff::writeFloat32(ir, fs, channels, list);
+    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 
     f.flush();
     if (!f) { st.message = "Falha de escrita em " + path; return st; }
@@ -186,7 +163,8 @@ ReportModel ExportEngine::buildReportModel(const ResultBundle& b) const {
         "THD+N: " + sc("MS-06","THDN_pct"), "IMD: " + sc("MS-07","IMD_pct") } };
     ReportSection dyn{ "Dynamic Behaviour", {
         "Settling: " + sc("MS-13","SettlingTime_ms"),
-        "Repetition Consistency: " + sc("MS-13","RepetitionConsistency_pct"),
+        // V3 / AAMP-HG-20260811-001: rotulo neutro (o escalar e coeficiente de variacao); chave preservada.
+        "Repetition Variation: " + sc("MS-13","RepetitionConsistency_pct"),
         "Drift: " + sc("MS-13","Drift_dB") } };
     ReportSection mus{ "Musical Behaviour", {
         "Attack Tracking: " + sc("MS-14","AttackTracking_pct"),

@@ -55,7 +55,9 @@ DashboardModel buildDashboardModel(const ResultBundle& b) {
 
     DashboardSection dyn{ "Dynamic Behaviour", {
         item(b, "Settling Time", "MS-13", "SettlingTime_ms"),
-        item(b, "Repetition Consistency", "MS-13", "RepetitionConsistency_pct"),
+        // V3 / AAMP-HG-20260811-001: o escalar e um COEFICIENTE DE VARIACAO (0% = perfeito).
+        // Rotulo de apresentacao neutralizado; a chave do contrato NAO muda.
+        item(b, "Repetition Variation", "MS-13", "RepetitionConsistency_pct"),
         item(b, "Drift", "MS-13", "Drift_dB") } };
 
     DashboardSection mus{ "Musical Behaviour", {

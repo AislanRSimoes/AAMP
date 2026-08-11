@@ -21,6 +21,20 @@ enum class Quality {
 
 const char* qualityToString(Quality q);
 
+// Natureza LOGICA da estimativa (P1-009, estagio 1). TERCEIRO eixo do contrato, ORTOGONAL aos
+// outros dois -- nao os substitui e nao e derivavel deles:
+//   Quality       -> validade / confianca da medicao
+//   valuePresent  -> existencia de um valor numericamente interpretavel
+//   EstimateNature-> o que o valor AFIRMA sobre a grandeza (pontual ou unilateral)
+// Um limite inferior pode ser uma medicao plenamente confiavel e presente: apenas a QUANTIFICACAO
+// e unilateral. E vedado representar unilateralidade por LowConfidence ou por um valor novo de
+// Quality (Registro de Decisao -- P1-009).
+enum class EstimateNature {
+    Point,        // o valor E a grandeza:              X
+    LowerBound,   // a grandeza vale AO MENOS o valor:  >= X
+    UpperBound    // a grandeza vale NO MAXIMO o valor: <= X
+};
+
 // Modo de roteamento derivado automaticamente pela contagem de canais (FR-011, BR-010).
 enum class ChannelMode { Mono, Stereo };
 
@@ -42,6 +56,10 @@ struct Scalar {
     std::string unit;           // ex.: "%", "dB", "ms"
     Quality quality = Quality::Normal;
     bool valuePresent = true;   // false => 'N/A' literal na exportacao (BR-043)
+    // P1-009: ULTIMO membro, com inicializador padrao, para que as inicializacoes agregadas
+    // existentes {key, value, unit, quality, valuePresent} permanecam validas e para que toda
+    // metrica que nao se pronuncie continue sendo, por definicao, uma estimativa PONTUAL.
+    EstimateNature estimate = EstimateNature::Point;
 };
 
 // Resultado de uma familia MS-01..MS-15.

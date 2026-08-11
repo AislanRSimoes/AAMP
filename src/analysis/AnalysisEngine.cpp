@@ -27,6 +27,50 @@ static std::vector<double> magSpectrum(const std::vector<double>& sig, int n, Wi
     return mag;
 }
 
+// Espectro de POTENCIA de ruido, normalizado energeticamente (Parseval / ENBW) -- P1-001.
+// Dominio exclusivo de RUIDO de banda larga (MS-08). NAO substitui magSpectrum(), cuja normalizacao
+// por ganho coerente e a calibracao de AMPLITUDE DE TOM (TC-031/TC-032) e permanece inalterada.
+//
+// magSpectrum() entrega mag[b] na escala "amplitude de tom equivalente". Para ruido de banda larga
+// vale  E[ sum_b mag[b]^2 ] = 2 * sigma^2 * ENBW , logo a conversao para POTENCIA (media quadratica)
+// exige o fator 1/(2*ENBW):
+//   /2     -> amplitude de tom ao quadrado -> potencia (um seno de amplitude A tem potencia A^2/2);
+//   /ENBW  -> ruido espalha energia por ~ENBW bins, um tom concentra em 1 bin.
+// O fator e uma constante da FORMA da janela (independente de N, fs, nivel e overlap); assim
+// sum_{b na banda} p[b] estima diretamente o valor quadratico medio in-band, e 10*log10 desse valor
+// e o nivel RMS in-band em dBFS exigido por noise-floor-definition.md (secoes 2, 3 e 7).
+static std::vector<double> noisePowerSpectrum(const std::vector<double>& sig, int n, Window w) {
+    const std::vector<double> mag = magSpectrum(sig, n, w); // primitiva de TOM, usada sem alteracao
+    const double enbw = windowEnbwBins(makeWindow(w, n));
+    const double k = 1.0 / (2.0 * enbw);
+    std::vector<double> p(mag.size());
+    for (std::size_t b = 0; b < mag.size(); ++b) p[b] = mag[b] * mag[b] * k;
+    return p;
+}
+
+// Potencia in-band (20 Hz-20 kHz) de um bloco, pelo MESMO estimador espectral do MS-08 --
+// P1-003 / D2: o teto e o piso devem ser tomados na MESMA banda para que a diferenca seja
+// fisicamente valida (dynamic-range-definition.md sec.4/sec.5). Reutiliza noisePowerSpectrum,
+// isto e: Hann + normalizacao ENBW/Parseval, e integra os mesmos bins que o MS-08 integra.
+// Devolve POTENCIA linear (0 quando nao ha energia in-band), nao nivel em dB.
+// P1-006: a banda de integracao passa a ser PARAMETRIZAVEL, com os limites normativos como padrao.
+// Os chamadores existentes (MS-09) nao passam os parametros e permanecem NUMERICAMENTE IDENTICOS.
+// Nenhum segundo estimador foi criado: e a MESMA maquina espectral absoluta (Hann + ENBW/Parseval),
+// apenas com a regiao de integracao escolhida pelo consumidor -- banda inteira no piso, vizinhanca
+// do tom no sinal.
+static double inBandPower(const std::vector<double>& frame, int n, double fs, Window w,
+                          double loHz = k::BAND_LOW_HZ, double hiHz = k::BAND_HIGH_HZ) {
+    if (static_cast<int>(frame.size()) < n) return 0.0;
+    const std::vector<double> p = noisePowerSpectrum(frame, n, w);
+    double band = 0.0;
+    for (std::size_t b = 0; b < p.size(); ++b) {
+        const double f = static_cast<double>(b) * fs / static_cast<double>(n);
+        if (f < loHz || f > hiHz) continue;
+        band += p[b];
+    }
+    return band;
+}
+
 static double meanSquare(const std::vector<double>& x) {
     if (x.empty()) return 0.0;
     double s = 0.0;
@@ -119,6 +163,7 @@ static constexpr bool USE_FULL_IR          = true;  // IR completa exposta (sem 
 static constexpr int  WELCH_NFFT           = 16384; // janela Welch (quando religado)
 static void dbgUsage(MetricResult& r, const std::string& m, double bufTotal,
                      double regStart, double regEnd, double used, int fftSize, double fs); // fwd decl
+static int bestLag(const std::vector<double>& in, const std::vector<double>& out, int maxLag); // fwd decl (F9)
 
 MetricResult AnalysisEngine::freqResponse(const CapturedSet& cap) const {
     MetricResult r; r.id = "MS-01"; r.name = "Frequency Response";
@@ -694,8 +739,9 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         const std::size_t start = static_cast<std::size_t>(f * hop);
         if (start + static_cast<std::size_t>(N) > sig.size()) break;
         std::vector<double> frame = slice(sig, start, start + static_cast<std::size_t>(N));
-        std::vector<double> mag = magSpectrum(frame, N, Window::Hann);
-        for (std::size_t b = 0; b < acc.size(); ++b) acc[b] += mag[b] * mag[b];
+        // P1-001: estimativa energetica de ruido (ENBW/Parseval), nao a calibracao de tom.
+        std::vector<double> pw = noisePowerSpectrum(frame, N, Window::Hann);
+        for (std::size_t b = 0; b < acc.size(); ++b) acc[b] += pw[b];
         frames++;
     }
     Curve c; c.name = "Noise Floor"; c.xUnit = "Hz"; c.yUnit = "dBFS";
@@ -719,8 +765,8 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         fr2 = 0;
         for (std::size_t start = 0; start + static_cast<std::size_t>(N) <= sig.size(); start += static_cast<std::size_t>(hop)) {
             std::vector<double> frame = slice(sig, start, start + static_cast<std::size_t>(N));
-            std::vector<double> m2 = magSpectrum(frame, N, Window::Hann);
-            for (std::size_t b = 0; b < acc2.size(); ++b) acc2[b] += m2[b] * m2[b];
+            std::vector<double> p2 = noisePowerSpectrum(frame, N, Window::Hann); // P1-001
+            for (std::size_t b = 0; b < acc2.size(); ++b) acc2[b] += p2[b];
             ++fr2;
         }
         integFull = 0.0;
@@ -730,9 +776,55 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
                 if (f < k::BAND_LOW_HZ || f > k::BAND_HIGH_HZ) continue;
                 integFull += acc2[b] / fr2;
             }
-        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, 1e-30)), "dBFS", Quality::Normal, true});
     }
-    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, 1e-30)), "dBFS", Quality::Normal, true});
+
+    // ---- P1-002: classificacao da observacao (NAO altera o estimador do P1-001) ----
+    // Fundamento: noise-floor-definition.md sec.7 (Estabilidade: "dado tempo de observacao
+    // suficiente"; Rastreabilidade: condicao declarada junto ao numero) e N4/D4.
+    // Condicoes ESTRUTURAIS, sem limiar novo. A deteccao de "silencio sujo" (DV-4) NAO e feita
+    // aqui: depende de limiar, que pertence ao Pilar 2.
+    //   fr2 == 0                 -> nenhuma janela observada: nao ha medicao   -> NotApplicable
+    //   integFull  < PISO_MIN    -> ver P1-007 logo abaixo                     -> NotApplicable
+    //   fr2 < 16                 -> observacao aquem da linha de base          -> LowConfidence
+    // O limite de 16 reutiliza k::NOISE_AVG_FRAMES, a observacao ja dimensionada pelo projeto;
+    // nao e um limiar novo.
+    //
+    // ---- P1-007 / D4-D5 (DV-10): saturacao numerica NAO e medicao ----
+    // O clamp max(integFull, PISO_MIN) existe para proteger log10(0). Ate aqui, a janela
+    //     0 < integFull < PISO_MIN
+    // era classificada como Normal/valuePresent=true e publicava o valor SATURADO -300,0000 dBFS
+    // como se fosse medida -- e o MS-09 (DR ~ 290,9897 dB) e o MS-10 (SNR ~ 290,9885 dB) o
+    // consumiam como operando valido. E a mesma classe da DV-5 por outra rota: o P1-005 fechou a
+    // rota do ESTADO, esta e a rota do CLAMP.
+    // A condicao passa de `integFull <= 0` para `integFull < PISO_MIN`, unificando os dois casos
+    // sob o unico significado sustentavel: "o estimador atual nao fornece uma medicao quantitativa
+    // utilizavel para essa entrada".
+    //   integFull == 0            -> ausencia de observacao quantitativa
+    //   0 < integFull < PISO_MIN  -> saturacao numerica do estimador
+    //   integFull >= PISO_MIN     -> valor quantitativo representavel
+    // PISO_MIN e FRONTEIRA COMPUTACIONAL desta implementacao, NAO resolucao metrologica do AAMP e
+    // NAO limite de observabilidade do hardware (noise-floor-definition.md sec.5.1). Por isso NAO
+    // vai para Constants.h, que guarda constantes cientificas normativas.
+    //
+    // A comparacao e `<` (e nao `!(x >= PISO_MIN)`) DELIBERADAMENTE: com NaN ambas as guardas, a
+    // antiga e a nova, avaliam FALSO, de modo que a classificacao de valores nao-finitos fica
+    // BIT-A-BIT inalterada. F10 permanece separado e nao e corrigido nem ampliado aqui.
+    const double PISO_MIN = 1e-30;               // fronteira computacional (clamp de log10)
+    Quality nfQuality = Quality::Normal;
+    bool    nfPresent = true;
+    if (fr2 <= 0 || integFull < PISO_MIN) { nfQuality = Quality::NotApplicable; nfPresent = false; }
+    else if (fr2 < k::NOISE_AVG_FRAMES) { nfQuality = Quality::LowConfidence; }
+
+    // Quando nfPresent e false o campo numerico NAO deve ser interpretado como medicao: o valor do
+    // clamp permanece no campo por decisao D3 do P1-004 (a sentinela nao foi removida), mas desde o
+    // P1-007 ele nunca mais acompanha valuePresent=true na janela de saturacao. O gate e SEMANTICO
+    // -- quality=NotApplicable + valuePresent=false --, e e ele que impede qualquer consumidor de
+    // tratar -300 dBFS como medicao. Nenhum consumidor reconhece a sentinela por VALOR.
+    if (USE_FULL_OBSERVATION)
+        r.scalars.push_back({"NoiseFloor_dBFS_fixed", 10.0 * std::log10(std::max(integ, PISO_MIN)), "dBFS", nfQuality, nfPresent});
+    r.scalars.push_back({"NoiseFloor_dBFS",   10.0 * std::log10(std::max(integFull, PISO_MIN)), "dBFS", nfQuality, nfPresent});
+    // Descritor auditavel da condicao (sec.7 Rastreabilidade): sempre valido e presente -- e o
+    // discriminador entre "nada observado" (0) e "observado e nulo" (>0), que compartilham o clamp.
     r.scalars.push_back({"NoiseFloor_frames", static_cast<double>(fr2), "n", Quality::Normal, true});
     {
         const double covBase = (frames > 0) ? static_cast<double>((frames - 1) * hop + N) : 0.0;
@@ -741,7 +833,7 @@ MetricResult AnalysisEngine::noiseFloor(const CapturedSet& cap) const {
         dbgUsage(r, "NF", static_cast<double>(sig.size()), 0.0, cov, cov, N, m_fs);
     }
 
-    r.quality = Quality::Normal;
+    r.quality = nfQuality;   // P1-002 (antes: Quality::Normal incondicional)
     return r;
 }
 
@@ -752,26 +844,109 @@ MetricResult AnalysisEngine::dynamicRange(const CapturedSet& cap) const {
     MetricResult nf = noiseFloor(cap);
     // Piso de ruido lido por CHAVE: apos a observacao integral, noiseFloor passou a empilhar
     // NoiseFloor_frames por ultimo, entao .back() nao e mais o dBFS. Ler explicitamente a chave.
-    double lnf = 0.0; bool haveNf = false;
+    double lnf = 0.0; bool haveNf = false, nfPresent = false;
+    Quality nfQuality = Quality::Error;
     for (const auto& sc : nf.scalars)
-        if (sc.key == "NoiseFloor_dBFS") { lnf = sc.value; haveNf = true; break; }
+        if (sc.key == "NoiseFloor_dBFS") { lnf = sc.value; haveNf = true; nfPresent = sc.valuePresent; nfQuality = sc.quality; break; }
     if (step == cap.captured.end() || !haveNf) { r.quality = Quality::Error; return r; }
-    const int seg = static_cast<int>(0.100 * m_fs + 0.5);
-    double lmaxRms = 0.0;
-    for (int s = 0; s < 8; ++s) {
-        std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg), static_cast<std::size_t>((s + 1) * seg));
-        if (part.empty()) continue;
-        const double rms = std::sqrt(meanSquare(part));
-        if (peak(part) < 1.0) lmaxRms = std::max(lmaxRms, rms);
-    }
-    if (lmaxRms <= 0.0) {   // nenhum degrau valido (todos clipados/vazios) -> nao caracterizavel
+
+    // ---- P1-004 / DV-5: o MS-09 passa a HONRAR o estado do piso ----
+    // Antes, o piso era lido apenas POR CHAVE e `nf.quality`/`valuePresent` eram ignorados: um piso
+    // NAO CARACTERIZAVEL entregava a sentinela -300 dBFS como se fosse medida, produzindo um DR
+    // espurio de ~+291 dB em estado Normal. Sem piso nao existe a grandeza: DR = teto - piso e
+    // indefinido. A sentinela permanece no campo do MS-08 (D3 desta etapa) -- o que muda e que o
+    // MS-09 nunca mais a interpreta como medicao.
+    if (!nfPresent || nfQuality == Quality::NotApplicable) {
         r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
         r.quality = Quality::NotApplicable;
         return r;
     }
-    const double lmaxDb = 20.0 * std::log10(lmaxRms);
-    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", Quality::Normal, true});
-    r.quality = Quality::Normal;
+
+    // ---- F9: alinhamento temporal local (MESMA convencao ja empregada pelo MS-13) ----
+    // A latencia da cadeia desloca a captura; fatiar a partir da amostra 0 faz cada janela de
+    // 100 ms misturar degraus adjacentes e enviesa o teto para baixo de forma sistematica
+    // (~-0,32 dB para o offset de ~913 amostras observado em loopback).
+    // O lag atua SOMENTE sobre indices de leitura: nenhum buffer e deslocado, filtrado ou
+    // reamostrado, e NADA da definicao espectral do teto (P1-003) e alterado aqui.
+    StimulusGenerator gen(m_fs);
+    const std::vector<double> src = gen.getStimulus(StimulusId::ST08_DynamicStep).samples;
+    if (src.empty()) {
+        // Sem a fonte emitida nao ha referencia temporal para as fronteiras dos degraus: o
+        // estimador aprovado nao pode caracterizar. NAO se usa o fatiamento desalinhado como
+        // fallback -- ele e sabidamente enviesado. (No caminho NATIVO a fonte e regenerada
+        // deterministicamente, entao este ramo e inalcancavel; ele existe para manter o mesmo
+        // contrato do LabEngine, onde a fonte vem do Evidence Package e pode faltar.)
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+    const int maxLag = static_cast<int>(0.050 * m_fs);   // mesma politica de latencia do MS-13/MS-14
+    const int lag = bestLag(extractEnvelope(src, m_fs), extractEnvelope(step->second, m_fs), maxLag);
+
+    const int seg = static_cast<int>(0.100 * m_fs + 0.5);
+    // ---- P1-003 (D2): o teto passa a ser o NIVEL RMS IN-BAND (20 Hz-20 kHz), medido pelo mesmo
+    // estimador espectral do MS-08. Ordem obrigatoria, com F9 integralmente preservado:
+    //   (1) alinhar temporalmente (lag, acima)  -> (2) segmentar o degrau
+    //   (3) gate de clipping no sinal BRUTO no tempo -> (4) so entao estimar o nivel in-band.
+    // O gate permanece temporal por necessidade fisica: saturacao e fenomeno de amplitude no
+    // tempo e NAO e detectavel num espectro restrito a banda.
+    const int N = 4096;                     // mesma janela do MS-08; NAO reduzir para obter quadros
+    double lmaxDb = 0.0; bool haveCeil = false;
+    // ---- P1-009 (estagio 1): fatos primarios para derivar a NATUREZA da estimativa ----
+    // Sao os DOIS unicos fatos necessarios, ambos ja produzidos pelo laco: o indice do degrau
+    // selecionado (s*) e o indice do PRIMEIRO degrau rejeitado por saturacao (min(C)). Nada e
+    // recomputado -- nem alinhamento, nem segmentacao, nem espectro, nem clipping -- e nenhum
+    // escalar publico e criado para eles (isso pertence ao estagio 2, nao autorizado).
+    int selectedStepIndex = -1;             // s*
+    int firstClippedIndex = -1;             // min(C); -1 quando C == vazio
+    for (int s = 0; s < 8; ++s) {
+        std::vector<double> part = slice(step->second, static_cast<std::size_t>(s * seg + lag), static_cast<std::size_t>((s + 1) * seg + lag));
+        if (part.empty()) continue;
+        if (peak(part) >= 1.0) {                               // (3) gate TEMPORAL, sinal bruto
+            if (firstClippedIndex < 0) firstClippedIndex = s;   // varredura ascendente => min(C)
+            continue;
+        }
+        if (static_cast<int>(part.size()) < N) continue;
+        const int off = (static_cast<int>(part.size()) - N) / 2;  // quadro CENTRADO no degrau
+        const std::vector<double> frame = slice(part, static_cast<std::size_t>(off), static_cast<std::size_t>(off + N));
+        const double bp = inBandPower(frame, N, m_fs, Window::Hann);   // (4) nivel in-band
+        if (bp <= 0.0) continue;                                // degrau sem energia na banda
+        const double lvl = 10.0 * std::log10(bp);
+        if (!haveCeil || lvl > lmaxDb) { lmaxDb = lvl; haveCeil = true; selectedStepIndex = s; }
+    }
+    if (!haveCeil) {   // nenhum degrau valido (todos clipados/vazios) -> nao caracterizavel
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+    // ---- P1-004 / D3 (dynamic-range-definition.md sec.7): degeneracao teto <= piso ----
+    // O sinal nao se eleva acima do ruido: nao ha extensao util, logo a grandeza NAO EXISTE.
+    // A especificacao veda reportar valor positivo espurio E numero negativo; inclui o caso-limite
+    // teto == piso. Nao se aplica zero, abs() nem clamp -- o valor simplesmente nao e interpretavel.
+    if (lmaxDb <= lnf) {
+        r.scalars.push_back({"DynamicRange_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+    // ---- P1-004: propagacao de LowConfidence do piso ----
+    // DR = teto - piso; uma limitacao de confianca do piso limita a confianca do derivado.
+    const Quality drQuality = (nfQuality == Quality::LowConfidence) ? Quality::LowConfidence : Quality::Normal;
+    // ---- P1-009 (estagio 1): NATUREZA da estimativa (dynamic-range-definition.md sec.6) ----
+    // O teto normativo e o INICIO DA SATURACAO. So ha estimativa PONTUAL quando a saturacao foi
+    // efetivamente demonstrada IMEDIATAMENTE acima do maior degrau valido -- so entao o inicio da
+    // saturacao esta encaixotado entre s* e min(C). Em qualquer outra situacao sabe-se apenas que a
+    // cadeia SUPORTA AO MENOS o nivel de s*, o que sustenta `DR >= X` e nao `DR = X`:
+    //   C == vazio e s* == ultimo degrau   -> censura pelo limite superior do ensaio
+    //   C != vazio e min(C) >  s* + 1      -> saturacao observada porem NAO encaixotada
+    //   C == vazio e s* <  ultimo degrau   -> degraus superiores invalidos por outra causa
+    //                                        (captura truncada / sem energia in-band)
+    // Derivada EXCLUSIVAMENTE de INDICES: nenhuma comparacao de double participa da classificacao,
+    // de modo que a regra permanece bem definida mesmo sob entrada nao-finita (F10 permanece
+    // aberto e NAO e corrigido aqui).
+    const bool saturacaoEncaixotada = (firstClippedIndex >= 0) && (firstClippedIndex == selectedStepIndex + 1);
+    const EstimateNature nature = saturacaoEncaixotada ? EstimateNature::Point : EstimateNature::LowerBound;
+    r.scalars.push_back({"DynamicRange_dB", lmaxDb - lnf, "dB", drQuality, true, nature});
+    r.quality = drQuality;
     return r;
 }
 
@@ -781,10 +956,76 @@ MetricResult AnalysisEngine::snr(const CapturedSet& cap) const {
     auto sig = cap.captured.find(StimulusId::ST03_PureSine);
     auto noi = cap.captured.find(StimulusId::ST09_Silence);
     if (sig == cap.captured.end() || noi == cap.captured.end()) { r.quality = Quality::Error; return r; }
+    // ---- P1-005 / D1: o denominador do SNR passa a ser o Noise Floor OFICIAL do MS-08 ----
+    // Antes, pn era meanSquare(ST-09) em BANDA LARGA, enquanto o MS-08 ja publicava o piso
+    // band-limited 20 Hz-20 kHz: as duas familias discordavam sobre o MESMO silencio (ate 52,8 dB
+    // com conteudo ultrassonico). O MS-10 NAO recomputa o ST-09, NAO cria um segundo Welch e NAO
+    // usa meanSquare(ST-09) no caminho produtivo -- o resultado do MS-08 e a fonte de verdade.
+    // NoiseFloor_dBFS ja e 10*log10(potencia in-band), na MESMA escala absoluta de meanSquare
+    // (verificado: somado em toda a banda o estimador reproduz meanSquare com erro de 0,0022 dB),
+    // logo a conversao e direta, sem fator de correcao.
+    MetricResult nf = noiseFloor(cap);
+    double nfDb = 0.0; bool haveNf = false, nfPresent = false;
+    Quality nfQuality = Quality::Error;
+    for (const auto& sc : nf.scalars)
+        if (sc.key == "NoiseFloor_dBFS") { nfDb = sc.value; haveNf = true; nfPresent = sc.valuePresent; nfQuality = sc.quality; break; }
+    if (!haveNf) { r.quality = Quality::Error; return r; }
+
+    // ---- P1-005 / D3: contrato do operando (mesmo ja consolidado no P1-004 para o MS-09) ----
+    // Sem piso semanticamente presente nao existe a razao ps/pn. E VEDADO converter a sentinela
+    // -300 dBFS em potencia e trata-la como medicao: ela pertence ao contrato interno do MS-08 e
+    // NAO e operando valido quando valuePresent e false (produziria SNR ~ +291 dB em Normal).
+    if (!nfPresent || nfQuality == Quality::NotApplicable) {
+        r.scalars.push_back({"SNR_dB", 0.0, "dB", Quality::NotApplicable, false});
+        r.quality = Quality::NotApplicable;
+        return r;
+    }
+
+    // ---- P1-006 / D2-V8: numerador = POTENCIA DA FUNDAMENTAL RETORNADA, nao do bloco inteiro ----
+    // Antes, ps era meanSquare do bloco de 1 kHz INTEIRO, de modo que o SNR incorporava distorcao,
+    // ruido, DC e energia fora da banda: mede-se que ps_total/ps_fund = 1 + (THD+N/100)^2 EXATAMENTE,
+    // ou seja, o SNR publicado era o SNR estrito somado a uma funcao monotona do THD+N -- num DUT
+    // muito distorcido o "SNR" MELHORAVA. A distorcao pertence a MS-05/MS-06, que NAO sao alteradas.
+    // Referencia OUTPUT-REFERRED (D3): ps e medido EXCLUSIVAMENTE da captura.
+    //
+    // Estimador: a MESMA maquina espectral absoluta do piso (Hann + ENBW/Parseval, N=4096), num
+    // quadro unico CENTRADO no bloco -- mesma convencao do MS-09, sem introduzir variante de Welch.
+    //
+    // SELECAO DE BINS (contrato exato, indispensavel para CC-A). O bin nominal e
+    //     k0 = int(1000 * N / fs + 0.5)   -> 85  em 48 kHz / N=4096
+    // e a regiao e k0+-2 -> bins {83,84,85,86,87}. Os limites sao expressos em Hz como
+    // (k0-+2)*fs/N, EXATAMENTE a mesma expressao com que inBandPower calcula a frequencia de cada
+    // bin; logo a comparacao de borda e uma igualdade bit-a-bit e o conjunto de bins e identico em
+    // C++ e JS. Nao se usa largura em Hz aproximada.
     const int seg = static_cast<int>(2.0 * m_fs + 0.5);
     std::vector<double> tone = slice(sig->second, static_cast<std::size_t>(seg), static_cast<std::size_t>(2 * seg)); // 1 kHz
-    const double v = snrDb(tone, noi->second);
-    Quality q = Quality::Normal;
+    const int NF = 4096;                                  // mesma janela do MS-08/MS-09
+    const double f0 = 1000.0;                             // frequencia nominal FIXA (sem peak tracking),
+                                                          // mesma convencao literal ja usada por MS-05/06
+    const int k0 = static_cast<int>(f0 * NF / m_fs + 0.5);
+    const double loHz = static_cast<double>(k0 - 2) * m_fs / static_cast<double>(NF);
+    const double hiHz = static_cast<double>(k0 + 2) * m_fs / static_cast<double>(NF);
+    double ps = 0.0;
+    if (static_cast<int>(tone.size()) >= NF) {
+        const int off = (static_cast<int>(tone.size()) - NF) / 2;   // quadro CENTRADO no bloco
+        const std::vector<double> frame = slice(tone, static_cast<std::size_t>(off), static_cast<std::size_t>(off + NF));
+        ps = inBandPower(frame, NF, m_fs, Window::Hann, loHz, hiHz);
+    }
+    // Observacao mais curta que um quadro deixa ps = 0 -> 10*log10(0/pn) = -inf, EXATAMENTE o que
+    // meanSquare de um bloco vazio ja produzia. Nenhuma politica nova foi introduzida aqui.
+    const double pn = std::pow(10.0, nfDb / 10.0);
+
+    // Ramo preservado de snrDb() (pn <= 0 -> 200 dB), reproduzido AQUI sem reinterpretacao e
+    // alcancavel apenas apos o operando ter sido validado acima.
+    // FATO REGISTRADO: com o pn derivado do MS-08 este ramo e ESTRUTURALMENTE INALCANCAVEL para um
+    // operando valido -- NoiseFloor_dBFS = 10*log10(max(integFull, 1e-30)) tem minimo -300 dBFS,
+    // logo pn >= 1e-30 > 0; e o caso integFull == 0 ja retornou NotApplicable acima. Nenhum caso
+    // artificial foi inventado para exercita-lo, e snrDb() permanece intacta (D2/D4). A semantica
+    // fisica desse limite continua reservada ao P1-007.
+    const double v = (pn <= 0.0) ? 200.0 : 10.0 * std::log10(ps / pn);
+
+    // ---- P1-005 / D3: propagacao de LowConfidence do piso ----
+    const Quality q = (nfQuality == Quality::LowConfidence) ? Quality::LowConfidence : Quality::Normal;
     r.scalars.push_back({"SNR_dB", v, "dB", q, true});
     r.quality = q;
     return r;
@@ -1009,7 +1250,15 @@ MetricResult AnalysisEngine::musical(const CapturedSet& cap) const {
     }
     aggr /= K;
     r.scalars.push_back({"AggregateLinearity_dB", aggr, "dB", Quality::Normal, true});
-    r.scalars.push_back({"Reproducibility_pct", 100.0, "%", Quality::Normal, true});
+    // V4 / AAMP-HG-20260811-001 (alternativa B): Reproducibility_pct e PLACEHOLDER, nao medicao.
+    // Publicava-se 100.0 com Quality::Normal + valuePresent=true + EstimateNature::Point (padrao),
+    // isto e: indistinguivel de uma medicao pontual valida nos TRES eixos ratificados no P1-009
+    // estagio 1. Passa a declarar ausencia de medicao pelo contrato ja existente. O valor bruto
+    // 100.0 e conservado por compatibilidade estrutural e e semanticamente INERTE com
+    // valuePresent=false -- nao e sentinela e nao deve ser interpretado. EstimateNature permanece
+    // Point (padrao): sem valor presente a natureza e inoperante, e LowerBound/UpperBound
+    // afirmariam algo quantitativo que o placeholder nao demonstra.
+    r.scalars.push_back({"Reproducibility_pct", 100.0, "%", Quality::NotApplicable, false});
     r.quality = Quality::Normal;
     return r;
 }

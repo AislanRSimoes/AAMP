@@ -7,6 +7,8 @@
 #include "../common/Constants.h"               // REF_SAMPLE_RATE
 #include "../export/ExportEngine.h"            // M-07 (DOC-10): CSV/WAV/PDF/PNG
 #include "../export/render/JuceRenderWriters.h"// JucePdfWriter/JucePngWriter (máquina-alvo)
+#include "../evidence/EvidenceRecorder.h"      // Fase 1: observação da aquisição -> EvidencePackage
+#include "../evidence/EvidenceSerializer.h"    // Fase 1: EvidencePackage -> .aamp de evidência
 #include <algorithm>                           // std::find_if
 
 namespace aamp {
@@ -283,6 +285,7 @@ void AampWebBridge::doPrepare(juce::var args) {
         val->setProperty("message", juce::String(msg));
         auto* o = new juce::DynamicObject();
         o->setProperty("state", "Error"); o->setProperty("validation", juce::var(val));
+        o->setProperty("requestId", args.getProperty("requestId", juce::var()));  // Sprint 1: correlação
         emitEvent("prepared", juce::var(o));
     };
     if (chosen == nullptr) { emitError("Nenhum dispositivo de aquisicao conectado."); return; }
@@ -298,7 +301,7 @@ void AampWebBridge::doPrepare(juce::var args) {
     s.inputDeviceName  = isAsio ? devName
                                 : (devType != nullptr ? bridgeBestInputFor(devType, devName) : devName);
     s.useDefaultInputChannels = true; s.useDefaultOutputChannels = true;
-    m_dm.setAudioDeviceSetup(s, true);
+    const juce::String hwErr1 = m_dm.setAudioDeviceSetup(s, true);   // [HWSWITCH] erro de abertura (antes descartado)
     juce::AudioIODevice* dev = m_dm.getCurrentAudioDevice();
     if (dev == nullptr) { emitError("Nao foi possivel abrir o dispositivo selecionado."); return; }
 
@@ -315,12 +318,35 @@ void AampWebBridge::doPrepare(juce::var args) {
     cs.outputChannels.setBit(ob);
     if (stereo && nIn >= 2 && nOut >= 2) { cs.inputChannels.setBit(ib + 1); cs.outputChannels.setBit(ob + 1); }
     cs.sampleRate = k::REF_SAMPLE_RATE;                  // DOC-03: fs fixo (48000)
-    m_dm.setAudioDeviceSetup(cs, true);
+    const juce::String hwErr2 = m_dm.setAudioDeviceSetup(cs, true); // [HWSWITCH] erro de reconfiguração (antes descartado)
 
     juce::AudioIODevice* dev2 = m_dm.getCurrentAudioDevice();
     m_deviceReady = (dev2 != nullptr);                  // BR-003: device aberto e validado (READY)
     m_prepFs = (dev2 && dev2->getCurrentSampleRate() > 0.0) ? dev2->getCurrentSampleRate() : k::REF_SAMPLE_RATE;
     m_selectedDeviceName = chosen->name;
+
+    // [HWSWITCH] Verificação objetiva da reconfiguração (motivada pelo sintoma Helix-sem-áudio):
+    // registra o dispositivo REALMENTE aberto em m_dm vs. o solicitado, os canais ativos e os erros
+    // de setup antes descartados. Canal único diag_log.txt; nenhum efeito no fluxo de aquisição.
+    diagLog(juce::String("[HWSWITCH] prepare req id='") + juce::String(chosen->id.c_str())
+            + "' reqType='" + typeName + "' -> opened='" + (dev2 ? dev2->getName() : juce::String("<null>"))
+            + "' curType='" + m_dm.getCurrentAudioDeviceType() + "'"
+            + " nIn=" + juce::String(nIn) + " nOut=" + juce::String(nOut)
+            + " outMask=" + (dev2 ? dev2->getActiveOutputChannels().toString(2) : juce::String("-"))
+            + " inMask="  + (dev2 ? dev2->getActiveInputChannels().toString(2)  : juce::String("-"))
+            + " fs=" + juce::String(m_prepFs, 1) + " ready=" + (m_deviceReady ? "1" : "0")
+            + (hwErr1.isNotEmpty() ? (" err1='" + hwErr1 + "'") : juce::String())
+            + (hwErr2.isNotEmpty() ? (" err2='" + hwErr2 + "'") : juce::String()));
+
+    // Proveniencia do hardware, registrada SOMENTE quando o device foi realmente aberto e os
+    // valores sao os efetivos do driver. Nao ha default inventado: sem device, nao ha linha.
+    if (dev2 != nullptr)
+        diagLog(juce::String("AudioConfig: Driver=") + m_dm.getCurrentAudioDeviceType()
+                + " Device=" + dev2->getName()
+                + " SampleRate=" + juce::String(dev2->getCurrentSampleRate(), 1)
+                + " BufferSize=" + juce::String(dev2->getCurrentBufferSizeSamples())
+                + " InputMask="  + dev2->getActiveInputChannels().toString(2)
+                + " OutputMask=" + dev2->getActiveOutputChannels().toString(2));
 
     // Capacidades do device ABERTO -> painel (DOC-05 §3.2) e dropdowns Entrada/Saída (nIn/nOut).
     DeviceInfo full = *chosen;
@@ -353,6 +379,21 @@ void AampWebBridge::doPrepare(juce::var args) {
     o->setProperty("caps",       capsVar(full));
     o->setProperty("operating",  juce::var(op));
     o->setProperty("validation", juce::var(val));
+    // Sprint 1: PreparedConfiguration — descreve exclusivamente a config aplicada ao m_dm (aditivo ao
+    // protocolo). Sem requestId/callbacks/flags. Emitida só quando a configuração foi de fato aplicada.
+    if (m_deviceReady && dev2 != nullptr) {
+        auto* applied = new juce::DynamicObject();
+        applied->setProperty("deviceId",   juce::String(chosen->id.c_str()));
+        applied->setProperty("mode",       stereo ? "Stereo" : "Mono");
+        applied->setProperty("outBase",    outBase);
+        applied->setProperty("inBase",     inBase);
+        applied->setProperty("sampleRate", m_prepFs);
+        applied->setProperty("outMask",    dev2->getActiveOutputChannels().toInteger());
+        applied->setProperty("inMask",     dev2->getActiveInputChannels().toInteger());
+        applied->setProperty("bufferSize", dev2->getCurrentBufferSizeSamples());
+        o->setProperty("applied", juce::var(applied));
+    }
+    o->setProperty("requestId", args.getProperty("requestId", juce::var()));   // Sprint 1: correlação (HardwareSession na Sprint 5)
     emitEvent("prepared", juce::var(o));
 
     // Persistência dos parâmetros EFETIVOS do device aberto (fs/buffer atuais) junto à última
@@ -410,9 +451,24 @@ void AampWebBridge::doStart() {
     emitEvent("state", stateObj("Measuring"));
     const double fs = m_prepFs;
     m_worker = std::thread([this, fs] {
+        // [HWSWITCH] Dispositivo ATIVO no instante do start — responde objetivamente: a Helix é mesmo
+        // o device ativo antes da nova caracterização? Reusa diag_log.txt; não altera o fluxo.
+        if (auto* cur = m_dm.getCurrentAudioDevice())
+            diagLog(juce::String("[HWSWITCH] start active='") + cur->getName()
+                    + "' curType='" + m_dm.getCurrentAudioDeviceType() + "'"
+                    + " selName='" + juce::String(m_selectedDeviceName.c_str()) + "'"
+                    + " fs=" + juce::String(fs, 1)
+                    + " outMask=" + cur->getActiveOutputChannels().toString(2)
+                    + " inMask="  + cur->getActiveInputChannels().toString(2));
+        else
+            diagLog("[HWSWITCH] start active=<null>");
         JuceCaptureDevice realDev(m_dm, fs, &m_abort);            // bloco REAL de play+capture
         MeasurementOrchestrator orch(fs, ChannelMode::Mono);
         wireCallbacks(orch);
+        // Fase 1: observa os fatos brutos (estímulo emitido + captura) e acumula um EvidencePackage.
+        // O observador é isolado (o orchestrator envolve a chamada em try/catch) — nunca afeta a aquisição.
+        aamp::evidence::EvidenceRecorder rec;
+        orch.setObservationCallback([&rec](const Stimulus& s, const CaptureResult& c) { rec.observe(s, c); });
         RunResult r;
         const bool prepOk = orch.prepare(realDev);
         if (prepOk) r = orch.runSuite(realDev);                   // M-08 conduz a suite (M-03 gera)
@@ -425,10 +481,27 @@ void AampWebBridge::doStart() {
                     juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S").toStdString();
             m_lastBundle  = r.bundle;                              // retido p/ ExportEngine (M-07)
             m_haveBundle  = true;
-            // ARCH-01: a caracterização entrega um .aamp CANÔNICO; o Laboratório reabre pelo
-            // MESMO caminho do arquivo (ingest → fromAamp → bootSession). Sem pipeline paralelo.
+            // A caracterização entrega um .aamp; o Laboratório reabre pelo MESMO caminho (ingest →
+            // fromAamp → LabEngine). Fluxo principal (Fase 1): entrega o Evidence Package (evidência
+            // bruta), e a ciência é derivada pelo consumidor oficial (ADR-0003). Reversível: com
+            // kDeliverEvidence=false volta-se ao .aamp legado (ResultBundle/análise), sem remover nada.
+            constexpr bool kDeliverEvidence = true;
             juce::MemoryBlock aampBytes;
-            serializeAampBytes(r.bundle, aampBytes);
+            if (kDeliverEvidence) {
+                aamp::evidence::SessionEvidence ses;
+                ses.sessionId = juce::Uuid().toDashedString().toStdString();   // ADS-0004: id opaco 128-bit local
+                ses.timestamp = r.bundle.meta.timestamp;
+                rec.setSession(ses);
+                aamp::evidence::HardwareEvidence hw;
+                hw.deviceName = r.bundle.meta.deviceName;
+                hw.sampleRate = fs;
+                hw.channels   = aamp::evidence::Channels::Mono;
+                rec.setHardware(hw);
+                const std::string ev = aamp::evidence::serialize(rec.package());
+                aampBytes.append(ev.data(), ev.size());
+            } else {
+                serializeAampBytes(r.bundle, aampBytes);           // legado (ResultBundle → análise)
+            }
             const juce::File dir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
                                        .getChildFile("AAMP").getChildFile("sessions");
             dir.createDirectory();

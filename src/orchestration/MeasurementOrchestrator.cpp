@@ -2,6 +2,7 @@
 #include "MeasurementOrchestrator.h"
 #include "../common/Constants.h"
 #include "../capture/Baseline.h"
+#include "../common/DiagLog.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,20 +22,8 @@ namespace aamp {
 // emitido pelo device.
 namespace {
 
-void evidBaselineLog(const std::string& s) {   // append no mesmo diag_log.txt (plain C++, igual m04log)
-#ifdef _WIN32
-    char* base = nullptr; std::size_t len = 0;
-    if (_dupenv_s(&base, &len, "APPDATA") != 0 || base == nullptr) return;
-    const std::string path = std::string(base) + "\\AAMP\\diag_log.txt";
-    std::free(base);
-#else
-    const char* base = std::getenv("APPDATA");
-    if (base == nullptr) return;
-    const std::string path = std::string(base) + "/AAMP/diag_log.txt";
-#endif
-    std::ofstream f(path, std::ios::app);
-    if (f) f << s << "\n";
-}
+// Encaminha ao canal unico (src/common/DiagLog.h). Assinatura preservada.
+void evidBaselineLog(const std::string& s) { diag::write(s); }
 
 std::string fmt2(double v) { char b[32]; std::snprintf(b, sizeof(b), "%.2f", v); return std::string(b); }
 
@@ -277,6 +266,14 @@ RunResult MeasurementOrchestrator::runSuite(IAudioDevice& dev) {
         StimulusReport sreport = makeStimulusReport(s, c, done + 1, total);
         if (m_stimcb) m_stimcb(sreport);
         if (s.id == StimulusId::ST09_Silence) m_noiseFloorRms = sreport.rms; // piso p/ limiar adaptativo
+
+        // Observacao SOMENTE-LEITURA (Etapa 2): expoe os fatos ja produzidos (estimulo emitido +
+        // captura observada) a um observador externo, ANTES do move (c ainda integro). O observador
+        // e isolado: qualquer falha sua NUNCA interrompe nem invalida a aquisicao.
+        if (m_observe) {
+            try { m_observe(s, c); }
+            catch (...) { /* observador isolado: a caracterizacao prossegue normalmente */ }
+        }
 
         cap.captured[s.id] = std::move(c.samples);
         ++done;

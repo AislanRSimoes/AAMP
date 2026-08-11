@@ -60,3 +60,20 @@ TEST_CASE("Dashboard: baixa confiabilidade vira badge (FR-027)") {
             if (it.label == "SNR" && it.state == ItemState::LowConfidence) found = true;
     CHECK(found);
 }
+
+// TC-066 -- V3 (AAMP-HG-20260811-001): o dashboard e superficie de APRESENTACAO.
+// O escalar e um coeficiente de variacao (0% = perfeito); o rotulo "Repetition Consistency"
+// afirmava o oposto do que a grandeza mede. Rotulo neutralizado; chave e valor intactos.
+TEST_CASE("TC-066 Dashboard rotula MS-13 como Repetition Variation (AAMP-HG-20260811-001)") {
+    AnalysisEngine eng(FS);
+    ResultBundle b = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+    DashboardModel dm = buildDashboardModel(b);
+    bool novo = false, antigo = false;
+    for (const auto& sec : dm.sections)
+        for (const auto& it : sec.items) {
+            if (it.label == "Repetition Variation")   novo = true;
+            if (it.label == "Repetition Consistency") antigo = true;
+        }
+    CHECK(novo);
+    CHECK(!antigo);
+}

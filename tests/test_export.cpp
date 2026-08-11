@@ -142,3 +142,35 @@ TEST_CASE("Export: nomenclatura aamp_{tipo}_{data}_{hora}.{ext}") {
     CHECK(ExportEngine::makeFilename("ir", "wav", "2026-06-15 14:30:22")
           == "aamp_ir_20260615_143022.wav");
 }
+
+// TC-067 -- V4 (AAMP-HG-20260811-001): um placeholder nao pode ser EXPORTADO como medicao.
+// Antes, o CSV escalar publicava "Reproducibility_pct=100.000" -- um numero constante, jamais
+// medido, indistinguivel de um resultado. Com valuePresent=false o contrato ja existente
+// (BR-043) produz o literal N/A, sem inventar nenhuma representacao nova.
+TEST_CASE("TC-067 CSV escalar exporta Reproducibility_pct=N/A (AAMP-HG-20260811-001)") {
+    ResultBundle b = loopbackBundle(ChannelMode::Mono);
+    ExportEngine ex;
+    const std::string path = "/tmp/aamp_metrics_v4.csv";
+    ExportStatus st = ex.exportScalarsCSV(b, path);
+    CHECK(st.ok);
+    std::string content = readFile(path);
+    CHECK(content.find("Reproducibility_pct=N/A") != std::string::npos);
+    CHECK(content.find("Reproducibility_pct=100.000") == std::string::npos);
+    // Controle negativo: o escalar vizinho da MESMA familia continua exportando numero.
+    CHECK(content.find("AggregateLinearity_dB=N/A") == std::string::npos);
+}
+
+// TC-067 -- V3: o relatorio tambem e superficie de apresentacao.
+TEST_CASE("TC-067 Relatorio rotula MS-13 como Repetition Variation (AAMP-HG-20260811-001)") {
+    ResultBundle b = loopbackBundle(ChannelMode::Mono);
+    ExportEngine ex;
+    ReportModel rm = ex.buildReportModel(b);
+    bool novo = false, antigo = false;
+    for (const auto& sec : rm.sections)
+        for (const auto& line : sec.lines) {
+            if (line.rfind("Repetition Variation:", 0) == 0)   novo = true;
+            if (line.rfind("Repetition Consistency:", 0) == 0) antigo = true;
+        }
+    CHECK(novo);
+    CHECK(!antigo);
+}
