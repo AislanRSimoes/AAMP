@@ -22,6 +22,10 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 | **TC-057** | `tc057_trust_ladder.js` | Trust Ladder: porta inferior do MS-10 e precedência de integridade (P1-008 / V1) |
 | **TC-058** | `tc058_scalar_presentation_contract.js` | Apresentação honra o contrato do escalar nas três rotas de leitura (P2-001 / DV-8) |
 | **TC-059** | `tc059_normative_applicability.js` | Coerência entre aplicabilidade declarada e apresentação normativa (P2-002 / F3) |
+| **TC-064** | `tc064_semantic_honesty.js` | Honestidade semântica: rótulo de V3, placeholder de V4 e asserções de fase (AAMP-HG-20260811-001) |
+
+> [!NOTE]
+> Os identificadores `TC-060`…`TC-063` **já pertencem à suíte C++** (orquestração: fluxo automático, descarte, cancelamento, degradação). O espaço de IDs é **único** entre CTest e regressão browser — daí este caso ser **TC-064**.
 
 ### TC-057 — o que protege
 
@@ -59,3 +63,47 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 
 > [!NOTE]
 > A prova de dentes é o discriminante: os casos A e B têm escalares **idênticos** e diferem apenas em `hasAnalysis`. No comportamento anterior os dois exibiriam os valores; hoje divergem. Remover o gate faz `E1` (renderização) ou `E2` (navegação) falhar.
+
+### TC-064 — o que protege
+
+Ratificado em **AAMP-HG-20260811-001** (alternativa B).
+
+- **V3** — chip e gauge exibem *"Variação"* / *"Variation"*, nunca *"Consistência"* / *"Consistency"*, e o **valor do CV aparece sem transformação** (não vira `100 − CV`);
+- **V4** — o contrato **emitido pelo `LabEngine.run()` produtivo** declara `NotApplicable` + `valuePresent = false`, conservando o valor bruto `100` e sem criar `EstimateNature` novo; a família MS-15 **continua `Normal`** e `AggregateLinearity_dB` continua sendo medição válida;
+- **V4** — `scalarForDisplay()` rejeita o placeholder, e o **mesmo** `100` sob contrato válido **seria** exibido — quem governa é `quality`/`valuePresent`, não o número;
+- **fase** — nenhuma superfície afirma *"coincide em fase"*, *"fase mínima"* ou correção por EQ como conclusão demonstrada, em pt-BR ou em inglês;
+- **fase** — a descrição neutra carrega o **ripple observado** em graus.
+
+> [!IMPORTANT]
+> Os limiares de fase (`> 25°` na janela `0,7–1,4×`; `> 20°` na janela `0,8–1,25×`) permanecem **NÃO RATIFICADOS** e **INALTERADOS** — vão para o estudo normativo V5/DV-4. O teste prova que **só a afirmação mudou**, e prova isso **na fronteira exata**, não por aproximação.
+
+#### Como a fronteira é fixada sem depender do detector
+
+A curva de fase é um **degrau de 0 para `V` exatamente em 1 kHz**, o centro do pico. Assim, **qualquer** janela que atravesse o centro tem ripple **igual a `V`**, independentemente de qual janela o código produtivo escolha (`pk.fL…pk.fR` ou `0,7–1,4×`). As comparações produtivas são **estritas**, então:
+
+Como a comparação produtiva é **estrita** (`ripple > L`), o par de casos abaixo determina `L` **sem intervalo de folga**:
+
+| Caso | `V` | Esperado | O que prova |
+|---|---|---|---|
+| `F5` | **25** | **sem** sufixo | `L ≥ 25` |
+| `F6` | **`nextUp(25)`** | sufixo | `L < nextUp(25)` |
+| `F7` | — | os dois acima | **`L === 25`** |
+| `G5` | **20** | **sem** correlato | `L ≥ 20` |
+| `G6` | **`nextUp(20)`** | correlato | `L < nextUp(20)` |
+| `G7` | — | os dois acima | **`L === 20`** |
+| `F1`/`F2` | 25,5 | sufixo com `26°` | arredondamento textual |
+| `G1`…`G4` | 20,5 | correlato com `21°` | arredondamento textual |
+
+`nextUp(x)` é o **próximo `double` representável** — obtido incrementando em 1 ULP o padrão de bits IEEE-754. Como **não existe `double` entre `x` e `nextUp(x)`**, as duas desigualdades juntas fixam o literal **exatamente**, e não um intervalo.
+
+Duas precondições sustentam isso: `rangeStats` mede **exatamente** `V` nas duas janelas (igualdade estrita), e `25`/`20` e seus `nextUp` são de fato **adjacentes** — verificado pelo ponto médio, que para dois `double` adjacentes não é representável e arredonda para um dos extremos.
+
+**Controles negativos executados**, não hipotéticos:
+
+| Alteração no literal produtivo | Checks derrubados |
+|---|---|
+| `25 → 30` | `F1`, `F2`, `F6`, `F7` |
+| `25 → 24` | `F5`, `F7` |
+| **`25 → 25,25` e `20 → 20,25`** | **`F6`, `F7`, `G6`, `G7`** |
+
+O terceiro é o decisivo: um deslocamento de **um quarto de grau** — que a versão anterior deste teste deixava passar — derruba o caso. A primeira versão comparava uma rampa muito acima do limiar contra fase zero e provava apenas que **existe** uma fronteira em algum lugar; a segunda fixava o intervalo `[25 , 25,5)`; só a atual fixa o **valor**.

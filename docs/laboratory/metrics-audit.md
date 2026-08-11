@@ -128,32 +128,73 @@ exige um estímulo específico; ausência ⇒ `Error`.
 | ID / escalar | Objetivo | Fórmula | Unidade | Estímulo | Referência | Normativo | Semântica |
 |---|---|---|---|---|---|---|---|
 | **MS-13** SettlingTime | Tempo de assentamento | 1º índice com `\|env − final\| ≤ 5%·final` | ms | ST-07 Burst | `cpp:855-863` | *a definir* | menor = melhor |
-| **MS-13** **RepetitionConsistency** (**"Consistência"**) | Repetibilidade de picos | `100·√(var)/mean` sobre 10 picos de 100 ms (**coef. de variação**) | % | ST-12 PulseTrain | `cpp:865-879`; `html:1069-1075` | *a definir* | ⚠️ **0% = perfeito; maior = pior** — ver achado V3 |
+| **MS-13** **RepetitionConsistency** (apresentada como **"Variação"**) | Repetibilidade de picos | `100·√(var)/mean` sobre 10 picos de 100 ms (**coef. de variação**) | % | ST-12 PulseTrain | `cpp:1117-1120`; `html:1254-1260` | *a definir* | **0% = perfeito; maior = pior** — rótulo neutralizado em AAMP-HG-20260811-001 (V3); **chave e fórmula inalteradas** |
 | **MS-13** Drift | Deriva de nível | `20·log10(e₃₀/e₁)` (env @1 s vs @29 s) | dB | ST-13 Sustained | `cpp:881-889` | *a definir* | ~0 = estável |
 | **MS-13** LevelTransfer | Ganho por degrau + erro | ganho `20·log10(ro/ri)` por degrau; `maxError = max\|dbₖ − média\|` | dB | ST-08 | `cpp:891-914` | *a definir* | maxError baixo = linear |
 | **MS-14** AttackTracking_hard/soft | Fidelidade de ataque | `100·Pearson(env_in, env_out)` alinhado por lag | % | ST-10 (/ST-11) | `cpp:920-961` | *a definir* | 100% = segue perfeito |
 | **MS-14** AttackConsistency | Coerência hard×soft | `max(0, 100 − \|hard − soft\|)` | % | ST-10+ST-11 | `cpp:956-957` | *a definir* | 100% = coerente |
 | **MS-14** Overshoot | Sobressinal do ataque | `20·log10(pk/regime)`; regime = env média 100–300 ms pós-pico | dB | ST-10 | `cpp:963-985` | `LowConfidence` se regime < −60 dB do pico | maior = mais overshoot |
 | **MS-15** AggregateLinearity | Linearidade musical | média em 12 s de `\|20·log10(eout/ein)\|` | dB | ST-15 | `cpp:992-1011` | *a definir* | 0 dB = perfeitamente linear |
-| **MS-15** Reproducibility | Reprodutibilidade | **fixo em 100.0** | % | ST-15 | `cpp:1012` | ⚠️ **placeholder** — ver achado V4 | — |
+| **MS-15** Reproducibility | Reprodutibilidade | **fixo em 100.0** | % | ST-15 | `cpp:1253` | ⚠️ **placeholder** — ver achado V4 | **`NotApplicable` + `valuePresent=false`** desde AAMP-HG-20260811-001; valor bruto inerte, CSV → `N/A` |
 
 ---
 
 ## Seção C — Limites normativos (estado atual)
 
-| Categoria | Limiar existente no código | Origem | Status |
-|---|---|---|---|
-| Headroom | `−1 dBFS` (crítico), `−6 dBFS` (baixo) | `html:2226, 2717` | Implícito na UI |
-| Clipping | `\|s\| ≥ 0.999` | `html:778` | Definido |
-| DC offset | `\|dc\| > 1e-3` | `html:2717` | Definido |
-| THD / THD+N / IMD | `1%` ("LIMIAR 1%") | `html:2461-2470` | Implícito, único limiar |
-| Group delay | `~1 ms` (audível) | `html:1924` | Nota textual |
-| SNR (retorno de captura) | `20 dB` acima do floor | `Constants.h:47` | É gate de captura, **não** de exibição |
-| SNR (exibição) | gauge `0–120 dB` sem banda marcada | `html:2721` | Sem faixas bom/aceitável/ruim |
-| Demais MS | — | — | **A DEFINIR no Pilar 2** |
+> [!warning] Esta seção estava **objetivamente incompleta** — completada no P2-003
+> A versão anterior listava sete linhas e concluía que *"a maioria das métricas normativas não tem
+> faixas definidas"*. O inventário do **P2-003** encontrou **regras de classificação ativas** que ela
+> omitia — inclusive faixas de SNR e de piso de ruído que ela declarava **inexistentes**. O que
+> faltava não era só documentação: era a constatação de que a interface **já classificava** por
+> números que nenhuma fonte fundamenta.
 
-> A maioria das métricas normativas **não tem faixas (bom / aceitável / comprometido) definidas nem
-> expostas ao usuário**. Consolidá-las é o objeto do **Pilar 2**.
+| Categoria | Limiar existente no código | Origem | Domínio | Status |
+|---|---|---|---|---|
+| Headroom — Trust Ladder | `> −1 dBFS` → `bad`; `> −6` → `warn` | `html:830, 855` | Trust Ladder | `LEGACY` — herdado; o P1-008 **preservou**, não criou |
+| Headroom — anomalia | `> −1` crítico; `−6 < p ≤ −1` baixo | `html:2475-2476` | diagnóstico | `LEGACY` — coerente com a escada |
+| Headroom — visual | chip, lâmpada, cor e zonas do medidor | `html:2953, 2957, 2959, 2960` | apresentação | `LEGACY` — coerente com a escada |
+| **Aquisição — nível alto** | **`> −3 dBFS`** → `warn`, exceto silêncio | **`html:2431`** | aquisição, por captura | **`UNJUSTIFIED`** — só no código |
+| **Aquisição — sinal baixo** | **`< −40 dBFS`**, exceto silêncio | **`html:2431`** | aquisição, por captura | **`UNJUSTIFIED`** — só no código |
+| Clipping | `\|s\| ≥ 0.999` | `html:778` | integridade | `LEGACY` — conciliar com `CLIP_THRESHOLD_DBFS_DEFAULT` (BR-022/ER-020) |
+| DC offset | `\|dc\| > 1e-3` | `html:2957` | diagnóstico | `LEGACY` |
+| Silêncio (`silPct`) | amostra `\|s\| < 1e-4` | `html:778` | descritivo | `DERIVED` — **não** converter em DV-4 por conveniência |
+| Crista | — | `html:780` | descritivo | `DERIVED` — sem faixa, e assim permanece sem decisão |
+| THD / THD+N / IMD — apresentação | `1%` ("vs LIMIAR 1%") | `html:2696, 2703` | apresentação | `LEGACY` — **THD+N tem o chip mas não gera anomalia** |
+| THD / IMD — anomalia | `> 1%`; **severidade `> 3%`** | `html:2487-2488` | diagnóstico | `LEGACY` / **`UNJUSTIFIED`** para o `3%` |
+| **SNR — porta inferior** | **`≤ 0 dB` → `bad`** | `html:830-853` | Trust Ladder | ✅ **`RATIFIED`** — P1-008 |
+| **SNR — diagnóstico** | **`< 60` baixo; `< 40` severidade alta** | **`html:2490`** | diagnóstico | **`UNJUSTIFIED`** — ocupa o espaço que o P1-008 reservou ao Pilar 2 |
+| SNR — escala | gauge `0–120 dB`, sem zonas | `html:2684, 2968` | apresentação | domínio gráfico, **não** limiar |
+| SNR (retorno de captura) | `20 dB` acima do floor | `Constants.h:47` | aquisição | ✅ **`RATIFIED`** — gate ER-023, **não** de exibição |
+| **Piso de ruído — diagnóstico** | **`> −60 dBFS`** → "piso alto" | **`html:2491`** | diagnóstico | **`UNJUSTIFIED`** |
+| Piso de ruído — escala | `−120…0 dBFS` | `html:2684` | apresentação | domínio gráfico |
+| Variação de fase — heurísticas condicionais | `> 25°` em `0,7–1,4×`; `> 20°` em `0,8–1,25×`; `> 25°` em janela de feature | `html:2493, 2537, 2137` | diagnóstico | **`UNJUSTIFIED`** — regras **divergentes** sobre observações relacionadas; ver nota abaixo |
+| Frequência | prom `> 6` / `> 8` dB; tilt `> 1 dB/oct`; roll-off `< 15 kHz` | `html:2480-2483` | diagnóstico | **`UNJUSTIFIED`** |
+| Group delay | `> 1 ms`; severidade `> 3 ms`; correlato `> 0,5 ms` | `html:2485, 2134, 2519` | diagnóstico | `LEGACY` / **`UNJUSTIFIED`** |
+| Reflexões | `1,5–50 ms`; prominência `6`; nível `> −9 dB` | `html:2494-2495` | diagnóstico | **`UNJUSTIFIED`** |
+| Demais MS | — | — | — | **A DEFINIR** — estudo normativo V5/DV-4 |
+
+> [!important] Princípio ratificado — AAMP-HG-20260811-001
+> **"Existência de um número no código não constitui autoridade normativa."**
+>
+> Nenhum threshold herdado é convertido em requisito científico por inércia, conveniência ou
+> compatibilidade histórica. As linhas marcadas `LEGACY` e `UNJUSTIFIED` acima **continuam em
+> operação** — elas descrevem o comportamento vigente — mas **não são norma** e nenhuma delas foi
+> ratificada. Consolidá-las é o objeto do **estudo normativo V5/DV-4**.
+
+> [!note] Diferença numérica não é conflito automático
+> A pergunta que precede qualquer classificação é: *"estes limiares governam o **mesmo** conceito
+> normativo?"* Um limite de aquisição pode legitimamente diferir de um limite da Trust Ladder se
+> medem condições diferentes, têm efeitos diferentes e autoridades independentes.
+>
+> **Conflito** exige que duas regras **reivindiquem autoridade normativa sobre o mesmo
+> conceito/estado e produzam resultados incompatíveis.** Regras que não têm autoridade nenhuma não
+> podem conflitar entre si — elas apenas **divergem**.
+>
+> É o caso das regras de variação de fase (`25°` × `20°`, em janelas distintas): **as três são
+> `UNJUSTIFIED`**, nenhuma tem autoridade, e por isso **não constituem conflito normativo**. São
+> regras divergentes sobre observações relacionadas, que podem produzir **descrições diferentes
+> para o mesmo pico** — candidatas naturais à reconciliação. Cabe ao **estudo normativo** determinar
+> **primeiro** se governam o mesmo conceito; só então a questão de conflito se coloca.
 
 ---
 
@@ -177,12 +218,38 @@ exige um estímulo específico; ausência ⇒ `Error`.
 - **V2 — `lowConf` quase nunca propaga.** A LabEngine JS fixa `quality:'Normal'` na maioria dos
   escalares (`html:1337+`), então `M.metrics.lowConf` (`html:806-811`) é ~sempre 0. O `Quality` por
   métrica do C++ **não** é o que alimenta o caminho da evidência do Lab.
-- **V3 — "Consistência" com semântica invertida.** `RepetitionConsistency_pct` é um **coeficiente de
-  variação** (0% = perfeito), mas é exibida num **gauge 0→100 rotulado "Consistência"** (`html:2721`),
-  que lê visualmente *maior = melhor*. Necessário inverter (`100 − CV`) **ou** renomear para "Variação".
-- **V4 — `Reproducibility_pct` é placeholder.** MS-15 grava `100.0` fixo (`cpp:1012`); não é medido.
-- **V5 — Limiares normativos dispersos/implícitos.** THD/THD+N/IMD compartilham um único "1%"; Headroom
-  usa −1/−6 dBFS; sem faixas para SNR, Noise Floor, Dynamic Range, Latency, etc.
+- **V3 — "Consistência" com semântica invertida** *(**RESOLVIDO por renomeação**, AAMP-HG-20260811-001)*.
+  `RepetitionConsistency_pct` é um **coeficiente de variação** (0% = perfeito), mas era exibida num
+  **gauge 0→100 rotulado "Consistência"**, que lê visualmente *maior = melhor*. A bifurcação era real —
+  inverter (`100 − CV`) **ou** renomear — e foi decidida por **autoridade humana** na direção
+  **renomear**: a grandeza publicada não muda, só o que a interface afirma sobre ela.
+  **Depois:** chip e gauge exibem *"Variação"* (`Variation` em inglês); o Dashboard e o relatório
+  exibem `Repetition Variation`. **A chave `RepetitionConsistency_pct`, a fórmula e a unidade
+  permanecem intactas** — é identificador de contrato, não rótulo. **TC-065**, **TC-066**, **TC-067**
+  e **TC-064**.
+- **V4 — `Reproducibility_pct` é placeholder** *(**contrato corrigido**, AAMP-HG-20260811-001; **segue
+  placeholder**)*. MS-15 grava `100.0` fixo (`cpp:1253`); não é medido — e isso **não mudou**.
+  **O defeito era outro:** o stub era publicado com `Quality::Normal` + `valuePresent = true` +
+  `EstimateNature::Point` (padrão), isto é, **indistinguível de uma medição pontual válida nos três
+  eixos ortogonais ratificados no P1-009 estágio 1**. Um placeholder ocupava, no contrato, o mesmo
+  lugar de um resultado.
+  **Depois:** publica `NotApplicable` + `valuePresent = false`, **pelo contrato já existente** — sem
+  criar `Quality` nem `EstimateNature` novo (*"placeholder não é uma estimativa"*). O valor bruto
+  `100.0` é conservado por compatibilidade estrutural e fica **semanticamente inerte**; o CSV escalar
+  passa a emitir `Reproducibility_pct=N/A` por **BR-043**. A família MS-15 **continua `Normal`** e
+  `AggregateLinearity_dB` continua sendo medição válida — não se contamina a família por um escalar
+  inaplicável. **TC-065** e **TC-067**.
+- **V5 — Limiares normativos dispersos/implícitos** *(**inventariado**; **nenhum valor ratificado**)*.
+  THD/THD+N/IMD compartilham um único "1%"; Headroom usa −1/−6 dBFS. O inventário do **P2-003**
+  mostrou que o quadro é **maior do que este achado descrevia** — ver a Seção C, agora completada.
+  Em **AAMP-HG-20260811-001** Aislan ratificou o princípio que governa o item:
+  > **"Existência de um número no código não constitui autoridade normativa."**
+
+  Nenhum limiar herdado foi promovido a requisito. O fechamento de V5 depende de um **estudo
+  normativo próprio**, por threshold ou grupo, separando **aquisição · validade científica · Trust
+  Ladder · apresentação · diagnóstico · UX**. Valores diferentes **podem coexistir** quando governam
+  conceitos diferentes; só constituem conflito duas regras que **reivindiquem autoridade normativa
+  sobre o mesmo conceito/estado e produzam resultados incompatíveis**.
 - **V6 — Dupla implementação (C++ × JS).** Risco de divergência silenciosa das fórmulas espectrais.
 - **V7 — Escalares `DBG_*` temporários** presentes em MS-04/05/06/07 (`cpp`), marcados
   "REMOVER antes do RC"; hoje entram no bundle de métricas.
@@ -826,9 +893,17 @@ protegida normativamente pelo **TC-046**, caso (5) — ver §K.3.)*
 | **DV-7** | CC-B: estado fixo `'Normal'` no caminho da evidência | ✅ **Resolvida** (escopo MS-08) |
 | ~~**DV-8**~~ | ~~**Apresentação consome a sentinela e a exibe como valor científico**~~ | ✅ **Concluído — P2-001**: as três rotas (`val` global, `val` de `scanAnomalies`, `LAB.getMetric`) delegam a `scalarForDisplay`, que honra `quality`/`valuePresent`. Sentinela nunca reconhecida pelo valor. **TC-058** |
 
-**DV-4 — Aberto (Pilar 2).** Excluída do P1-002 por decisão: detectar sinal intencional exige um
-critério quantitativo, e **N4 atribui limiares ao Pilar 2**. O MS-08 ainda pode reportar um nível de
-sinal como "Noise Floor" se o ST-09 estiver contaminado.
+**DV-4 — Aberto (Pilar 2 → estudo normativo).** Excluída do P1-002 por decisão: detectar sinal
+intencional exige um critério quantitativo, e **N4 atribui limiares ao Pilar 2**. O MS-08 ainda pode
+reportar um nível de sinal como "Noise Floor" se o ST-09 estiver contaminado.
+
+*Encaminhamento (AAMP-HG-20260811-001):* DV-4 recebe **investigação própria** para escolher
+observável e limiar. **`silPct`, o MS-08 e os 20 dB de `MIN_SNR_OVER_FLOOR_DB` não são reutilizados
+automaticamente** como critério de contaminação — cada um pertence a outro domínio. Em particular,
+`NoiseFloor_dBFS > −60` **não** foi ratificado como indicador de silêncio sujo: ele confunde
+**ambiente ruidoso legítimo** com **sinal intencional**, que é exatamente a distinção que DV-4
+existe para fazer. O item fecha com observável, estimador, banda/janela, limiar, estado resultante,
+precedência, comportamento C++/JS e casos limítrofes **ratificados e testados**.
 
 **DV-6 — Aberto.** Unificar o contrato faria surgir uma família nova no *payload* da UI, o que a
 decisão de escopo (não alterar comportamento de interface) veda. **CC-A está satisfeita nas

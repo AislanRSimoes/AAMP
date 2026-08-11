@@ -12,6 +12,11 @@
 > Consistência) e V4 (Reproducibility) — pertencem a métricas ainda **não** revisadas; V5 (faixas
 > normativas) e MS-10/D5 (apresentação) — **Pilar 2**; V7 (escalares DBG de MS-04/05/06/07) — métricas não
 > encerradas.
+>
+> *(**V3 e V4 foram tratados no Pilar 2**, em **AAMP-HG-20260811-001**, e **não** por revisão de suas
+> métricas: V3 por **renomeação da apresentação** — a grandeza não mudou — e V4 por **correção do
+> contrato** — o placeholder deixou de se publicar como medição, e **continua placeholder**. V5 e DV-4
+> permanecem abertos, encaminhados ao **estudo normativo**, com nenhum limiar herdado ratificado.)*
 
 ---
 

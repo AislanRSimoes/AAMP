@@ -1746,3 +1746,70 @@ TEST_CASE("TC-030 15 familias calculadas (ou N/A), nenhuma Error") {
         if (m) CHECK(m->quality != Quality::Error);
     }
 }
+
+// ============================ TC-065 -- V3/V4 (AAMP-HG-20260811-001) ============================
+// Decisao humana ratificada (alternativa B): um PLACEHOLDER nao pode se publicar como medicao.
+// Reproducibility_pct nunca foi calculado -- o Core publica a constante 100.0 -- mas era emitido
+// com Quality::Normal + valuePresent=true + EstimateNature::Point (padrao), isto e, INDISTINGUIVEL
+// de uma medicao pontual valida nos TRES eixos ratificados no P1-009 estagio 1.
+// Este caso fixa o contrato corrigido e protege o que NAO pode mudar junto.
+TEST_CASE("TC-065 V4: Reproducibility_pct e placeholder, nao medicao (AAMP-HG-20260811-001)") {
+    AnalysisEngine eng(FS);
+    ResultBundle b = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+    const MetricResult* m15 = b.find("MS-15");
+    CHECK(m15 != nullptr);
+    if (!m15) return;
+
+    // A familia NAO e contaminada: MS-15 continua Normal por causa da linearidade agregada.
+    CHECK(m15->quality == Quality::Normal);
+
+    const Scalar* rep = nullptr; const Scalar* lin = nullptr;
+    for (const auto& s : m15->scalars) {
+        if (s.key == "Reproducibility_pct")   rep = &s;
+        if (s.key == "AggregateLinearity_dB") lin = &s;
+    }
+    CHECK(rep != nullptr);
+    CHECK(lin != nullptr);
+    if (rep) {
+        CHECK(rep->key == "Reproducibility_pct");   // identificador de contrato preservado
+        CHECK(rep->value == 100.0);                 // valor bruto conservado, semanticamente inerte
+        CHECK(rep->unit == "%");
+        CHECK(rep->quality == Quality::NotApplicable);
+        CHECK(rep->valuePresent == false);
+        // VEDADO criar EstimateNature novo para placeholder: sem valor presente a natureza e
+        // inoperante, e LowerBound/UpperBound afirmariam algo quantitativo que o stub nao demonstra.
+        CHECK(rep->estimate == EstimateNature::Point);
+    }
+    // Controle negativo: o escalar VIZINHO na mesma familia continua sendo medicao valida.
+    // Sem isto, marcar a familia inteira como indisponivel tambem "passaria".
+    if (lin) {
+        CHECK(lin->quality == Quality::Normal);
+        CHECK(lin->valuePresent == true);
+        CHECK(std::isfinite(lin->value));
+    }
+}
+
+// V3: o rotulo de apresentacao mudou para "Variacao"; a CHAVE e o CALCULO nao podem mudar.
+// RepetitionConsistency_pct e um COEFICIENTE DE VARIACAO (0% = perfeito). A decisao ratificou
+// renomear a apresentacao -- explicitamente NAO transformar o valor em (100 - CV).
+TEST_CASE("TC-065 V3: RepetitionConsistency_pct preserva chave e valor (nao e 100-CV)") {
+    AnalysisEngine eng(FS);
+    ResultBundle b = eng.computeAllMetrics(harness::makeLoopback(FS, 0, false));
+    const MetricResult* m13 = b.find("MS-13");
+    CHECK(m13 != nullptr);
+    if (!m13) return;
+    const Scalar* cv = nullptr;
+    for (const auto& s : m13->scalars) if (s.key == "RepetitionConsistency_pct") cv = &s;
+    CHECK(cv != nullptr);
+    if (cv) {
+        CHECK(cv->key == "RepetitionConsistency_pct");
+        CHECK(cv->unit == "%");
+        CHECK(cv->quality == Quality::Normal);
+        CHECK(cv->valuePresent == true);
+        CHECK(std::isfinite(cv->value));
+        // Num loopback ideal os picos sao praticamente iguais => CV proximo de ZERO.
+        // Se alguem inverter para (100 - CV), este valor saltaria para ~100 e o caso falha.
+        CHECK(cv->value >= 0.0);
+        CHECK(cv->value < 50.0);
+    }
+}

@@ -163,7 +163,8 @@ ReportModel ExportEngine::buildReportModel(const ResultBundle& b) const {
         "THD+N: " + sc("MS-06","THDN_pct"), "IMD: " + sc("MS-07","IMD_pct") } };
     ReportSection dyn{ "Dynamic Behaviour", {
         "Settling: " + sc("MS-13","SettlingTime_ms"),
-        "Repetition Consistency: " + sc("MS-13","RepetitionConsistency_pct"),
+        // V3 / AAMP-HG-20260811-001: rotulo neutro (o escalar e coeficiente de variacao); chave preservada.
+        "Repetition Variation: " + sc("MS-13","RepetitionConsistency_pct"),
         "Drift: " + sc("MS-13","Drift_dB") } };
     ReportSection mus{ "Musical Behaviour", {
         "Attack Tracking: " + sc("MS-14","AttackTracking_pct"),

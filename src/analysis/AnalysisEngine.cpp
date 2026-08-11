@@ -1250,7 +1250,15 @@ MetricResult AnalysisEngine::musical(const CapturedSet& cap) const {
     }
     aggr /= K;
     r.scalars.push_back({"AggregateLinearity_dB", aggr, "dB", Quality::Normal, true});
-    r.scalars.push_back({"Reproducibility_pct", 100.0, "%", Quality::Normal, true});
+    // V4 / AAMP-HG-20260811-001 (alternativa B): Reproducibility_pct e PLACEHOLDER, nao medicao.
+    // Publicava-se 100.0 com Quality::Normal + valuePresent=true + EstimateNature::Point (padrao),
+    // isto e: indistinguivel de uma medicao pontual valida nos TRES eixos ratificados no P1-009
+    // estagio 1. Passa a declarar ausencia de medicao pelo contrato ja existente. O valor bruto
+    // 100.0 e conservado por compatibilidade estrutural e e semanticamente INERTE com
+    // valuePresent=false -- nao e sentinela e nao deve ser interpretado. EstimateNature permanece
+    // Point (padrao): sem valor presente a natureza e inoperante, e LowerBound/UpperBound
+    // afirmariam algo quantitativo que o placeholder nao demonstra.
+    r.scalars.push_back({"Reproducibility_pct", 100.0, "%", Quality::NotApplicable, false});
     r.quality = Quality::Normal;
     return r;
 }
