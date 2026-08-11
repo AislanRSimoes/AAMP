@@ -1,7 +1,20 @@
-# AAMP_PROJECT_STATE.md — Fonte única de verdade para continuação
+# AAMP_PROJECT_STATE.md — snapshot de handoff (histórico)
 
-> Documento de handoff. Objetivo: permitir que qualquer modelo/IA continue a investigação **exatamente do ponto
-> atual**, sem reconstruir semanas de trabalho. Branch de trabalho: `claude/aamp-migration-stage-0-fzuot8`.
+> [!WARNING]
+> **Este documento NÃO é fonte única de verdade e NÃO tem autoridade normativa.**
+> É um **snapshot de handoff** do estado observado em **2026-07**, preservado como registro histórico.
+> Seu conteúdo **pode estar obsoleto** — trechos já foram superados por trabalho posterior.
+> Não o use para decidir requisito, arquitetura, semântica de métrica ou próximo passo.
+>
+> **Fontes atuais, que prevalecem sobre este arquivo:**
+> 1. **Git e código-fonte ativo** — o estado real;
+> 2. **documentação técnica ativa** fora de `docs/archive/` — em especial `docs/architecture/` e `docs/laboratory/`;
+> 3. **decisões ratificadas e nota canônica do projeto** no Engineering Second Brain.
+>
+> Em conflito entre este snapshot e qualquer uma delas, **este arquivo está errado**.
+
+> Objetivo original: permitir que qualquer modelo/IA continue a investigação a partir do ponto então
+> atual, sem reconstruir semanas de trabalho. Branch de trabalho: `claude/aamp-migration-stage-0-fzuot8`.
 > Última atualização: 2026-07 (após F1 implementado e 1ª validação em hardware da Helix LT).
 
 ---
