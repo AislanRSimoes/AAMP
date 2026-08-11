@@ -603,7 +603,7 @@ Série **F** — achados originados na revisão técnica final do P1-001, distin
 | **F1** | Conteúdo do resíduo do ST-09 e validade do estimador para conteúdo tonal | ✅ **Encerrado** | — |
 | **F2** | `Dynamic Range < SNR`, contrariando `dynamic-range-definition.md` §6 | ✅ **Resolvido** (Registro de Decisão — F2: **B** + **D**) | — |
 | **F9** | Segmentação temporal do ST-08 não alinhada (derivado de F2) | ✅ **Resolvido e validado** (A2 · `cfb95fa` · TC-041) | — |
-| **F3** | Interface declara "métricas normativas não se aplicam" e exibe os valores | 🟡 Aberto | — |
+| ~~**F3**~~ | ~~Interface declara "métricas normativas não se aplicam" e exibe os valores~~ | ✅ **Concluído — P2-002**: SNR e Consistência (chips e gauges) e o instrumento Ruído passam a exigir `hasAnalysis`; descritores brutos de captura preservados. **TC-059** | — |
 | **F5** | Gráfico de "Captura de silêncio" visualmente enganoso | ✅ **Encerrado** | — |
 | **F8** | Divergência de contagem de checks entre plataformas (469 × 461) | 🟡 Aberto | — |
 
@@ -670,12 +670,14 @@ energia em **1** *bin* e 90 % em **3**, contra ~852 e ~1534 *bins* esperados par
 > aritmeticamente verdadeira — é **fisicamente enganosa**: não descreve um fato sobre a cadeia medida,
 > e sim um viés de estimador. A hipótese anterior fica **substituída**, não preservada.
 
-#### F3 — **ABERTO** · Pilar 2 *(explicitamente FORA do escopo do P1-008)*
+#### F3 — **CONCLUÍDO no P2-002** · Pilar 2 *(esteve fora do escopo do P1-008, por decisão do Supervisor)*
 
 A aba Integridade declara *"Sinal externo — métricas normativas (SNR, consistência) não se aplicam"* e,
 no mesmo cabeçalho, exibe `SNR 80,4 dB` e `Consistência 1,5 %`; a aba Ruído as reapresenta como leituras
 normativas. Declaração de aplicabilidade e apresentação têm fontes distintas. Relacionado a **V1/V5** e
-a **MS-10/D5**. Tratamento reservado ao **Pilar 2**. O **P1-008 excluiu F3 do seu escopo** por decisão do Supervisor: seus critérios discretos de encerramento cobrem a porta inferior, a integração de SNR/qualidade e o caso silêncio/sem sinal, não a coerência geral entre declaração de aplicabilidade e apresentação.
+a **MS-10/D5**. O **P1-008 excluiu F3 do seu escopo** por decisão do Supervisor: seus critérios discretos de encerramento cobriam a porta inferior, a integração de SNR/qualidade e o caso silêncio/sem sinal, não a coerência entre declaração de aplicabilidade e apresentação.
+
+*Estado atual:* **corrigido no P2-002**. O discriminador é o `hasAnalysis` **já existente** — nenhum limiar novo foi criado. Com `hasAnalysis === false`: os chips e os gauges de **SNR** e **Consistência** deixam de ser renderizados na aba Integridade, e o instrumento **Ruído** passa ao estado *"sem dados / métricas de ruído indisponíveis"* em vez de reapresentar Piso, SNR e Faixa Dinâmica como resultados normativos. Os **descritores brutos da captura** — headroom, crista, clipping, DC — permanecem visíveis, por serem fatos diretos do sinal. Com `hasAnalysis === true`, a apresentação anterior é integralmente preservada, e o contrato do **P2-001** continua vigente. Protegido por **TC-059**.
 
 #### F5 — **ENCERRADO** · achado de apresentação (Pilar 2)
 

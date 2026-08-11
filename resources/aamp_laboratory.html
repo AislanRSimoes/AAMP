@@ -2676,7 +2676,10 @@ function buildTemporalEnv(stage){const m=LAB.getById('MS-04'),ir=m&&m.curves&&m.
 
 function buildNoiseEnv(stage){const {answer,main,side}=instWS(stage,T('Qual o piso de ruído e a margem de sinal?'),T('Ruído'));const V=k=>LAB.getMetric(k);
   const nf=V('NoiseFloor_dBFS'),snr=V('SNR_dB'),dr=V('DynamicRange_dB');
-  if(nf==null&&snr==null){answer.innerHTML=vchip(T('STATUS'),T('sem dados'),'','flag');main.innerHTML='<div class="notice">'+T('Métricas de ruído indisponíveis neste sinal.')+'</div>';side.innerHTML=needPanel(T('Requer MS-08/09/10 (piso de ruído, SNR, faixa dinâmica) — captura de silêncio e de referência.'));return;}
+  // P2-002 (F3): Piso, SNR e Faixa Dinamica sao NORMATIVOS. Sem caracterizacao normativa
+  // (hasAnalysis === false) o instrumento nao pode reapresenta-los como resultados, mesmo que
+  // escalares numericamente validos existam no contrato da sessao.
+  if(!M.hasAnalysis||(nf==null&&snr==null)){answer.innerHTML=vchip(T('STATUS'),T('sem dados'),'','flag');main.innerHTML='<div class="notice">'+T('Métricas de ruído indisponíveis neste sinal.')+'</div>';side.innerHTML=needPanel(T('Requer MS-08/09/10 (piso de ruído, SNR, faixa dinâmica) — captura de silêncio e de referência.'));return;}
   answer.innerHTML=vchip('PISO',nf!=null?fmt(nf,1):'—','dBFS','flag')+vchip('SNR',snr!=null?fmt(snr,1):'—','dB','')+vchip(T('FAIXA DIN.'),dr!=null?fmt(dr,1):'—','dB','');
   main.innerHTML=screen(meterBar({label:T('Piso de ruído'),value:nf,min:-120,max:0,unit:'dBFS',ticks:[-120,-90,-60,-30,0]})+meterBar({label:T('SNR'),value:snr,min:0,max:120,unit:'dB',ticks:[0,30,60,90,120]})+meterBar({label:T('Faixa dinâmica'),value:dr,min:0,max:120,unit:'dB',ticks:[0,30,60,90,120]}));
   const sil=LAB.getCapture('silence');
@@ -2729,7 +2732,10 @@ const BUILDERS={integrity:buildIntegrityEnv,frequency:buildFrequencyEnv,phase:bu
 function hasData(id){const c=M.metrics.curves,b=M.metrics.byId,sc=k=>M.metrics.scalars[k];
   switch(id){case 'integrity':return true;case 'frequency':return !!c['MS-01'];case 'phase':return !!c['MS-02'];case 'groupdelay':return !!c['MS-03'];
     case 'impulse':case 'envelope':case 'decay':return !!(b&&b['MS-04']);case 'temporal':return !!(b&&b['MS-04'])||M.captures.length>0;
-    case 'imd':return !!sc('IMD_pct');case 'thd':case 'harmonics':return !!sc('THD_pct');case 'thdn':return !!sc('THDN_pct');case 'noise':return !!sc('NoiseFloor_dBFS');
+    case 'imd':return !!sc('IMD_pct');case 'thd':case 'harmonics':return !!sc('THD_pct');case 'thdn':return !!sc('THDN_pct');// P2-002 (F3): a NAVEGACAO precisa concordar com o builder. Sem caracterizacao normativa o
+// instrumento Ruido mostra "sem dados", entao domLed('noise') nao pode acender 'ok' apenas
+// porque existe um escalar NoiseFloor_dBFS no contrato da sessao.
+case 'noise':return !!M.hasAnalysis&&!!sc('NoiseFloor_dBFS');
     case 'waterfall':case 'spectrogram':case 'playspec':return M.captures.length>0||!!(b&&b['MS-04']);
     case 'origvschar':return M.captures.filter(x=>x.wav).length>=2;default:return false;}}
 function domLed(id){return id==='integrity'?(M._trust==='idle'?'warn':M._trust):(hasData(id)?'ok':'idle');}
@@ -2944,7 +2950,7 @@ function buildIntegrityEnv(stage){stage.className='scroll';
   const tlab=trust==='bad'?T('Não confiável'):trust==='warn'?T('Confiável com ressalvas'):trust==='idle'?T('Análise externa'):T('Medição confiável');
   const head=document.createElement('div');head.className='ws-verdict';
   head.innerHTML=`<div class="ws-title"><div class="vt-q">${T('Posso confiar nesta medição?')}</div><div class="vt-h">${T('Integridade')}</div></div>
-    <div class="ws-answer">${q?vchip('HEADROOM',fmt(q.peakDb,1),'dBFS',q.peakDb>-1?'flag':''):''}${q?vchip(T('CRISTA'),fmt(q.crest,1),'dB',''):''}${q?vchip('CLIPPING',clipTot,T('amostras'),clipTot?'flag':''):''}${val(snr)!=null?vchip('SNR',fmt(val(snr),1),'dB',''):''}${val(cons)!=null?vchip(T('CONSISTÊNCIA'),fmt(val(cons),1),'%',''):''}</div>
+    <div class="ws-answer">${q?vchip('HEADROOM',fmt(q.peakDb,1),'dBFS',q.peakDb>-1?'flag':''):''}${q?vchip(T('CRISTA'),fmt(q.crest,1),'dB',''):''}${q?vchip('CLIPPING',clipTot,T('amostras'),clipTot?'flag':''):''}${M.hasAnalysis&&val(snr)!=null?vchip('SNR',fmt(val(snr),1),'dB',''):''}${M.hasAnalysis&&val(cons)!=null?vchip(T('CONSISTÊNCIA'),fmt(val(cons),1),'%',''):''}</div>
     <div class="vtrust ${trust==='idle'?'warn':trust}"><i></i>${tlab}</div>`;
   stage.appendChild(head);
   const body=document.createElement('div');body.style.cssText='padding:18px 20px;max-width:1000px';stage.appendChild(body);
@@ -2952,7 +2958,15 @@ function buildIntegrityEnv(stage){stage.className='scroll';
   let html=screen(`<div class="lamps">${lamps}</div>`)+'<div class="r" style="margin-top:14px">';
   if(q){const stateCol=q.peakDb>-1?cssv('--bad'):(q.peakDb>-6?cssv('--warn'):cssv('--ok'));
     html+='<div class="grow">'+screen(meterBar({label:T('Headroom'),value:q.peakDb,min:-60,max:0,unit:'dBFS',decimals:1,ticks:[-60,-48,-36,-24,-12,-6,0],zones:[{from:-6,to:-1,color:'rgba(255,148,69,.16)'},{from:-1,to:0,color:'rgba(255,107,107,.22)'}],marker:q.rmsDb,stateColor:stateCol})+meterBar({label:T('Nível RMS'),value:q.rmsDb,min:-60,max:0,unit:'dBFS',decimals:1,ticks:[-60,-36,-12,0]}))+'<div class="ros">'+readout(T('CRISTA'),fmt(q.crest,1),'dB')+readout('CLIPPING',clipTot,'amostras')+readout(T('SILÊNCIO'),fmt(q.silPct,1),'%')+'</div></div>';}
-  html+=screen('<div class="r" style="justify-content:center;gap:20px">'+gauge({value:val(snr),min:0,max:120,unit:'dB',label:T('Confiança · SNR')})+gauge({value:val(cons),min:0,max:100,unit:'%',label:T('Consistência')})+'</div>')+'</div>';
+  // P2-002 (F3): SNR e Consistencia sao metricas NORMATIVAS. Numa sessao que declara
+  // "caracterizacao normativa indisponivel" (hasAnalysis === false) elas nao podem ser
+  // exibidas como leitura normativa -- a interface afirmava as duas coisas ao mesmo tempo,
+  // com os gauges logo acima do aviso de nao aplicabilidade.
+  // Descritores BRUTOS da captura (headroom, crista, clipping, DC) seguem visiveis: sao fatos
+  // diretos do sinal, nao dependem de analise normativa.
+  if(M.hasAnalysis)
+    html+=screen('<div class="r" style="justify-content:center;gap:20px">'+gauge({value:val(snr),min:0,max:120,unit:'dB',label:T('Confiança · SNR')})+gauge({value:val(cons),min:0,max:100,unit:'%',label:T('Consistência')})+'</div>');
+  html+='</div>';
   if(M.acquisition&&M.acquisition.chain)html+=screen(chainHTML(M.acquisition));
   const AF=acquisitionFindings();if(AF.length&&(AF.length>1||M.captures.length>1)){
     html+=screen('<div class="side-cap">'+T('Aquisição · por estímulo')+'</div>'+AF.map(f=>'<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px"><span class="an-sev '+f.sev+'"></span><span style="min-width:120px">'+f.stage+'</span><span style="opacity:.75">'+findMsg(f)+'</span></div>').join(''));}

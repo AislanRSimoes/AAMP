@@ -21,6 +21,7 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 |---|---|---|
 | **TC-057** | `tc057_trust_ladder.js` | Trust Ladder: porta inferior do MS-10 e precedência de integridade (P1-008 / V1) |
 | **TC-058** | `tc058_scalar_presentation_contract.js` | Apresentação honra o contrato do escalar nas três rotas de leitura (P2-001 / DV-8) |
+| **TC-059** | `tc059_normative_applicability.js` | Coerência entre aplicabilidade declarada e apresentação normativa (P2-002 / F3) |
 
 ### TC-057 — o que protege
 
@@ -45,3 +46,16 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 
 > [!NOTE]
 > O discriminante do TC-058 é comparar o **mesmo** `−300` sob contratos diferentes. Com contrato válido, `scanAnomalies` gera *"SNR baixo −300.0 dB"*; com `NotApplicable`, gera `[]`. Valor idêntico, comportamento distinto — prova que quem governa é `quality`/`valuePresent`, não o número. `scalarForDisplay` é `const`, então não pode ser mutada em memória; este discriminante substitui a prova de mutação.
+
+### TC-059 — o que protege
+
+- com `hasAnalysis === false`, **SNR** e **Consistência** não aparecem na aba Integridade — nem como chip nem como gauge — mesmo com escalares numericamente válidos no contrato;
+- o instrumento **Ruído** não reapresenta Piso, SNR ou Faixa Dinâmica como resultados normativos;
+- os **descritores brutos** da captura — headroom, crista, clipping, DC — permanecem visíveis, por serem fatos diretos do sinal;
+- com `hasAnalysis === true`, a apresentação anterior é integralmente preservada;
+- o contrato do **P2-001** continua vigente dentro da sessão normativa: `NotApplicable` segue oculto;
+- **a navegação concorda com o builder**: `hasData('noise')` e `domLed('noise')` exigem `hasAnalysis`, para o LED não acender `ok` enquanto o instrumento mostra "sem dados";
+- ausência real de dados não lança exceção.
+
+> [!NOTE]
+> A prova de dentes é o discriminante: os casos A e B têm escalares **idênticos** e diferem apenas em `hasAnalysis`. No comportamento anterior os dois exibiriam os valores; hoje divergem. Remover o gate faz `E1` (renderização) ou `E2` (navegação) falhar.
