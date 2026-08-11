@@ -37,3 +37,4 @@ TC-060,Integracao (loopback),CI headless,PASS,Fluxo automatico de 1 comando; sui
 TC-061,Integracao,CI headless,PASS,Nova medicao a partir de RESULTS exige confirmacao de descarte (FR-038)
 TC-062,Integracao,CI headless,PASS,Cancelamento seguro; estado IDLE; sem resultados parciais (FR-039)
 TC-063,Unit/Integracao,CI headless,PASS,Degradacao graciosa; metrica isolada em Error; demais normais (FR-040)
+TC-057,Regressao browser (JS produtivo),Maquina-alvo (browser/WebView2) — NAO no CTest headless,PASS,"Trust Ladder: porta inferior MS-10 (SNR<=0), estado da familia antes do escalar, consumo exclusivo da familia, lowConf agregado preservado (P1-008/V1); 26 casos, 0 falhas; validation/browser/tc057_trust_ladder.js"

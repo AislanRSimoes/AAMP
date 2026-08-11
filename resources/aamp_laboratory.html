@@ -809,6 +809,52 @@ function normalizeMetrics(a){const byId={},sc={},cv={};let low=0,na=0;
     (m.curves||[]).forEach(c=>{if(!cv[m.id])cv[m.id]=c;});});
   PDBG.log('normalizeMetrics · ids',Object.keys(byId),'· lowConf',low,'· na',na);
   return {byId,scalars:sc,curves:cv,lowConf:low,na};}
+/* P1-008 (V1) — Trust Ladder com PORTA INFERIOR de confiança. Funcao PURA e deterministica.
+   Antes, a escada so testava o TETO (clipping/pico) e a ressalva agregada: uma captura silenciosa,
+   sem sinal ou com MS-10 NotApplicable era rotulada "Medicao confiavel" -- confirmado em campo com
+   hardware real (16 estimulos sem onset lidos como confiaveis).
+   A porta inferior consome EXCLUSIVAMENTE o MS-10 oficial ja publicado (valor, quality e
+   valuePresent). NAO recalcula SNR, NAO cria segundo estimador, NAO le RMS temporal e NAO importa
+   MIN_SNR_OVER_FLOOR_DB (constante de aquisicao, gate ER-023 nao bloqueante, grandeza distinta).
+   SNR_dB <= 0 e a expressao matematica de "o sinal nao se eleva acima do piso":
+       SNR_dB = SignalLevel_dBFS - NoiseFloor_dBFS <= 0  <=>  sinal <= piso
+   NAO ha margem positiva: limiares numericos de "SNR insuficiente" pertencem ao Pilar 2 (MS-10/D5).
+   A porta e condicao NECESSARIA, nao suficiente: SNR > 0 apenas deixa de impedir 'ok'.
+   MUDANCA ADITIVA (EC-01): nenhum comportamento vigente e removido. O agregado M.metrics.lowConf
+   continua rebaixando para 'warn', inclusive quando origina de familia periferica, e a familia
+   MS-10 so governa quando esta presente no contrato -- ausencia preserva a classificacao anterior.
+   'bad' domina 'warn': o agregado nunca converte uma falha inferior em ressalva. */
+function classifyTrust(integ,metrics){
+  const q=integ&&integ.q, clipTot=(integ&&integ.clipTot)||0;
+  // (1) porta SUPERIOR critica -- preservada integralmente
+  if(clipTot||(q&&q.peakDb>-1))return 'bad';
+  // (2) MS-10: so governa quando a familia existe no contrato da sessao
+  let ms10LowConf=false;                                         // ressalva explicita do MS-10
+  const fam=metrics&&metrics.byId&&metrics.byId['MS-10'];
+  if(fam){
+    // O estado da FAMILIA governa antes de qualquer escalar.
+    if(fam.quality==='Error'||fam.quality==='NotApplicable')return 'bad';
+    if(fam.quality==='LowConfidence')ms10LowConf=true;
+    // O escalar e procurado DENTRO da familia MS-10, nunca no indice global por chave: o contrato
+    // exige consumo exclusivo do MS-10, e uma chave 'SNR_dB' publicada por outra familia nao pode
+    // alimentar esta porta.
+    const fs=fam.scalars||[];let s=null;
+    for(let i=0;i<fs.length;i++){if(fs[i]&&fs[i].key==='SNR_dB'){s=fs[i];break;}}
+    if(!s)return 'bad';                                          // familia existe sem o escalar
+    if(s.quality==='Error'||s.quality==='NotApplicable')return 'bad';
+    if(s.quality==='LowConfidence')ms10LowConf=true;
+    if(s.valuePresent!==true)return 'bad';                       // estado governa ANTES do valor
+    const v=s.value;
+    // Nao-finito NUNCA e tratado como "SNR baixo": e ausencia de informacao, nao medicao ruim.
+    // Sentinelas nunca sao reconhecidas pelo NUMERO -- so por quality/valuePresent (D3/P1-004).
+    if(typeof v!=='number'||!isFinite(v))return 'bad';
+    if(v<=0)return 'bad';                                        // PORTA INFERIOR
+  }
+  // (3) ressalvas -- vigentes preservadas + LowConfidence EXPLICITO do MS-10 (familia ou escalar),
+  // que nao depende do agregado: um contrato inconsistente familia x escalar nao pode virar 'ok'.
+  if((q&&q.peakDb>-6)||(metrics&&metrics.lowConf)||ms10LowConf)return 'warn';
+  // (4) fallback vigente
+  return q?'ok':'idle';}
 /* Observação espectral oficial — equivalente ao fullSpectrum do AnalysisEngine (Subetapa C).
    Função CIENTÍFICA PURA. Responde apenas: "qual é a representação espectral oficial deste bloco?".
    Entrada EXCLUSIVA: um BLOCO de amostras + sample rate. Saída: a representação espectral oficial do
@@ -2389,8 +2435,9 @@ function bootSession(session){
   const pc=M.captures[M.primary],wav=pc&&pc.wav;
   const q=wav?SCI.integrity(wav.samples):null;
   let clipTot=q?q.clip:0;M.captures.forEach((c,i)=>{if(i!==M.primary&&c.wav)for(const x of c.wav.samples)if(Math.abs(x)>=0.999)clipTot++;});
-  const trust=(clipTot||(q&&q.peakDb>-1))?'bad':(((q&&q.peakDb>-6)||M.metrics.lowConf)?'warn':(q?'ok':'idle'));
-  M._trust=trust;M._integ={q,clipTot};
+  M._integ={q,clipTot};
+  const trust=classifyTrust(M._integ,M.metrics);   // P1-008: porta inferior via MS-10 oficial
+  M._trust=trust;
 
   SESSION.history=[];SESSION.wfStep=0;SESSION._anomalies=null;
   DOMS=[{id:'investigation',label:T('Investigação'),q:'Existe alguma anomalia?',led:'ok',build:buildInvestigationEnv}];

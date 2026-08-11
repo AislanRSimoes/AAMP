@@ -53,16 +53,41 @@ normativa**. Fonte: `captureIntegrity()` — `aamp_laboratory.html:777-780`.
 Rótulos (`html:648, 690`): `Sem caracterização` · `Comprometida` · `Atenção` · `Externa` · `Confiável`.
 Estados CSS: `idle / bad / warn / ok` (+ `ext`).
 
-Lógica atual (`html:2226`):
+Lógica atual — `classifyTrust()`, após o **P1-008**:
 ```js
-trust = (clipTot || peakDb > −1)            ? 'bad'
-      : ((peakDb > −6) || lowConf)          ? 'warn'
-      : (q ? 'ok' : 'idle');
+// (1) porta SUPERIOR critica
+clipping || peakDb > −1                                   -> 'bad'
+// (2) MS-10 oficial, SOMENTE se a familia estiver presente no contrato
+familia Error | NotApplicable                             -> 'bad'
+escalar SNR_dB ausente na familia                         -> 'bad'
+escalar Error | NotApplicable | valuePresent != true      -> 'bad'
+valor nao-finito ou null                                  -> 'bad'
+SNR_dB <= 0                                               -> 'bad'   // PORTA INFERIOR
+// (3) ressalvas
+peakDb > −6 || lowConf agregado || LowConfidence do MS-10 -> 'warn'
+// (4) fallback
+q ? 'ok' : 'idle'
 ```
 - **Objetivo**: rótulo único de confiabilidade da medição, condicionando a leitura das demais métricas.
-- **Domínio de validade / limitação**: só testa o **teto** (clipping / sinal quente) e `lowConf`.
-  **Não há porta inferior** — captura silenciosa / sem sinal / SNR baixíssimo cai em `'ok'` = "Confiável".
-  Ver achado **V1** (Seção D).
+- **Porta inferior (P1-008)**: consome **exclusivamente** o MS-10 oficial — o escalar é procurado
+  **dentro** da família, nunca no índice global por chave. `SNR_dB ≤ 0` é a expressão de *"o sinal não
+  se eleva acima do piso"*. **Não há margem positiva**: limiares de "SNR insuficiente" permanecem no
+  **Pilar 2**, e `MIN_SNR_OVER_FLOOR_DB` (gate ER-023 da **aquisição**, grandeza distinta) **não** é
+  importada. A porta é condição **necessária, não suficiente**.
+- **Mudança aditiva**: o agregado `lowConf` **continua** produzindo `warn`, inclusive quando origina de
+  família periférica, e **MS-10 ausente preserva o comportamento anterior** da escada.
+- **`rmsDb` e `silPct` continuam sem participação** na classificação — permanecem apenas descritores de
+  `captureIntegrity()`.
+- Regressão: **TC-057**, 26 casos sobre o JS produtivo (`validation/browser/`).
+
+> **Antes do P1-008** (bloco histórico, preservado para auditoria):
+> ```js
+> trust = (clipTot || peakDb > −1)            ? 'bad'
+>       : ((peakDb > −6) || lowConf)          ? 'warn'
+>       : (q ? 'ok' : 'idle');
+> ```
+> Só testava o **teto** (clipping / sinal quente) e `lowConf`. **Não havia porta inferior** — captura
+> silenciosa / sem sinal / SNR baixíssimo caía em `'ok'` = "Confiável". Ver achado **V1** (Seção D).
 
 ---
 
@@ -134,14 +159,21 @@ exige um estímulo específico; ausência ⇒ `Error`.
 
 ## Seção D — Achados de validade (questões abertas → Pilar 1/2)
 
-- **V1 — Escada de confiança sem porta inferior** *(integridade, ativo)*. `trust` (`html:2226`) só
-  testa teto/`lowConf`. Uma captura **silenciosa / sem sinal / SNR muito baixo** é rotulada
-  **"Confiável"**. O material para a porta de piso (`rmsDb`, `silPct`, SNR) já existe em
-  `captureIntegrity()` mas **não é usado**. *(Confirmado nas coletas Vostro −42 dBFS e loopback −240 dBFS.)*
-  **Confirmado também no WebView nativo (2026-08-07, gate do P1-002):** uma sessão cuja **única**
-  métrica disponível está em `NotApplicable` é rotulada **"Medição confiável"** — `NotApplicable`
-  incrementa `na`, que **não é consumido** em lugar nenhum da UI, enquanto `lowConf` permanece 0.
-  Tratamento em **P1-008**. Ver *Registro de Encerramento — P1-002* → §G.6.
+- **V1 — Escada de confiança sem porta inferior** *(integridade, **RESOLVIDO no P1-008**)*.
+  **Antes do P1-008:** `trust` só testava teto/`lowConf`; uma captura **silenciosa / sem sinal /
+  SNR muito baixo** era rotulada **"Confiável"**. *(Confirmado nas coletas Vostro −42 dBFS e loopback
+  −240 dBFS.)* **Confirmado também no WebView nativo (2026-08-07, gate do P1-002):** uma sessão cuja
+  **única** métrica disponível estava em `NotApplicable` era rotulada **"Medição confiável"** —
+  `NotApplicable` incrementava `na`, que **não era consumido** em lugar nenhum da UI, enquanto
+  `lowConf` permanecia 0.
+  **Depois do P1-008:** a classificação vive em `classifyTrust()`, que consome **exclusivamente o
+  MS-10 oficial** quando a família está presente — estado da família e do escalar `SNR_dB` governando
+  antes do valor. Produzem `bad`: família `Error`/`NotApplicable`, escalar ausente, `Error`,
+  `NotApplicable`, `valuePresent=false`, valor não-finito ou `null`, e **`SNR_dB ≤ 0`** (a porta
+  inferior). `LowConfidence` explícito do MS-10 e o agregado `lowConf` produzem `warn`; **MS-10
+  ausente preserva o comportamento anterior** da escada. A porta é condição **necessária**, não
+  suficiente: não há margem positiva — limiares de "SNR insuficiente" continuam no **Pilar 2**.
+  **TC-057** cobre 26 casos executando o JS produtivo. Ver *Registro de Encerramento — P1-002* → §G.6.
 - **V2 — `lowConf` quase nunca propaga.** A LabEngine JS fixa `quality:'Normal'` na maioria dos
   escalares (`html:1337+`), então `M.metrics.lowConf` (`html:806-811`) é ~sempre 0. O `Quality` por
   métrica do C++ **não** é o que alimenta o caminho da evidência do Lab.
@@ -638,12 +670,12 @@ energia em **1** *bin* e 90 % em **3**, contra ~852 e ~1534 *bins* esperados par
 > aritmeticamente verdadeira — é **fisicamente enganosa**: não descreve um fato sobre a cadeia medida,
 > e sim um viés de estimador. A hipótese anterior fica **substituída**, não preservada.
 
-#### F3 — **ABERTO** · Pilar 2 / P1-008
+#### F3 — **ABERTO** · Pilar 2 *(explicitamente FORA do escopo do P1-008)*
 
 A aba Integridade declara *"Sinal externo — métricas normativas (SNR, consistência) não se aplicam"* e,
 no mesmo cabeçalho, exibe `SNR 80,4 dB` e `Consistência 1,5 %`; a aba Ruído as reapresenta como leituras
 normativas. Declaração de aplicabilidade e apresentação têm fontes distintas. Relacionado a **V1/V5** e
-a **MS-10/D5**. Tratamento previsto **durante o Pilar 2 / P1-008**.
+a **MS-10/D5**. Tratamento reservado ao **Pilar 2**. O **P1-008 excluiu F3 do seu escopo** por decisão do Supervisor: seus critérios discretos de encerramento cobrem a porta inferior, a integração de SNR/qualidade e o caso silêncio/sem sinal, não a coerência geral entre declaração de aplicabilidade e apresentação.
 
 #### F5 — **ENCERRADO** · achado de apresentação (Pilar 2)
 
@@ -807,7 +839,7 @@ condições degeneradas, mas não nesta.**
 **sentinela numérica −300** e a exibe como valor científico válido, inclusive na frase
 interpretativa do painel lateral. **Defeito de apresentação; não corrigido.** Relacionado a **V2**.
 
-**V1 / P1-008 — Aberto · confirmado no WebView nativo.** Registrado em Seção D (V1).
+**V1 / P1-008 — RESOLVIDO.** Estava aberto e confirmado no WebView nativo quando este registro foi escrito; fechado depois pelo **P1-008**, que acrescentou a porta inferior via MS-10 oficial em `classifyTrust()`. Registrado em Seção D (V1).
 
 ### G.7 Matriz de rastreabilidade — P1-002
 
@@ -845,10 +877,13 @@ em runtime (Chromium 151 via Edg/151):
 ### G.9 Encerramento
 
 **P1-002 APROVADO e CONCLUÍDO** no escopo autorizado de **cálculo, contrato semântico e
-exportação**. Permanecem abertos e explicitamente rastreados: **DV-4** e **DV-8** (Pilar 2),
-**DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5, condicionada a
-P1-003/P1-004). Nenhum deles foi corrigido neste item.
-*(A pendência da sentinela foi posteriormente fechada pelo **P1-004** — §K.1.)*
+exportação**. Permaneciam abertos e explicitamente rastreados à época deste registro: **DV-4** e
+**DV-8** (Pilar 2), **DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5,
+condicionada a P1-003/P1-004). Nenhum deles foi corrigido neste item. *(Estado atual: **V1/P1-008
+foi resolvido depois, no P1-008**. Quanto à sentinela `−300`, há dois achados distintos: **DV-5** — a
+sentinela consumida semanticamente pelo MS-09 — foi fechada no **P1-004** (§K.1); **DV-10** — a janela
+`0 < integFull < 1e-30` publicada como valor válido — foi fechada no **P1-007**. **DV-4**, **DV-8** e
+**DV-6** permanecem abertos.)*
 
 ---
 
@@ -1340,7 +1375,7 @@ deverá **preservar os fatos primários já disponíveis durante o MS-09** e dec
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura contendo `NaN` propaga-se pelo estimador e chega ao contrato rotulada como medição válida | 🔴 **Aberto** (decisão **D4**: registrar, não corrigir) |
 | **DV-9** | **Assimetria legítima da fonte ST-08** entre Core (regenera ⇒ ramo inalcançável) e reprocessamento (lê do pacote ⇒ pode faltar) | 🟡 **Legítima e preservada** (decisão **D5**) |
 | **DV-8** | Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300` | 🔴 **Aberto — Pilar 2** |
-| **V1 / P1-008** | Impacto na **Trust Ladder**: a propagação de `LowConfidence` do MS-08 alcança agora o contrato do MS-09; o efeito na escada de confiança e na apresentação **não foi avaliado nem alterado** | 🔴 **Aberto — P1-008** |
+| ~~**V1 / P1-008**~~ | Impacto na **Trust Ladder**: a propagação de `LowConfidence` do MS-08 alcança o contrato do MS-09; o efeito na escada **não fora avaliado à época deste registro** | ✅ **Resolvido no P1-008** — porta inferior via MS-10; `LowConfidence` explícito do MS-10 e agregado produzem `warn`; `SNR ≤ 0`, `Error`, `NotApplicable`, ausência de valor e não-finito produzem `bad` |
 | **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792`, que ainda afirma que a sentinela permanece "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | 🟡 **Registrado, não alterado** — corrigi-lo modificaria o código já validado |
 
 ### K.9 Encerramento
@@ -1839,7 +1874,7 @@ O **TC-048** protege o P1-005 e cobre:
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família. Mesma classe da divergência corrigida no MS-10, em família fora do escopo autorizado | 🔴 **Aberto** |
 | ~~**P1-006**~~ ✅ | Numerador do SNR — `S/N` estrito (D2/V8) | ✅ **CONCLUÍDO depois** (`a702c0f`) — ver §O |
 | **P1-007** | `pn ≈ 0` / limite inferior (D4) | ✅ **Concluído** *(reclassificado em §P para a saturação numérica do piso; `EstimateNature` **não** aplicada — D6)* |
-| **P1-008** | Trust Ladder — porta inferior | ⬜ Não iniciado |
+| **P1-008** | Trust Ladder — porta inferior | ✅ **Concluído** — porta via MS-10 oficial, sem limiar novo; TC-057 (browser) |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — não corrigido; o P1-005 não o amplia |
 
 ### N.10 Encerramento
@@ -2102,7 +2137,7 @@ também não foram tocados.
 | ID | Achado | Estado |
 |---|---|:--:|
 | **P1-007** | Semântica de limite do MS-10 — objeto **reclassificado**: saturação numérica do piso, não `pn ≈ 0` | ✅ **CONCLUÍDO** — ratificado (§P, `3459490`) e implementado (`64163e3`), TC-056 |
-| **P1-008** | Trust Ladder — porta inferior | ⬜ **Não iniciado** |
+| **P1-008** | Trust Ladder — porta inferior | ✅ **CONCLUÍDO** — `classifyTrust()`: `SNR_dB ≤ 0` e gates de validade do MS-10 → `bad`; mudança aditiva, `lowConf` preservado; TC-057 browser/WebView |
 | **DV-6** | ST-09 ausente → o Core publica **MS-08** em `Error`, o LabEngine **omite** a família | 🔴 **Aberto** — corrigido apenas para o MS-10 |
 | **F10** | NaN atravessa MS-08/MS-09 como `Normal` | 🔴 **Aberto** — o P1-006 não o amplia |
 | **P1-009 — estágio 2** | Fatos primários (`DynamicRange_stepIndex`, `DynamicRange_firstClippedIndex`) e integração com exportação/UI | 🔴 **Aberto — não iniciado** |
