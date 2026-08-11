@@ -822,7 +822,7 @@ protegida normativamente pelo **TC-046**, caso (5) — ver §K.3.)*
 | **DV-5** | Sentinela `−300` ambígua no campo numérico | ✅ **Resolvida no P1-004** — nenhum consumidor normativo a lê como medição; sentinela conservada no campo por **D3** (§K.1) |
 | **DV-6** | **CC-A: ST-09 ausente — C++ emite `Error`, JS omite a família** | 🔴 **Aberto** |
 | **DV-7** | CC-B: estado fixo `'Normal'` no caminho da evidência | ✅ **Resolvida** (escopo MS-08) |
-| **DV-8** | **Apresentação consome a sentinela e a exibe como valor científico** | 🔴 **Aberto — Pilar 2** |
+| ~~**DV-8**~~ | ~~**Apresentação consome a sentinela e a exibe como valor científico**~~ | ✅ **Concluído — P2-001**: as três rotas (`val` global, `val` de `scanAnomalies`, `LAB.getMetric`) delegam a `scalarForDisplay`, que honra `quality`/`valuePresent`. Sentinela nunca reconhecida pelo valor. **TC-058** |
 
 **DV-4 — Aberto (Pilar 2).** Excluída do P1-002 por decisão: detectar sinal intencional exige um
 critério quantitativo, e **N4 atribui limiares ao Pilar 2**. O MS-08 ainda pode reportar um nível de
@@ -832,12 +832,23 @@ sinal como "Noise Floor" se o ST-09 estiver contaminado.
 decisão de escopo (não alterar comportamento de interface) veda. **CC-A está satisfeita nas
 condições degeneradas, mas não nesta.**
 
-**DV-8 — Aberto (Pilar 2) · confirmado no WebView nativo.** `LAB.getMetric()` (`html:2647`) e
-`val()` (`html:2210`) filtram **apenas por finitude** — `e.value != null && isFinite(e.value)` — e
-**não consultam `valuePresent` nem `quality`**. O contrato interno do MS-08 chega íntegro
-(`quality = NotApplicable`, `valuePresent = false`), mas a camada de apresentação consome a
-**sentinela numérica −300** e a exibe como valor científico válido, inclusive na frase
-interpretativa do painel lateral. **Defeito de apresentação; não corrigido.** Relacionado a **V2**.
+**DV-8 — CONCLUÍDA no P2-001.**
+
+*Defeito histórico, confirmado no WebView nativo quando este registro foi escrito:* `LAB.getMetric()`
+e `val()` **filtravam apenas por finitude** — `e.value != null && isFinite(e.value)` — e **não
+consultavam `valuePresent` nem `quality`**. O contrato interno do MS-08 chegava íntegro
+(`quality = NotApplicable`, `valuePresent = false`), mas a camada de apresentação **consumia** a
+**sentinela numérica −300** e a exibia como valor científico válido, inclusive na frase
+interpretativa do painel lateral.
+
+*Estado atual:* **corrigido no P2-001**. As **três** rotas de leitura apresentacional — o `val()`
+global, o `val` local de `scanAnomalies()` e `LAB.getMetric()` — delegam a `scalarForDisplay`, que
+honra `quality` e `valuePresent` e devolve ausência para `NotApplicable`, `Error`,
+`valuePresent = false`, `null`, `NaN` e `±Infinity`. A sentinela **nunca** é reconhecida pelo valor:
+um `−300` legitimamente `Normal`/presente continua visível, porque nesse caso é medição.
+`LowConfidence` com valor presente segue exibido — a ressalva vive na Trust Ladder, não na leitura.
+Protegido por **TC-058** (42 casos sobre o JS produtivo) e por gate visual dos painéis Integridade e
+Ruído. Relacionado a **V2**.
 
 **V1 / P1-008 — RESOLVIDO.** Estava aberto e confirmado no WebView nativo quando este registro foi escrito; fechado depois pelo **P1-008**, que acrescentou a porta inferior via MS-10 oficial em `classifyTrust()`. Registrado em Seção D (V1).
 
@@ -878,12 +889,12 @@ em runtime (Chromium 151 via Edg/151):
 
 **P1-002 APROVADO e CONCLUÍDO** no escopo autorizado de **cálculo, contrato semântico e
 exportação**. Permaneciam abertos e explicitamente rastreados à época deste registro: **DV-4** e
-**DV-8** (Pilar 2), **DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5,
+**DV-8** (Pilar 2, **concluída depois no P2-001**), **DV-6** (CC-A), **V1/P1-008** (Trust Ladder) e a sentinela `−300` (§G.5,
 condicionada a P1-003/P1-004). Nenhum deles foi corrigido neste item. *(Estado atual: **V1/P1-008
 foi resolvido depois, no P1-008**. Quanto à sentinela `−300`, há dois achados distintos: **DV-5** — a
 sentinela consumida semanticamente pelo MS-09 — foi fechada no **P1-004** (§K.1); **DV-10** — a janela
-`0 < integFull < 1e-30` publicada como valor válido — foi fechada no **P1-007**. **DV-4**, **DV-8** e
-**DV-6** permanecem abertos.)*
+`0 < integFull < 1e-30` publicada como valor válido — foi fechada no **P1-007**. **DV-8** foi concluída
+no **P2-001**. **DV-4** e **DV-6** permanecem abertos.)*
 
 ---
 
@@ -1374,7 +1385,7 @@ deverá **preservar os fatos primários já disponíveis durante o MS-09** e dec
 | **D / teto censurado** | Representação do teto censurado pelo limite superior do ensaio | ✅ **Estágio 1 CONCLUÍDO e validado no Windows** (§M); **Estágio 2 aberto** |
 | **F10** | **NaN atravessa MS-08 e MS-09 como `Normal`** — uma captura contendo `NaN` propaga-se pelo estimador e chega ao contrato rotulada como medição válida | 🔴 **Aberto** (decisão **D4**: registrar, não corrigir) |
 | **DV-9** | **Assimetria legítima da fonte ST-08** entre Core (regenera ⇒ ramo inalcançável) e reprocessamento (lê do pacote ⇒ pode faltar) | 🟡 **Legítima e preservada** (decisão **D5**) |
-| **DV-8** | Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300` | 🔴 **Aberto — Pilar 2** |
+| ~~**DV-8**~~ | ~~Apresentação (`LAB.getMetric`, `val`) filtra apenas por `isFinite`, ignorando `valuePresent`/`quality`, e exibe a sentinela `−300`~~ | ✅ **Concluída — P2-001**: as três rotas delegam a `scalarForDisplay`, que honra `quality`/`valuePresent`; **TC-058** |
 | ~~**V1 / P1-008**~~ | Impacto na **Trust Ladder**: a propagação de `LowConfidence` do MS-08 alcança o contrato do MS-09; o efeito na escada **não fora avaliado à época deste registro** | ✅ **Resolvido no P1-008** — porta inferior via MS-10; `LowConfidence` explícito do MS-10 e agregado produzem `warn`; `SNR ≤ 0`, `Error`, `NotApplicable`, ausência de valor e não-finito produzem `bad` |
 | **F11** | **Comentário residual** em `AnalysisEngine.cpp:790-792`, que ainda afirma que a sentinela permanece "para que o MS-09 mantenha comportamento idêntico" e que honrar `nf.quality` "pertence a P1-003/P1-004" — **inconsistência textual sem efeito funcional** | 🟡 **Registrado, não alterado** — corrigi-lo modificaria o código já validado |
 

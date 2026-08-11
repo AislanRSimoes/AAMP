@@ -221,7 +221,7 @@ da taxonomia produziria uma segunda solução incompatível.
 | **P1-005** | ✅ **CONCLUÍDO — validado independentemente no Windows** | `pn` do SNR passou a ser o Noise Floor *band-limited* oficial do MS-08, fonte única de verdade (`4825fcc`). Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-005*. |
 | **P1-006** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Numerador do SNR passou a ser a **potência da fundamental retornada** — `S/N` estrito (D2/V8) (`a702c0f`). **TC-033 não foi alterado**; `snrDb()` intacta. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Encerramento — P1-006*. |
 | **P1-007** | ✅ **CONCLUÍDO — validado independentemente no Windows** | Objeto **reclassificado** (§P): eliminar valores pontuais derivados da **saturação numérica** do estimador de Noise Floor (**DV-10**). Política **alternativa E** implementada em `64163e3`: guarda do MS-08 passa a `integFull < PISO_MIN`, em C++ e no LabEngine JS; MS-09/MS-10 herdam pelo contrato do operando, sem reconhecer a sentinela por valor. **`EstimateNature` não aplicada** (D6). `snrDb()` preservada e agora coberta. **TC-056**. Registro completo em [`metrics-audit.md`](./metrics-audit.md) → *Registro de Decisão — P1-007*. Os seis pontos do gate foram executados; no ponto (5), `snrDb()` foi **preservada** e seu domínio direto **coberto** por TC-056 (g). Eventual depreciação ou remoção permanece decisão futura de API, **fora do P1-007**. |
-| **P1-008** | ✅ **CONCLUÍDO** | Porta inferior da Trust Ladder via MS-10 oficial (`SNR_dB ≤ 0` e gates de validade), em `classifyTrust()`. Nenhuma alteração científica: MS-08/09/10, exportação e Evidence Package intactos. **TC-057** é regressão **browser/WebView de máquina-alvo** — não há runner JS headless no projeto, limitação registrada. F3 e DV-8 permanecem abertos (Pilar 2). |
+| **P1-008** | ✅ **CONCLUÍDO** | Porta inferior da Trust Ladder via MS-10 oficial (`SNR_dB ≤ 0` e gates de validade), em `classifyTrust()`. Nenhuma alteração científica: MS-08/09/10, exportação e Evidence Package intactos. **TC-057** é regressão **browser/WebView de máquina-alvo** — não há runner JS headless no projeto, limitação registrada. F3 permanece aberto (Pilar 2); **DV-8 foi concluída depois no P2-001**. |
 
 ### P1-001 — síntese do encerramento
 
@@ -274,7 +274,7 @@ da taxonomia produziria uma segunda solução incompatível.
 | ~~**DV-5**~~ ✅ | Sentinela `−300` lida como medição pelo MS-09 — **RESOLVIDA no P1-004** (sentinela conservada no campo por **D3**; nenhum consumidor normativo a interpreta) | — (fechada) | — |
 | **DV-6** | CC-A: ST-09 ausente — C++ `Error` × JS omite a família. *Corrigido para o **MS-10** em `4825fcc` (P1-005); permanece aberto para o **MS-08**.* | — | — |
 | **DV-10** | **Saturação numérica do piso publicada como medição pontual.** Com `0 < integFull < 1e-30`, o MS-08 publica o clamp `−300 dBFS` com `quality = Normal` e `valuePresent = true`; **MS-09** (DR ≈ 290,9897 dB) e **MS-10** (SNR ≈ 290,9885 dB, `Point`) o consomem como valor válido. Mesma classe da **DV-5**, por rota distinta: o P1-005 fechou a rota do **estado**, esta é a rota do **clamp**. Sobrevive ao *round-trip* float32 do Evidence Package; **coberta por TC-056** desde o P1-007. *Alcançável por entrada sintética/processada — nenhum ADC real produz piso in-band < −300 dBFS* | ✅ **Corrigida no P1-007** (`64163e3`) — guarda `integFull < PISO_MIN` em C++ e JS; **TC-056** cobre a janela | MS-08, MS-09, MS-10 |
-| **DV-8** | Apresentação ignora `valuePresent`/`quality` e exibe a sentinela `−300` | — (**Pilar 2**) | — |
+| ~~**DV-8**~~ ✅ | ~~Apresentação ignora `valuePresent`/`quality` e exibe a sentinela `−300`~~ | ✅ **Concluído no P2-001** (Pilar 2) — leitura apresentacional unificada em `scalarForDisplay`; **TC-058** | — |
 | **DV-9** | **Assimetria legítima da fonte ST-08** — Core **regenera** o estímulo (ramo inalcançável) × reprocessamento lê do pacote (pode faltar). **Preservada por decisão D5**, documentada nos dois lados | — (legítima; **não** corrigir) | — |
 | ~~**V1**~~ ✅ | ~~Trust Ladder rotula "Medição confiável" com única métrica `NotApplicable`~~ | ✅ **Fechado no P1-008**: `NotApplicable`, `Error`, ausência de valor, não-finito e `SNR ≤ 0` no MS-10 impedem qualquer leitura confiável | — |
 
@@ -321,7 +321,7 @@ da taxonomia produziria uma segunda solução incompatível.
 > sínteses; P1-007 segue com a mesma obrigação de reúso.)*
 >
 > DV-4, DV-8 e V1 são de **apresentação/limiar** e não bloqueiam a execução. *(**V1 foi resolvido no
-> P1-008**; DV-4 e DV-8 permanecem no Pilar 2.)*
+> P1-008**; **DV-8 foi concluída no P2-001**; DV-4 permanece no Pilar 2.)*
 
 ---
 

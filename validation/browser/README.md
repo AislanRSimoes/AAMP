@@ -20,6 +20,7 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 | ID | Arquivo | Cobre |
 |---|---|---|
 | **TC-057** | `tc057_trust_ladder.js` | Trust Ladder: porta inferior do MS-10 e precedência de integridade (P1-008 / V1) |
+| **TC-058** | `tc058_scalar_presentation_contract.js` | Apresentação honra o contrato do escalar nas três rotas de leitura (P2-001 / DV-8) |
 
 ### TC-057 — o que protege
 
@@ -32,3 +33,15 @@ O teste imprime uma linha por caso e um total. Em caso de divergência, **lança
 - agregado `lowConf` preservado como ressalva `warn`, inclusive periférico;
 - `bad` dominando `warn`;
 - **MS-10 ausente preservando o comportamento anterior** da escada.
+
+### TC-058 — o que protege
+
+- **as três rotas** de leitura apresentacional convergem em `scalarForDisplay`: `val()` global, o `val` local de `scanAnomalies()` e `LAB.getMetric()`;
+- `valuePresent !== true`, `NotApplicable` e `Error` nunca produzem número;
+- `null`, `NaN` e `±Infinity` nunca produzem número;
+- `LowConfidence` com valor presente **continua** exibido — a ressalva vive na Trust Ladder, não na leitura;
+- **a sentinela nunca é reconhecida pelo valor**: `−300` legitimamente `Normal`/presente permanece visível;
+- `getMetricObj()` permanece intacto, para quem precisa do contrato completo.
+
+> [!NOTE]
+> O discriminante do TC-058 é comparar o **mesmo** `−300` sob contratos diferentes. Com contrato válido, `scanAnomalies` gera *"SNR baixo −300.0 dB"*; com `NotApplicable`, gera `[]`. Valor idêntico, comportamento distinto — prova que quem governa é `quality`/`valuePresent`, não o número. `scalarForDisplay` é `const`, então não pode ser mutada em memória; este discriminante substitui a prova de mutação.

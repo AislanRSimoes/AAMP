@@ -2404,7 +2404,22 @@ function buildImpulseEnv(stage,focus,pc){
 }
 
 /* ===== render ===== */
-const val=e=>(e&&e.value!=null&&isFinite(e.value))?e.value:null;
+/* P2-001 (DV-8) — leitura APRESENTACIONAL do escalar, honrando o contrato publicado.
+   Antes, as tres rotas de leitura (`val` global, `val` local de scanAnomalies e LAB.getMetric)
+   filtravam APENAS finitude: um escalar em NotApplicable/Error ou com valuePresent=false tinha seu
+   numero exibido como valor cientifico -- a sentinela -300 dBFS aparecia em instrumento, gauge, chip,
+   anomalia e frase interpretativa. E a mesma classe de DV-5/DV-10 na camada de apresentacao.
+   Regra: o CONTRATO governa, nunca o numero. A sentinela NAO e reconhecida pelo valor -- um -300
+   legitimamente Normal/valuePresent=true continua visivel, porque nesse caso e medicao.
+   LowConfidence permanece medicao presente: exibe o valor, a ressalva vive na Trust Ladder. */
+const scalarForDisplay=e=>{
+  if(!e)return null;                                             // escalar ausente
+  if(e.valuePresent!==true)return null;                          // ausencia declarada pelo contrato
+  if(e.quality==='NotApplicable'||e.quality==='Error')return null;// nao e medicao
+  const v=e.value;
+  if(v==null||typeof v!=='number'||!isFinite(v))return null;      // null, NaN, +/-Infinity
+  return v;};
+const val=e=>scalarForDisplay(e);
 function vchip(k,v,u,cls,vc){return `<div class="vchip ${cls||''}"><div class="vc-k">${k}</div><div class="vc-v ${vc||''}">${v}<i>${u||''}</i></div></div>`;}
 function shorten(s){return s&&s.length>22?s.slice(0,20)+'…':(s||'—');}
 /* Aquisição como evidência — por estímulo. Hoje deriva da integridade de cada captura;
@@ -2450,7 +2465,11 @@ function bootSession(session){
 function domLabel(d){return T({integrity:'Integridade',frequency:'Frequência',noise:'Ruído',imd:'Distorção',impulse:'Impulsiva'}[d]||d);}
 
 /* varredura de anomalias — o engenheiro entra perguntando "existe algo errado?", não "qual instrumento" */
-function scanAnomalies(M){const A=[],sc=k=>M.metrics.scalars[k],val=e=>(e&&e.value!=null&&isFinite(e.value))?e.value:null;
+/* P2-001 (DV-8): a varredura de anomalias usava um `val` LOCAL que filtrava so finitude --
+   podia gerar achado e frase interpretativa a partir de escalar semanticamente ausente
+   (p.ex. o piso saturado -300 dBFS em NotApplicable). Passa a delegar a scalarForDisplay,
+   a mesma politica das demais rotas de apresentacao. */
+function scanAnomalies(M){const A=[],sc=k=>M.metrics.scalars[k],val=e=>scalarForDisplay(e);
   const q=M._integ&&M._integ.q,clip=M._integ?M._integ.clipTot:0;
   if(clip)A.push({dom:'integrity',sev:'high',conf:'alta',label:T('Clipping na captura'),detail:clip+T(' amostras saturadas — caracterização comprometida')});
   if(q&&q.peakDb>-1&&!clip)A.push({dom:'integrity',sev:'high',conf:'alta',label:T('Headroom crítico'),detail:fmt(q.peakDb,1)+T(' dBFS de pico')});
@@ -2842,7 +2861,9 @@ const LAB={
   hasAnalysis:()=>!!M.hasAnalysis,
   getCurve:id=>(M.metrics&&M.metrics.curves&&M.metrics.curves[id])||null,
   getById:id=>(M.metrics&&M.metrics.byId&&M.metrics.byId[id])||null,
-  getMetric:k=>{const e=M.metrics&&M.metrics.scalars&&M.metrics.scalars[k];return e&&e.value!=null&&isFinite(e.value)?e.value:null;},
+  // P2-001 (DV-8): terceira e ultima rota de leitura apresentacional -- delega a mesma politica.
+  // getMetricObj permanece INTACTO: quem precisa do contrato completo continua tendo acesso a ele.
+  getMetric:k=>scalarForDisplay(M.metrics&&M.metrics.scalars&&M.metrics.scalars[k]),
   getMetricObj:k=>(M.metrics&&M.metrics.scalars&&M.metrics.scalars[k])||null,
   getCapture:role=>{const C=M.captures||[];if(role==='primary')return C[M.primary];if(role==='sine')return sineCapture();if(role==='silence')return C.find(c=>/silence|st01/i.test(c.file||''));if(role==='ir')return C.find(c=>/ir|impuls/i.test((c.file||'')+(c.stimulus||'')));return null;},
   getCaptures:()=>M.captures||[],
